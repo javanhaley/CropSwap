@@ -3367,6 +3367,7 @@ function ProductImage({ src, photoId, artKey, category, emoji, alt, className = 
   const imgRef = useRef(null);
 
   useEffect(() => {
+    console.log("[ProductImage]", alt, "reset-effect fired, effectiveSrc =", effectiveSrc);
     setState(effectiveSrc ? "loading" : "fallback");
   }, [effectiveSrc]);
 
@@ -3377,10 +3378,14 @@ function ProductImage({ src, photoId, artKey, category, emoji, alt, className = 
     if (el && el.complete && el.naturalWidth > 0) setState("loaded");
   });
 
+  useEffect(() => {
+    console.log("[ProductImage]", alt, "state is now:", state);
+  }, [state, alt]);
+
   const texture = CATEGORY_TEXTURE[category] || CATEGORY_TEXTURE.Veggie;
 
   return (
-    <div className={`relative overflow-hidden ${rounded} ${className}`} style={{ background: texture }}>
+    <div className={`relative overflow-hidden ${rounded} ${className}`} style={{ background: texture, containerType: "inline-size" }}>
       {/* Illustration always renders underneath; a photograph fades in over it
           when one is reachable, so the tile is never empty or broken. */}
       <div className="absolute inset-0">
@@ -3393,18 +3398,19 @@ function ProductImage({ src, photoId, artKey, category, emoji, alt, className = 
           alt={alt || ""}
           loading="lazy"
           decoding="async"
-          onLoad={() => setState("loaded")}
-          onError={() => setState("fallback")}
-          className={`w-full h-full object-cover transition-opacity duration-500 ${state === "loaded" ? "opacity-100" : "opacity-0"}`}
+          referrerPolicy="no-referrer"
+          onLoad={() => { console.log("[ProductImage]", alt, "onLoad fired"); setState("loaded"); }}
+          onError={(e) => { console.log("[ProductImage]", alt, "onError fired, src was", e.currentTarget.src); setState("fallback"); }}
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ${state === "loaded" ? "opacity-100" : "opacity-0"}`}
         />
       )}
 
-      {/* Photographer credit: bottom-left, deliberately tiny — roughly a hundredth
-          of the tile — so it attributes without competing with the produce. */}
+      {/* Photographer credit: bottom-left, sized to roughly a thirtieth of the
+          tile — small enough to stay out of the way, large enough to read. */}
       {state === "loaded" && showCredit && !uploaded && creditLine(credit) && (
         <span
-          className="absolute bottom-0 left-0 px-1 cs-py1 bg-black/35 text-white leading-none pointer-events-none select-none rounded-tr"
-          style={{ fontSize: "6.5px", letterSpacing: "0.01em" }}
+          className="absolute bottom-0 left-0 px-[6%] py-[3%] bg-black/45 text-white leading-none pointer-events-none select-none rounded-tr"
+          style={{ fontSize: "clamp(7px, 3.3cqw, 15px)", letterSpacing: "0.01em" }}
         >
           {creditLine(credit)}
         </span>
@@ -3487,7 +3493,7 @@ function ShopCard({ shop }) {
           <BannerScene scene={shop.bannerScene || defaultScene(shop.id)} />
         </span>
         {shop.banner && (
-          <img src={shop.banner} alt="" loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          <img src={shop.banner} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
         )}
         <span className="relative -mb-6 w-12 h-12 rounded-full overflow-hidden shadow-md border-2 border-white bg-white block">
           <ShopThumb shop={shop} />
@@ -4269,6 +4275,7 @@ function ShopThumb({ shop, className = "" }) {
       loading="eager"
       decoding="async"
       draggable={false}
+      referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
       className={`w-full h-full object-cover ${className}`}
     />
