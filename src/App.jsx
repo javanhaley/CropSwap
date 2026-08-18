@@ -669,33 +669,33 @@ const IMG = {
   grape: { url: PHOTO("photo-1537640538966-79f369143f8f"), by: null, source: "Unsplash" },
   raspberry: { url: PHOTO("photo-1546548970-71785318a17b"), by: null, source: "Unsplash" },
   currant: { url: PHOTO("photo-1576045057995-568f588f82fb"), by: null, source: "Unsplash" },
-  berries: { url: PHOTO("photo-1590004953392-5119dcba1a6e"), by: null, source: "Unsplash" },
+  berries: { url: PHOTO("photo-1661022437133-e198324b8b4c"), by: null, source: "Unsplash" },
   blueberry: { url: PHOTO("photo-1498557850523-fd3d118b962e"), by: null, source: "Unsplash" },
-  blackberry: { url: PHOTO("photo-1595858100588-bb7363fcf100"), by: null, source: "Unsplash" },
-  nut: { url: PHOTO("photo-1508595111327-1e19485b03f9"), by: null, source: "Unsplash" },
-  plum: { url: PHOTO("photo-1519996482569-3715579f14d8"), by: null, source: "Unsplash" },
+  blackberry: { url: PHOTO("photo-1562845029-d1b530d4cfd3"), by: null, source: "Unsplash" },
+  nut: { url: PHOTO("photo-1540914482491-3e1ad1098db7"), by: null, source: "Unsplash" },
+  plum: { url: PHOTO("photo-1637715204478-c00c57d776aa"), by: null, source: "Unsplash" },
   flower: { url: PHOTO("photo-1557844352-761f2565b576"), by: null, source: "Unsplash" },
   sunflower: { url: PHOTO("photo-1597848212624-a19eb35e2651"), by: null, source: "Unsplash" },
   bees: { url: PHOTO("photo-1558642452-9d2a7deb7f62"), by: null, source: "Unsplash" },
   ladybug: { url: PHOTO("photo-1534567153574-2b12153a87f0"), by: null, source: "Unsplash" },
   soil: { url: PEXELS(3696170), by: "Sippakorn Yamkasikorn", source: "Pexels" },
-  microbes: { url: PHOTO("photo-1574068468668-a0af019f7347"), by: null, source: "Unsplash" },
-  garlic: { url: PHOTO("photo-1540141473662-f2d48347f892"), by: null, source: "Unsplash" },
+  microbes: { url: PHOTO("photo-1517944552402-6beffe249029"), by: null, source: "Unsplash" },
+  garlic: { url: PHOTO("photo-1575025120628-9d016842e612"), by: null, source: "Unsplash" },
   greens: { url: PHOTO("photo-1524179091875-bf99a9a6af57"), by: null, source: "Unsplash" },
-  radish: { url: PHOTO("photo-1587393859424-e137f19f6d5d"), by: null, source: "Unsplash" },
+  radish: { url: PHOTO("photo-1688045232387-df140c59e234"), by: null, source: "Unsplash" },
   tomato: { url: PHOTO("photo-1592924357228-91a4daadcfea"), by: null, source: "Unsplash" },
-  basil: { url: PHOTO("photo-1615485499978-2900b1461144"), by: null, source: "Unsplash" },
+  basil: { url: PHOTO("photo-1776257217010-1c2e92207f2a"), by: null, source: "Unsplash" },
   peas: { url: PHOTO("photo-1563565375-f3fdfdbefa83"), by: null, source: "Unsplash" },
   carrot: { url: PHOTO("photo-1598170845058-32b9d6a5da37"), by: null, source: "Unsplash" },
   lettuce: { url: PHOTO("photo-1622206151226-18ca2c9ab4a1"), by: null, source: "Unsplash" },
   potato: { url: PHOTO("photo-1518977676601-b53f82aba655"), by: null, source: "Unsplash" },
   onion: { url: PHOTO("photo-1618512496248-a07fe83aa8cb"), by: null, source: "Unsplash" },
-  peach: { url: PHOTO("photo-1595123550478-db9d5d8e29e5"), by: null, source: "Unsplash" },
-  pear: { url: PHOTO("photo-1514733670128-468d89122552"), by: null, source: "Unsplash" },
+  peach: { url: PHOTO("photo-1517355352485-3c18847c2f7d"), by: null, source: "Unsplash" },
+  pear: { url: PHOTO("photo-1550828553-7c8732c4bda6"), by: null, source: "Unsplash" },
   houseplant: { url: PHOTO("photo-1614594975525-e45190c55d0b"), by: null, source: "Unsplash" },
   pomegranate: { url: PHOTO("photo-1541832676-9b763b0239ab"), by: null, source: "Unsplash" },
-  truffle: { url: PHOTO("photo-1635384666014-99a6cf9e2467"), by: null, source: "Unsplash" },
-  forest: { url: PHOTO("photo-1416879598555-30ab8f515fce"), by: null, source: "Unsplash" },
+  truffle: { url: PHOTO("photo-1760288256101-bb930c69bb61"), by: null, source: "Unsplash" },
+  forest: { url: PHOTO("photo-1441974231531-c6227db76b6e"), by: null, source: "Unsplash" },
   farm: { url: PHOTO("photo-1589923188900-85dae523342b"), by: null, source: "Unsplash" },
 };
 
@@ -3367,7 +3367,6 @@ function ProductImage({ src, photoId, artKey, category, emoji, alt, className = 
   const imgRef = useRef(null);
 
   useEffect(() => {
-    console.log("[ProductImage]", alt, "reset-effect fired, effectiveSrc =", effectiveSrc);
     setState(effectiveSrc ? "loading" : "fallback");
   }, [effectiveSrc]);
 
@@ -3377,10 +3376,6 @@ function ProductImage({ src, photoId, artKey, category, emoji, alt, className = 
     const el = imgRef.current;
     if (el && el.complete && el.naturalWidth > 0) setState("loaded");
   });
-
-  useEffect(() => {
-    console.log("[ProductImage]", alt, "state is now:", state);
-  }, [state, alt]);
 
   const texture = CATEGORY_TEXTURE[category] || CATEGORY_TEXTURE.Veggie;
 
@@ -3399,8 +3394,8 @@ function ProductImage({ src, photoId, artKey, category, emoji, alt, className = 
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
-          onLoad={() => { console.log("[ProductImage]", alt, "onLoad fired"); setState("loaded"); }}
-          onError={(e) => { console.log("[ProductImage]", alt, "onError fired, src was", e.currentTarget.src); setState("fallback"); }}
+          onLoad={() => setState("loaded")}
+          onError={() => setState("fallback")}
           className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ${state === "loaded" ? "opacity-100" : "opacity-0"}`}
         />
       )}
