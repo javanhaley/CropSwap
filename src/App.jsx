@@ -1797,6 +1797,264 @@ async function savePhoto(dataUrl) {
 }
 
 /* ============================================================================
+   SECTION 6B: PHOTO EDITOR — crop / zoom / pan / filters, entirely on canvas.
+   Sits between "file picked" and "photo saved": every upload passes through
+   PhotoEditorModal so a person can frame and style it before it's stored.
+============================================================================ */
+const PHOTO_FILTER_PRESETS = [
+  { key: "none", label: "Original", css: "" },
+  { key: "bw", label: "B&W", css: "grayscale(1) contrast(1.05)" },
+  { key: "vivid", label: "Vivid", css: "saturate(1.6) contrast(1.08)" },
+  { key: "warm", label: "Warm", css: "sepia(0.28) saturate(1.2) brightness(1.03)" },
+  { key: "cool", label: "Cool", css: "hue-rotate(-10deg) saturate(1.1) brightness(1.02)" },
+  { key: "fade", label: "Fade", css: "contrast(0.88) brightness(1.08) saturate(0.82)" },
+  { key: "bright", label: "Bright", css: "brightness(1.16) contrast(1.04)" },
+];
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!isSupportedImage(file)) {
+      reject(new Error("That file doesn't look like a photo."));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn't read that file."));
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageEl(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Couldn't load that photo."));
+    img.src = src;
+  });
+}
+
+/* Draws the chosen crop window (cw x ch viewport, at the given zoom/pan) with
+   the live filter applied, then compresses like processImageFile did. */
+async function renderEditedPhoto({ img, cw, ch, zoom, pan, filterCss, maxDim, targetBytes = PHOTO_TARGET_BYTES }) {
+  const nw = img.naturalWidth || img.width;
+  const nh = img.naturalHeight || img.height;
+  const baseScale = Math.max(cw / nw, ch / nh);
+  const scale = baseScale * zoom;
+  const dispW = nw * scale;
+  const dispH = nh * scale;
+  const left = (cw - dispW) / 2 + pan.x;
+  const top = (ch - dispH) / 2 + pan.y;
+  let sx = -left / scale;
+  let sy = -top / scale;
+  let sw = cw / scale;
+  let sh = ch / scale;
+  sx = Math.max(0, Math.min(sx, Math.max(0, nw - sw)));
+  sy = Math.max(0, Math.min(sy, Math.max(0, nh - sh)));
+  sw = Math.min(sw, nw - sx);
+  sh = Math.min(sh, nh - sy);
+
+  const aspect = cw / ch;
+  const outW = aspect >= 1 ? maxDim : Math.round(maxDim * aspect);
+  const outH = aspect >= 1 ? Math.round(maxDim / aspect) : maxDim;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = outW;
+  canvas.height = outH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Your browser couldn't process that photo.");
+  ctx.filter = filterCss || "none";
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+
+  let quality = 0.85;
+  let out = canvas.toDataURL("image/jpeg", quality);
+  while (dataUrlBytes(out) > targetBytes && quality > 0.4) {
+    quality -= 0.12;
+    out = canvas.toDataURL("image/jpeg", quality);
+  }
+  return out;
+}
+
+function PhotoEditorModal({ src, aspect = 4 / 3, round = false, maxDim = PHOTO_MAX_DIM, onCancel, onSave }) {
+  const [img, setImg] = useState(null);
+  const [loadError, setLoadError] = useState("");
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [filterKey, setFilterKey] = useState("none");
+  const [brightness, setBrightness] = useState(100);
+  const [contrast, setContrast] = useState(100);
+  const [saturation, setSaturation] = useState(100);
+  const [saving, setSaving] = useState(false);
+  const dragRef = useRef(null);
+
+  const cw = 288;
+  const ch = Math.max(120, Math.round(cw / aspect));
+
+  useEffect(() => {
+    let cancelled = false;
+    setImg(null);
+    setLoadError("");
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    loadImageEl(src)
+      .then((el) => {
+        if (!cancelled) setImg(el);
+      })
+      .catch((e) => {
+        if (!cancelled) setLoadError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  const clampPan = useCallback(
+    (nextPan, z) => {
+      if (!img) return nextPan;
+      const nw = img.naturalWidth || img.width;
+      const nh = img.naturalHeight || img.height;
+      const baseScale = Math.max(cw / nw, ch / nh);
+      const scale = baseScale * z;
+      const dispW = nw * scale;
+      const dispH = nh * scale;
+      const maxX = Math.max(0, (dispW - cw) / 2);
+      const maxY = Math.max(0, (dispH - ch) / 2);
+      return { x: Math.max(-maxX, Math.min(maxX, nextPan.x)), y: Math.max(-maxY, Math.min(maxY, nextPan.y)) };
+    },
+    [img, cw, ch]
+  );
+
+  const onZoomChange = (z) => {
+    setZoom(z);
+    setPan((p) => clampPan(p, z));
+  };
+
+  const onPointerDown = (e) => {
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origin: pan };
+  };
+  const onPointerMove = (e) => {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    setPan(clampPan({ x: dragRef.current.origin.x + dx, y: dragRef.current.origin.y + dy }, zoom));
+  };
+  const onPointerUp = () => {
+    dragRef.current = null;
+  };
+
+  const preset = PHOTO_FILTER_PRESETS.find((p) => p.key === filterKey) || PHOTO_FILTER_PRESETS[0];
+  const liveFilter = `${preset.css} brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`.trim();
+
+  const handleSave = async () => {
+    if (!img || saving) return;
+    setSaving(true);
+    try {
+      const dataUrl = await renderEditedPhoto({ img, cw, ch, zoom, pan, filterCss: liveFilter, maxDim });
+      onSave(dataUrl);
+    } catch (e) {
+      setLoadError(e.message || "Couldn't save that photo.");
+      setSaving(false);
+    }
+  };
+
+  const baseScale = img ? Math.max(cw / (img.naturalWidth || img.width), ch / (img.naturalHeight || img.height)) : 0;
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 cs-z-pop flex items-center justify-center p-4"
+      onMouseDown={(e) => e.target === e.currentTarget && onCancel()}
+    >
+      <div className="cs-modal-anim bg-white rounded-2xl w-full max-w-sm max-h-full overflow-y-auto p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold text-stone-900" style={displayFont}>Edit photo</h3>
+          <button onClick={onCancel} aria-label="Close"><X size={20} className="text-stone-400" /></button>
+        </div>
+
+        {loadError && <p className="text-xs text-rose-600 mb-2">{loadError}</p>}
+
+        <div
+          className={`relative mx-auto overflow-hidden bg-stone-100 touch-none select-none ${round ? "rounded-full" : "rounded-xl"}`}
+          style={{ width: cw, height: ch, cursor: img ? "grab" : "default" }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+        >
+          {img && (
+            <img
+              src={src}
+              alt=""
+              draggable={false}
+              className="absolute pointer-events-none max-w-none"
+              style={{
+                left: "50%",
+                top: "50%",
+                width: (img.naturalWidth || img.width) * baseScale * zoom,
+                height: (img.naturalHeight || img.height) * baseScale * zoom,
+                transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px)`,
+                filter: liveFilter,
+              }}
+            />
+          )}
+          {!img && !loadError && (
+            <div className="w-full h-full flex items-center justify-center">
+              <Loader2 size={20} className="animate-spin text-stone-400" />
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3">
+          <label className="cs-t11 font-semibold text-stone-500">Zoom</label>
+          <input type="range" min="1" max="3" step="0.01" value={zoom} onChange={(e) => onZoomChange(Number(e.target.value))} disabled={!img} className="w-full" />
+        </div>
+
+        <p className="cs-t11 font-semibold text-stone-500 mt-3 mb-1.5">Filters</p>
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {PHOTO_FILTER_PRESETS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => setFilterKey(p.key)}
+              className={`shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                filterKey === p.key ? "border-emerald-700 bg-emerald-50 text-emerald-800" : "border-stone-200 text-stone-500"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 mt-3">
+          <div>
+            <label className="cs-t10 font-semibold text-stone-500">Brightness</label>
+            <input type="range" min="60" max="140" value={brightness} onChange={(e) => setBrightness(Number(e.target.value))} className="w-full" />
+          </div>
+          <div>
+            <label className="cs-t10 font-semibold text-stone-500">Contrast</label>
+            <input type="range" min="60" max="140" value={contrast} onChange={(e) => setContrast(Number(e.target.value))} className="w-full" />
+          </div>
+          <div>
+            <label className="cs-t10 font-semibold text-stone-500">Saturation</label>
+            <input type="range" min="0" max="200" value={saturation} onChange={(e) => setSaturation(Number(e.target.value))} className="w-full" />
+          </div>
+        </div>
+
+        <div className="flex gap-2 mt-4">
+          <button onClick={onCancel} className="px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
+          <button
+            onClick={handleSave}
+            disabled={!img || saving}
+            className="flex-1 px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-800 text-white disabled:opacity-40 flex items-center justify-center gap-1.5"
+          >
+            {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : "Save photo"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================================
    SECTION 7: AI MODERATION — via a Supabase Edge Function
    (the artifact runtime's direct, unauthenticated fetch to api.anthropic.com
    only worked inside the Claude.ai sandbox; a deployed app can't ship an
@@ -2056,6 +2314,7 @@ function useMarketData() {
         id: uid("prod"),
         shopId,
         favoriteCount: 0,
+        shareCount: 0,
         avgRating: 0,
         reviewCount: 0,
         status: "available",
@@ -2098,6 +2357,7 @@ function useMarketData() {
         contactCard: [],
         layoutBlocks: ["banner", "bio", "contact", "gallery", "reviews"],
         favoriteCount: 0,
+        shareCount: 0,
         views: 0,
         followers: 0,
         avgRating: 0,
@@ -2457,6 +2717,83 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
     [commitList]
   );
 
+  // Owner-only: removes a review entirely (e.g. a shop owner clearing an
+  // incoming review). Authorization is enforced by the caller (ReviewSection
+  // only renders the control when the viewer owns the shop/product), matching
+  // this app's existing client-side trust model for shared_kv writes.
+  const deleteReview = useCallback(
+    async (reviewId) => {
+      const next = listRef.current.filter((r) => r.id !== reviewId);
+      await commitList(next);
+    },
+    [commitList]
+  );
+
+  // Owner-only: attach a single response to a review (e.g. a shop owner
+  // replying to feedback). Posted immediately, screened in the background —
+  // same "post first, screen second" pattern as submitReview — and hidden
+  // from other viewers until it clears (or forever, if it doesn't).
+  const respondToReview = useCallback(
+    async (reviewId, responder, body) => {
+      const response = {
+        id: uid("resp"),
+        authorId: responder.id,
+        authorName: responder.name,
+        authorAvatar: responder.avatar,
+        body,
+        createdAt: Date.now(),
+        status: "pending",
+        moderation: null,
+        helpful: 0,
+      };
+      const next = listRef.current.map((r) => (r.id === reviewId ? { ...r, response } : r));
+      await commitList(next);
+
+      (async () => {
+        let mod;
+        try {
+          mod = await moderateText(body);
+        } catch (e) {
+          mod = { flagged: false, reason: "", pending: true };
+        }
+        if (mod.pending) return;
+        const status = mod.flagged ? "removed" : "published";
+        await commitList(
+          listRef.current.map((r) =>
+            r.id === reviewId && r.response?.id === response.id
+              ? { ...r, response: { ...r.response, status, moderation: mod } }
+              : r
+          )
+        );
+      })();
+
+      return response;
+    },
+    [commitList]
+  );
+
+  // Owner-only: retract a response (e.g. to edit it by writing a new one, or
+  // just to take it down).
+  const deleteResponse = useCallback(
+    async (reviewId) => {
+      const next = listRef.current.map((r) => (r.id === reviewId ? { ...r, response: null } : r));
+      await commitList(next);
+    },
+    [commitList]
+  );
+
+  const adjustResponseHelpful = useCallback(
+    async (reviewId, delta) => {
+      const next = listRef.current.map((r) =>
+        r.id === reviewId && r.response
+          ? { ...r, response: { ...r.response, helpful: Math.max(0, (r.response.helpful || 0) + delta) } }
+          : r
+      );
+      await commitList(next);
+    },
+    [commitList]
+  );
+
   // A member flagging a review re-runs it through the same screener. Confirmed
   // violations disappear immediately; cleared reviews are marked so they can't be
   // repeatedly flagged in bad faith.
@@ -2503,7 +2840,16 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
 
   const published = useMemo(() => allReviews.filter((r) => r.status === "published"), [allReviews]);
   const visible = useMemo(
-    () => allReviews.filter((r) => r.status === "published" || (r.status === "pending" && viewerId && r.authorId === viewerId)),
+    () =>
+      allReviews
+        .filter((r) => r.status === "published" || (r.status === "pending" && viewerId && r.authorId === viewerId))
+        .map((r) => {
+          if (!r.response) return r;
+          const respVisible =
+            r.response.status === "published" ||
+            (r.response.status === "pending" && viewerId && r.response.authorId === viewerId);
+          return respVisible ? r : { ...r, response: null };
+        }),
     [allReviews, viewerId]
   );
   const avgRating = useMemo(() => {
@@ -2517,7 +2863,20 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [avgRating, count, loading]);
 
-  return { reviews: visible, avgRating, count, submitReview, flagReview, adjustHelpful, submitting, loading };
+  return {
+    reviews: visible,
+    avgRating,
+    count,
+    submitReview,
+    flagReview,
+    adjustHelpful,
+    deleteReview,
+    respondToReview,
+    deleteResponse,
+    adjustResponseHelpful,
+    submitting,
+    loading,
+  };
 }
 
 function useConversations(me) {
@@ -2569,7 +2928,26 @@ function useConversations(me) {
 function useMessages(me, cid, otherUser) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [blockedByOther, setBlockedByOther] = useState(false);
   const messagesRef = useRef([]);
+
+  // Whether the other person has blocked *me* — checked from their own
+  // profile (shared_kv is readable by any signed-in user), not from anything
+  // stored locally, since only they control that list. This is what actually
+  // keeps a blocked person's messages from arriving at all, rather than just
+  // stopping the blocker from replying.
+  useEffect(() => {
+    let cancelled = false;
+    setBlockedByOther(false);
+    if (!me || !otherUser) return;
+    (async () => {
+      const theirs = await getJSON(`users:${otherUser.id}`, true, null);
+      if (!cancelled && theirs) setBlockedByOther((theirs.blockedUserIds || []).includes(me.id));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [me?.id, otherUser?.id]);
 
   const load = useCallback(async () => {
     if (!cid) return;
@@ -2597,7 +2975,18 @@ function useMessages(me, cid, otherUser) {
 
   const send = useCallback(
     async (text) => {
-      if (!cid || !me || !text.trim()) return;
+      if (!cid || !me || !text.trim()) return { ok: false, reason: "invalid" };
+      // Re-check right before sending (not just on load) — the other person
+      // could have blocked mid-conversation, and this is the one check that
+      // must never be skipped, since it's what keeps the message from
+      // arriving at all rather than just from being replied to.
+      if (otherUser) {
+        const theirs = await getJSON(`users:${otherUser.id}`, true, null);
+        if (theirs && (theirs.blockedUserIds || []).includes(me.id)) {
+          setBlockedByOther(true);
+          return { ok: false, reason: "blocked" };
+        }
+      }
       const msg = { id: uid("msg"), senderId: me.id, body: text.trim(), createdAt: Date.now() };
       // Append to the history already held in memory. Re-reading here could fail
       // for a brand-new conversation and block the send.
@@ -2622,11 +3011,12 @@ function useMessages(me, cid, otherUser) {
           await setJSON(`notifications:${otherUser.id}`, [notif, ...(theirRead.value || [])], true);
         }
       }
+      return { ok: true };
     },
     [cid, me, otherUser]
   );
 
-  return { messages, loading, send };
+  return { messages, loading, send, blockedByOther };
 }
 
 function useNotifications(me) {
@@ -3017,7 +3407,7 @@ function usePhotoUrl(photoId) {
 /* Four independent ways in. If a host blocks the file dialog, paste and drop
    still work, and the status line says which stage failed instead of leaving a
    dead button. */
-function PhotoPicker({ photoId, onChange, shape = "rect", label = "Add a photo", hint, square = false, maxDim, size = "md" }) {
+function PhotoPicker({ photoId, onChange, shape = "rect", label = "Add a photo", hint, square = false, maxDim, size = "md", aspect }) {
   const { putPhoto, showToast } = useApp();
   const existing = usePhotoUrl(photoId);
   const [busy, setBusy] = useState(false);
@@ -3025,39 +3415,59 @@ function PhotoPicker({ photoId, onChange, shape = "rect", label = "Add a photo",
   const [status, setStatus] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [awaitingPick, setAwaitingPick] = useState(false);
+  const [editorSrc, setEditorSrc] = useState(null);
   const inputId = useRef(uid("file")).current;
   const cameraId = useRef(uid("cam")).current;
   const zoneRef = useRef(null);
 
-  const ingest = useCallback(
-    async (file) => {
-      if (!file) return;
-      setAwaitingPick(false);
+  const cropAspect = aspect || (square ? 1 : 4 / 3);
+  const outMaxDim = maxDim || (square ? AVATAR_MAX_DIM : PHOTO_MAX_DIM);
+
+  // A picked (or dropped/pasted) file is read as-is and handed to the editor —
+  // resizing, cropping, filtering, and compressing all happen there, right
+  // before the result is what actually gets saved.
+  const openEditorForFile = useCallback(async (file) => {
+    if (!file) return;
+    setAwaitingPick(false);
+    setError("");
+    setBusy(true);
+    setStatus("Reading photo…");
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setEditorSrc(dataUrl);
+      setStatus("");
+    } catch (err) {
+      setError(err.message || "Something went wrong.");
+      setStatus("");
+    }
+    setBusy(false);
+  }, []);
+
+  const saveEdited = useCallback(
+    async (dataUrl) => {
+      setEditorSrc(null);
       setBusy(true);
       setError("");
-      setStatus("Reading photo…");
+      setStatus("Saving…");
       try {
-        const dataUrl = await processImageFile(file, { square, maxDim: maxDim || (square ? AVATAR_MAX_DIM : PHOTO_MAX_DIM) });
-        setStatus("Saving…");
         const id = await savePhoto(dataUrl);
         if (!id) throw new Error("Saved image could not be stored. Try a smaller photo.");
         putPhoto(id, dataUrl);
         onChange(id);
-        setStatus("");
         showToast?.("Photo added");
       } catch (err) {
         setError(err.message || "Something went wrong.");
-        setStatus("");
       }
+      setStatus("");
       setBusy(false);
     },
-    [square, maxDim, onChange, putPhoto, showToast]
+    [onChange, putPhoto, showToast]
   );
 
   const onFileInput = (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = "";
-    if (file) ingest(file);
+    if (file) openEditorForFile(file);
     else setAwaitingPick(false);
   };
 
@@ -3067,18 +3477,18 @@ function PhotoPicker({ photoId, onChange, shape = "rect", label = "Add a photo",
       const items = e.clipboardData && e.clipboardData.files;
       if (items && items.length) {
         e.preventDefault();
-        ingest(items[0]);
+        openEditorForFile(items[0]);
       }
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [ingest]);
+  }, [openEditorForFile]);
 
   const onDrop = (e) => {
     e.preventDefault();
     setDragOver(false);
     const file = e.dataTransfer?.files?.[0];
-    if (file) ingest(file);
+    if (file) openEditorForFile(file);
   };
 
   const round = shape === "round";
@@ -3132,6 +3542,11 @@ function PhotoPicker({ photoId, onChange, shape = "rect", label = "Add a photo",
               Take a photo
             </label>
             {existing && (
+              <button type="button" onClick={() => setEditorSrc(existing)} className="cs-t11 font-semibold text-stone-500 hover:text-emerald-800">
+                Edit / reposition
+              </button>
+            )}
+            {existing && (
               <button type="button" onClick={() => onChange(null)} className="cs-t11 text-stone-400 hover:text-rose-600">
                 Remove
               </button>
@@ -3146,6 +3561,17 @@ function PhotoPicker({ photoId, onChange, shape = "rect", label = "Add a photo",
           {error && <p className="cs-t11 text-rose-600 mt-0.5">{error}</p>}
         </div>
       </div>
+
+      {editorSrc && (
+        <PhotoEditorModal
+          src={editorSrc}
+          aspect={cropAspect}
+          round={shape === "round"}
+          maxDim={outMaxDim}
+          onCancel={() => setEditorSrc(null)}
+          onSave={saveEdited}
+        />
+      )}
 
       <input
         id={inputId}
@@ -4634,13 +5060,29 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
     },
     [entityType, entityId, shopId, updateShop, updateProduct]
   );
-  const { reviews, avgRating, count, submitReview, flagReview, adjustHelpful, submitting } = useReviews(entityType, entityId, handleStats, me?.id);
+  const {
+    reviews,
+    avgRating,
+    count,
+    submitReview,
+    flagReview,
+    adjustHelpful,
+    deleteReview,
+    respondToReview,
+    deleteResponse,
+    adjustResponseHelpful,
+    submitting,
+  } = useReviews(entityType, entityId, handleStats, me?.id);
   const [writing, setWriting] = useState(false);
   const [draftRating, setDraftRating] = useState(0);
   const [draftBody, setDraftBody] = useState("");
   const [lastResult, setLastResult] = useState(null);
   const [flagState, setFlagState] = useState({});
   const [pendingHelpful, setPendingHelpful] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [replyDraft, setReplyDraft] = useState("");
+  const [replyBusy, setReplyBusy] = useState(false);
+  const [pendingRespHelpful, setPendingRespHelpful] = useState(null);
 
   const handleHelpful = async (reviewId) => {
     if (!me || pendingHelpful) return;
@@ -4650,11 +5092,51 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
     setPendingHelpful(null);
   };
 
+  const handleResponseHelpful = async (reviewId) => {
+    if (!me || pendingRespHelpful) return;
+    setPendingRespHelpful(reviewId);
+    const res = await toggleHelpfulMark(`resp:${reviewId}`);
+    if (res) await adjustResponseHelpful(reviewId, res.added ? 1 : -1);
+    setPendingRespHelpful(null);
+  };
+
   const handleFlag = async (reviewId) => {
     setFlagState((s) => ({ ...s, [reviewId]: "checking" }));
     const { outcome } = await flagReview(reviewId, me.id);
     setFlagState((s) => ({ ...s, [reviewId]: outcome }));
     if (outcome === "removed") showToast("Review removed — thanks for reporting it");
+  };
+
+  const handleDeleteReview = async (reviewId) => {
+    if (!window.confirm("Delete this review? This can't be undone.")) return;
+    await deleteReview(reviewId);
+    showToast("Review deleted");
+  };
+
+  const startReply = (review) => {
+    setReplyingTo(review.id);
+    setReplyDraft(review.response?.body || "");
+  };
+
+  const cancelReply = () => {
+    setReplyingTo(null);
+    setReplyDraft("");
+  };
+
+  const submitReply = async (reviewId) => {
+    if (!me || !replyDraft.trim() || replyBusy) return;
+    setReplyBusy(true);
+    await respondToReview(reviewId, me, replyDraft.trim());
+    setReplyBusy(false);
+    setReplyingTo(null);
+    setReplyDraft("");
+    showToast("Response posted");
+  };
+
+  const handleDeleteResponse = async (reviewId) => {
+    if (!window.confirm("Remove your response to this review?")) return;
+    await deleteResponse(reviewId);
+    showToast("Response removed");
   };
 
   const alreadyReviewed = me && reviews.some((r) => r.authorId === me.id);
@@ -4786,7 +5268,80 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
                     )}
                     </span>
                   )}
+                  {isOwner && !r.response && replyingTo !== r.id && (
+                    <button onClick={() => startReply(r)} className="cs-t11 text-stone-400 hover:text-emerald-800 inline-flex items-center gap-1">
+                      <MessageCircle size={11} /> Respond
+                    </button>
+                  )}
+                  {isOwner && (
+                    <button onClick={() => handleDeleteReview(r.id)} className="cs-t11 text-stone-400 hover:text-rose-600 inline-flex items-center gap-1">
+                      <Trash2 size={11} /> Delete
+                    </button>
+                  )}
                 </div>
+
+                {isOwner && replyingTo === r.id && (
+                  <div className="mt-2.5 bg-stone-50 rounded-xl p-3 border border-stone-200">
+                    <TextField
+                      value={replyDraft}
+                      onChange={setReplyDraft}
+                      placeholder="Write a response to this review…"
+                      label="Your response"
+                      multiline
+                      rows={3}
+                      className="w-full border border-stone-200 rounded-lg p-2 text-sm outline-none focus:border-emerald-700"
+                    />
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={cancelReply} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-stone-500">Cancel</button>
+                      <button
+                        onClick={() => submitReply(r.id)}
+                        disabled={replyBusy || !replyDraft.trim()}
+                        className="flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-800 text-white disabled:opacity-40 flex items-center justify-center gap-1.5"
+                      >
+                        {replyBusy ? <><Loader2 size={12} className="animate-spin" /> Posting…</> : "Post response"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {r.response && (
+                  <div className="mt-2.5 ml-2 pl-3 border-l-2 border-emerald-100">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="cs-t11 font-bold text-emerald-800 uppercase tracking-wide">Owner response</span>
+                      {r.response.status === "pending" && me && r.response.authorId === me.id && (
+                        <span className="cs-t10 font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">Pending review</span>
+                      )}
+                      <span className="cs-t11 text-stone-400">{timeAgo(r.response.createdAt)}</span>
+                    </div>
+                    <p className="text-sm text-stone-600 mt-1">{r.response.body}</p>
+                    <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                      <button
+                        onClick={() => handleResponseHelpful(r.id)}
+                        disabled={!me || pendingRespHelpful === r.id}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition ${
+                          helpfulMarks?.[`resp:${r.id}`]
+                            ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                            : "bg-white border-stone-200 text-stone-500 hover:bg-stone-50"
+                        } ${!me ? "opacity-50" : ""}`}
+                        aria-pressed={!!helpfulMarks?.[`resp:${r.id}`]}
+                        aria-label={helpfulMarks?.[`resp:${r.id}`] ? "Remove helpful mark" : "Mark this response helpful"}
+                      >
+                        <ThumbsUp size={13} className={helpfulMarks?.[`resp:${r.id}`] ? "fill-emerald-700 text-emerald-700" : ""} />
+                        <span className="cs-t11 font-semibold">{r.response.helpful || 0}</span>
+                      </button>
+                      {isOwner && (
+                        <>
+                          <button onClick={() => startReply(r)} className="cs-t11 text-stone-400 hover:text-emerald-800 inline-flex items-center gap-1">
+                            <Pencil size={11} /> Edit
+                          </button>
+                          <button onClick={() => handleDeleteResponse(r.id)} className="cs-t11 text-stone-400 hover:text-rose-600 inline-flex items-center gap-1">
+                            <Trash2 size={11} /> Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -4800,7 +5355,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
    SECTION 17: PRODUCT DETAIL MODAL
 ============================================================================ */
 function ProductDetailModal({ product, open, onClose, navigate }) {
-  const { shopsById, favProducts, toggleFavorite, me, userLoc, showToast } = useApp();
+  const { shopsById, favProducts, toggleFavorite, incrementShare, me, userLoc, showToast } = useApp();
   if (!product) return null;
   const shop = shopsById[product.shopId];
   const cat = catInfo(product.category);
@@ -4809,6 +5364,7 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
 
   const handleShare = async () => {
     const res = await shareContent({ title: product.name, text: `Check out ${product.name} from ${shop?.name} on CropSwap — ${formatPrice(product.price)}.` });
+    if (res.ok) incrementShare("product", product);
     if (res.method === "clipboard") showToast("Link copied to clipboard");
     else if (res.method === "none") showToast("Sharing isn't available on this device");
   };
@@ -4870,7 +5426,7 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
           <div className="flex items-center gap-2 mt-5">
             <FavoriteHeart active={isFav} count={product.favoriteCount || 0} disabled={!me} onToggle={() => toggleFavorite("product", product)} size="lg" />
             <button onClick={handleShare} className="flex-1 flex items-center justify-center gap-1.5 border border-stone-200 rounded-xl py-2.5 font-semibold text-sm text-stone-700">
-              <Share2 size={15} /> Share
+              <Share2 size={15} /> Share{product.shareCount > 0 ? ` · ${product.shareCount}` : ""}
             </button>
             {me && shop && me.id !== shop.ownerId && (
               <button
@@ -4953,7 +5509,7 @@ function ConfirmDelete({ product, shopId, onClose }) {
    SECTION 18: SHOP PROFILE VIEW
 ============================================================================ */
 function ShopProfileView({ shopId, navigate }) {
-  const { shopsById, products, favShops, toggleFavorite, me, userLoc, showToast } = useApp();
+  const { shopsById, products, favShops, toggleFavorite, incrementShare, me, userLoc, showToast } = useApp();
   const [addOpen, setAddOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [deletingProduct, setDeletingProduct] = useState(null);
@@ -4969,6 +5525,7 @@ function ShopProfileView({ shopId, navigate }) {
 
   const handleShare = async () => {
     const res = await shareContent({ title: shop.name, text: `${shop.name} in ${shop.city}, ${shop.state} — find them on CropSwap.` });
+    if (res.ok) incrementShare("shop", shop);
     if (res.method === "clipboard") showToast("Link copied to clipboard");
     else if (res.method === "none") showToast("Sharing isn't available on this device");
   };
@@ -5043,7 +5600,7 @@ function ShopProfileView({ shopId, navigate }) {
         <div className="flex items-center gap-2 mt-4">
           <FavoriteHeart active={isFav} count={shop.favoriteCount || 0} disabled={!me} onToggle={() => toggleFavorite("shop", shop)} size="lg" />
           <button onClick={handleShare} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
-            <Share2 size={15} /> Share
+            <Share2 size={15} /> Share{shop.shareCount > 0 ? ` · ${shop.shareCount}` : ""}
           </button>
           {me && !isOwner && (
             <button
@@ -5270,6 +5827,8 @@ function LayoutTab({ shop }) {
           onChange={(id) => updateShop(shop.id, { coverPhotoId: id })}
           label="Upload a cover photo"
           hint="Shown across the top of your storefront"
+          aspect={16 / 7}
+          size="lg"
         />
       </div>
 
@@ -6464,17 +7023,19 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
     }
   }, [selectedCid, conversations, activeOther]);
 
-  const { messages, send } = useMessages(me, selectedCid, activeOther);
+  const { messages, send, blockedByOther } = useMessages(me, selectedCid, activeOther);
   const isBlocked = !!activeOther && (me.blockedUserIds || []).includes(activeOther.id);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length]);
 
-  const handleSend = () => {
-    if (!text.trim() || isBlocked) return;
-    send(text);
+  const handleSend = async () => {
+    if (!text.trim() || isBlocked || blockedByOther) return;
+    const outgoing = text;
     setText("");
+    const res = await send(outgoing);
+    if (res && res.reason === "blocked") showToast("This person isn't accepting messages right now");
   };
 
   // Reporting files the report with recent context, then blocks — someone you
@@ -6567,15 +7128,19 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
           </div>
           {isBlocked ? (
             <div className="p-4 text-center text-xs text-stone-400 border-t border-stone-200">You've blocked this person. Unblock to send messages.</div>
+          ) : blockedByOther ? (
+            <div className="p-4 text-center text-xs text-stone-400 border-t border-stone-200">You can't send messages to this person right now.</div>
           ) : (
             <div className="p-3 border-t border-stone-200 flex items-end gap-2">
               <TextField
                 value={text}
                 onChange={setText}
                 onSubmit={(v) => {
-                  if (!v.trim() || isBlocked) return;
-                  send(v);
+                  if (!v.trim() || isBlocked || blockedByOther) return;
                   setText("");
+                  send(v).then((res) => {
+                    if (res && res.reason === "blocked") showToast("This person isn't accepting messages right now");
+                  });
                 }}
                 multiline
                 rows={1}
@@ -6766,7 +7331,24 @@ function AccountModal({ open, onClose }) {
               ))}
             </div>
             <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Display name</p>
-            <TextField value={name} onChange={setName} onBlur={(v) => updateMe({ name: (v || "").trim() || me.name })} label="Display name" placeholder="Your name" className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm mb-2 outline-none focus:border-emerald-700" />
+            <TextField
+              value={name}
+              onChange={setName}
+              onBlur={(v) => {
+                const trimmed = (v || "").trim() || me.name;
+                if (trimmed !== me.name) {
+                  updateMe({ name: trimmed });
+                  showToast("Display name updated");
+                } else if (trimmed !== v) {
+                  // Cleared or whitespace-only — snap the field back to the name
+                  // that's actually saved instead of leaving it visually blank.
+                  setName(trimmed);
+                }
+              }}
+              label="Display name"
+              placeholder="Your name"
+              className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm mb-2 outline-none focus:border-emerald-700"
+            />
             <p className="text-xs text-stone-400">Member since {new Date(me.createdAt).toLocaleDateString()}</p>
           </div>
         )}
@@ -7393,6 +7975,22 @@ function RootShell() {
     [me, fav, market]
   );
 
+  // A simple running tally, like favorites but not per-user — every completed
+  // share (not a cancelled share sheet) bumps the count. Works even when
+  // signed out, since sharing itself doesn't require an account.
+  const incrementShare = useCallback(
+    (type, entity) => {
+      if (!entity) return;
+      const nextCount = (entity.shareCount || 0) + 1;
+      if (type === "shop") {
+        market.updateShop(entity.id, { shareCount: nextCount });
+      } else {
+        market.updateProduct(entity.shopId, entity.id, { shareCount: nextCount });
+      }
+    },
+    [market]
+  );
+
   const productsById = useMemo(() => Object.fromEntries(market.products.map((p) => [p.id, p])), [market.products]);
 
   const ctxValue = {
@@ -7421,6 +8019,7 @@ function RootShell() {
     favProducts: fav.favProducts,
     favShops: fav.favShops,
     toggleFavorite,
+    incrementShare,
     notifications: notif.notifications,
     unreadCount: notif.unreadCount,
     markAllRead: notif.markAllRead,
