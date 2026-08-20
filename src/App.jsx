@@ -3492,9 +3492,15 @@ function PhotoPicker({ photoId, onChange, shape = "rect", label = "Add a photo",
   };
 
   const round = shape === "round";
+  // A rect preview at "lg" size stands in for the actual crop the editor will
+  // produce, so it's sized to the same aspect ratio (cropAspect) rather than a
+  // fixed short height — otherwise it reads as a cramped thumbnail that
+  // doesn't resemble what gets saved.
+  const stackedRect = !round && size === "lg";
   const box = round
     ? size === "lg" ? "w-28 h-28 rounded-full" : "w-20 h-20 rounded-full"
-    : size === "lg" ? "w-full h-36 rounded-xl" : "w-24 h-20 rounded-xl";
+    : stackedRect ? "w-full rounded-xl" : "w-24 h-20 rounded-xl";
+  const boxStyle = stackedRect ? { aspectRatio: String(cropAspect) } : undefined;
 
   return (
     <div
@@ -3506,7 +3512,7 @@ function PhotoPicker({ photoId, onChange, shape = "rect", label = "Add a photo",
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
     >
-      <div className={round && size === "lg" ? "flex flex-col items-center gap-2" : "flex items-center gap-3"}>
+      <div className={round && size === "lg" ? "flex flex-col items-center gap-2" : stackedRect ? "flex flex-col gap-2" : "flex items-center gap-3"}>
         <label
           htmlFor={inputId}
           onClick={() => {
@@ -3514,6 +3520,7 @@ function PhotoPicker({ photoId, onChange, shape = "rect", label = "Add a photo",
             setError("");
             setTimeout(() => setAwaitingPick((v) => v), 100);
           }}
+          style={boxStyle}
           className={`relative overflow-hidden shrink-0 cursor-pointer border-2 border-dashed flex items-center justify-center transition ${box} ${
             dragOver ? "border-emerald-600 bg-emerald-50" : "border-stone-300 bg-stone-50 hover:border-emerald-600"
           }`}
@@ -3533,7 +3540,7 @@ function PhotoPicker({ photoId, onChange, shape = "rect", label = "Add a photo",
           )}
         </label>
 
-        <div className={round && size === "lg" ? "text-center" : "flex-1 min-w-0"}>
+        <div className={round && size === "lg" ? "text-center" : stackedRect ? "w-full min-w-0" : "flex-1 min-w-0"}>
           <label htmlFor={inputId} className="text-sm font-semibold text-emerald-800 cursor-pointer">
             {busy ? status || "Working…" : existing ? "Choose a different photo" : label}
           </label>
@@ -4592,7 +4599,7 @@ function MapShopPanel({ entry, onOpenShop, onClose }) {
   const categories = [...new Set(shopProducts.map((pr) => pr.category))].slice(0, 4);
 
   return (
-    <div className="mt-3 bg-white border border-stone-200 rounded-xl cs-card overflow-hidden">
+    <div className="bg-white border border-stone-200 rounded-xl cs-card shadow-xl overflow-hidden">
       <div className="flex gap-3 p-3">
         <span className="w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-stone-100">
           <ShopThumb shop={shop} />
@@ -4826,6 +4833,14 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
     ? { left: lngToWorldX(userLoc.lng, zoom) - originX, top: latToWorldY(userLoc.lat, zoom) - originY }
     : null;
 
+  // Re-derived from `pins` every render (not captured once at click time) so
+  // the popup tracks the pin's on-screen spot as the map is panned or zoomed,
+  // instead of drifting away from the icon it belongs to.
+  const selectedPin = selected ? pins.find((p) => p.shop.id === selected.shop.id) : null;
+  const POPUP_WIDTH = 320;
+  const POPUP_GAP = 10;
+  const popupLeft = selectedPin ? clamp(selectedPin.left, POPUP_WIDTH / 2 + 8, Math.max(POPUP_WIDTH / 2 + 8, size.width - POPUP_WIDTH / 2 - 8)) : 0;
+
   const beginPan = (e) => {
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -4858,6 +4873,7 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
 
   return (
     <div>
+      <div className="relative">
       <div
         ref={wrapRef}
         onPointerDown={beginPan}
@@ -5040,8 +5056,20 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
 
       </div>
 
-      {/* Sits below the map in normal flow, so nothing can clip or cover it. */}
-      {selected && <MapShopPanel entry={selected} onOpenShop={onOpenShop} onClose={() => setSelected(null)} />}
+      {/* Floats over the map itself, anchored just under the pin that was
+          clicked, instead of appearing in normal flow below the whole map
+          (which could be well off-screen and read as nothing having
+          happened). Rendered outside the map's own overflow-hidden box so it
+          never gets clipped by the map's rounded corners. */}
+      {selectedPin && (
+        <div
+          className="absolute z-20"
+          style={{ left: popupLeft, top: selectedPin.top + POPUP_GAP, width: POPUP_WIDTH, maxWidth: "calc(100% - 16px)", transform: "translateX(-50%)" }}
+        >
+          <MapShopPanel entry={selected} onOpenShop={onOpenShop} onClose={() => setSelected(null)} />
+        </div>
+      )}
+      </div>
 
       <p className="cs-t11 text-stone-400 mt-2">Drag to pan · zoom {zoom} · {pins.length} vendor{pins.length === 1 ? "" : "s"} shown</p>
     </div>
