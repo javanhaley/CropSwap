@@ -5,8 +5,9 @@ import {
   Volume2, VolumeX, Users, TrendingUp, Eye, Globe, Phone, Mail,
   Home, Package, Filter, GripVertical, BadgeCheck, AlertCircle,
   LayoutGrid, UserPlus, ShoppingBag, Sparkles, ShieldAlert, Bookmark,
+  Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
 } from "lucide-react";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
 // in place of the Claude.ai artifact runtime's sandbox-only implementation.
 import "./storage";
@@ -1453,6 +1454,48 @@ function timeAgo(ts) {
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
+function addDays(ts, days) {
+  return ts + days * 86400000;
+}
+function daysBetween(a, b) {
+  return (b - a) / 86400000;
+}
+// Best-effort split of a "City, ST" style location label into its parts —
+// tolerant of missing input since not every account has a home location.
+function splitCityState(label) {
+  if (!label || typeof label !== "string") return { city: null, state: null };
+  const parts = label.split(",").map((s) => s.trim());
+  return { city: parts[0] || null, state: parts[1] || null };
+}
+// Fire-and-forget analytics logging for the premium dashboard. Never allowed
+// to throw into the caller — a dropped analytics row is a rounding error on a
+// chart, not something that should ever break the feature it's attached to.
+async function logAnalyticsEvent(eventType, fields = {}) {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const actorId = data?.session?.user?.id || null;
+    await supabase.from("analytics_events").insert({
+      event_type: eventType,
+      entity_id: fields.entityId ?? null,
+      entity_name: fields.entityName ?? null,
+      shop_id: fields.shopId ?? null,
+      actor_id: actorId,
+      city: fields.city ?? null,
+      state: fields.state ?? null,
+      meta: fields.meta ?? {},
+    });
+  } catch (e) {
+    console.error("analytics log failed", eventType, e);
+  }
+}
+// De-dupes view logging to once per entity per page load — a refresh resets
+// it, which is an acceptable amount of over-counting for view analytics.
+const _viewLogged = new Set();
+function logViewOnce(key, fn) {
+  if (_viewLogged.has(key)) return;
+  _viewLogged.add(key);
+  fn();
+}
 // Pure favourite toggle. Kept separate from storage so it can be tested, and so
 // the caller never has to re-read a record it already holds.
 function applyFavoriteToggle(record, type, id) {
@@ -1472,6 +1515,20 @@ function safeParseModeration(raw) {
   } catch (e) {
     return { flagged: false, reason: "", ok: false };
   }
+}
+// A shop whose plan lapsed (cancelled/expired) goes offline to everyone but
+// its own owner — it stays on the platform, inactive, until the ABANDON_DAYS
+// sweep in useMarketData.loadAll() removes it, or the owner re-subscribes.
+function isShopVisible(shop, viewerId) {
+  if (!shop) return false;
+  return shop.billingStatus !== "inactive" || shop.ownerId === viewerId;
+}
+// Stricter than isShopVisible — used for general browse/search/map results,
+// where an inactive shop shouldn't appear at all, even to its own owner
+// (they manage/reactivate it from Account > Selling, not by finding it mixed
+// into normal listings).
+function isShopBrowsable(shop) {
+  return !!shop && shop.billingStatus !== "inactive";
 }
 function applyFilters(products, { search, categories, maxDistance, minRating, minPrice, maxPrice, inSeasonOnly, verifiedOnly, shopsById, userLoc }) {
   const term = (search || "").trim().toLowerCase();
@@ -2132,7 +2189,7 @@ function useCurrentUser() {
     };
   }, [session]);
 
-  const createProfile = useCallback(async ({ name, avatar }) => {
+  const createProfile = useCallback(async ({ name, avatar, homeLocation }) => {
     const id = sessionRef.current?.user?.id;
     if (!id) throw new Error("No authenticated session — sign in first.");
     const profile = {
@@ -2142,7 +2199,8 @@ function useCurrentUser() {
       createdAt: Date.now(),
       isVendor: false,
       shopId: null,
-      subscriptionTier: "sprout",
+      homeLocation: homeLocation || null,
+      plan: { tier: "free", billing: null, status: null, startedAt: null, periodEnd: null, cancelledAt: null, refundPct: null },
       notificationPrefs: { master: true, sound: true, messages: true, reviews: true, favorites: true },
       blockedUserIds: [],
     };
@@ -2150,6 +2208,8 @@ function useCurrentUser() {
     await setJSON(`users:${id}`, profile, true);
     meRef.current = profile;
     setMeState(profile);
+    const { city, state } = splitCityState(homeLocation?.label);
+    logAnalyticsEvent("signup", { entityId: id, city, state });
     return profile;
   }, []);
 
@@ -2259,8 +2319,39 @@ function useMarketData() {
     // should trigger demo reseeding; otherwise an intentionally emptied
     // market would silently repopulate with fake shops on next load.
     if (stored && Array.isArray(stored.shops)) {
-      applyMarket(stored.shops, Array.isArray(stored.products) ? stored.products : []);
+      // Storefronts belonging to a lapsed (cancelled/expired) plan are kept
+      // around, inactive, for ABANDON_DAYS in case the owner re-subscribes —
+      // this lazy sweep is what actually removes them once that window has
+      // passed, since there's no server-side cron in this stack to do it.
+      const now = Date.now();
+      const keptShops = [];
+      const droppedShopIds = new Set();
+      const droppedOwnerIds = [];
+      (stored.shops || []).forEach((sh) => {
+        const abandoned = sh.billingStatus === "inactive" && sh.inactiveSince && daysBetween(sh.inactiveSince, now) > ABANDON_DAYS;
+        if (abandoned) {
+          droppedShopIds.add(sh.id);
+          if (sh.ownerId) droppedOwnerIds.push(sh.ownerId);
+        } else keptShops.push(sh);
+      });
+      const rawProducts = Array.isArray(stored.products) ? stored.products : [];
+      const keptProducts = droppedShopIds.size ? rawProducts.filter((p) => !droppedShopIds.has(p.shopId)) : rawProducts;
+      applyMarket(keptShops, keptProducts);
       setLoading(false);
+      if (droppedShopIds.size) {
+        setJSON(MARKET_KEY, { shops: keptShops, products: keptProducts }, true);
+        // The public profile mirror is writable by anyone signed in, so it
+        // can be corrected right here; the owner's own private me:profile
+        // gets reconciled separately, the next time their own session loads
+        // (see the shop-existence check in RootShell), since only they can
+        // write to it.
+        droppedOwnerIds.forEach(async (ownerId) => {
+          const owner = await getJSON(`users:${ownerId}`, true, null);
+          if (owner && owner.shopId && droppedShopIds.has(owner.shopId)) {
+            setJSON(`users:${ownerId}`, { ...owner, isVendor: false, shopId: null }, true);
+          }
+        });
+      }
       return;
     }
 
@@ -2359,6 +2450,8 @@ function useMarketData() {
         emoji: "\u{1F9FA}",
         verified: false,
         status: "open",
+        billingStatus: "active",
+        inactiveSince: null,
         contactCard: [],
         layoutBlocks: ["banner", "bio", "contact", "gallery", "reviews"],
         favoriteCount: 0,
@@ -2921,6 +3014,25 @@ function useConversations(me) {
           );
         }
         setList([entry, ...mine]);
+
+        // First-ever contact with a Premium vendor auto-subscribes the
+        // customer to that vendor's mailing list — removable only by the
+        // vendor today (Dashboard > Mailing list), no self-serve unsubscribe
+        // yet. Lives in shared_kv, like everything else multi-writer here,
+        // since the customer — not the vendor — is the one making this write.
+        (async () => {
+          const ownerProfile = await getJSON(`users:${otherUser.id}`, true, null);
+          if (!ownerProfile?.isVendor || ownerProfile?.plan?.tier !== "premium") return;
+          const listRes = await readJSON(`mailingList:${otherUser.id}`, true, []);
+          if (!listRes.ok) return;
+          const list = Array.isArray(listRes.value) ? listRes.value : [];
+          if (list.find((s) => s.userId === me.id)) return;
+          await setJSON(
+            `mailingList:${otherUser.id}`,
+            [...list, { userId: me.id, name: me.name, avatar: me.avatar, source: "message", addedAt: Date.now(), subscribed: true }],
+            true
+          );
+        })();
       }
       return cid;
     },
@@ -3015,6 +3127,7 @@ function useMessages(me, cid, otherUser) {
         if (theirRead.ok) {
           await setJSON(`notifications:${otherUser.id}`, [notif, ...(theirRead.value || [])], true);
         }
+        logAnalyticsEvent("message", { entityId: otherUser.id, shopId: otherUser.shopId || null });
       }
       return { ok: true };
     },
@@ -3095,6 +3208,43 @@ async function notifyShopOwner(shop, type, title, body, route) {
   const read = await readJSON(`notifications:${shop.ownerId}`, true, []);
   if (!read.ok) return;
   await setJSON(`notifications:${shop.ownerId}`, [notif, ...(read.value || [])], true);
+}
+
+// Generic version of notifyShopOwner for any recipient, not just a shop's
+// owner — used by mailing-list broadcasts.
+async function notifyUser(userId, type, title, body, route) {
+  if (!userId) return;
+  const notif = { id: uid("notif"), type, title, body, createdAt: Date.now(), read: false, route: route || { screen: "explore" } };
+  const read = await readJSON(`notifications:${userId}`, true, []);
+  if (!read.ok) return;
+  await setJSON(`notifications:${userId}`, [notif, ...(read.value || [])], true);
+}
+
+// Delivers one message outside of the useMessages hook's own send() — used
+// by the mailing-list broadcast, which fans a single compose action out to
+// every subscriber rather than to one open conversation.
+async function deliverBroadcastMessage(fromUser, toUserId, toUserName, toUserAvatar, text) {
+  const cid = conversationId(fromUser.id, toUserId);
+  const body = `\u{1F4E3} ${text}`.trim();
+  const existing = await readJSON(`messages:${cid}`, true, []);
+  // A failed read must never be treated as "no history" — that would
+  // overwrite an existing thread with just the new broadcast message.
+  if (!existing.ok) return false;
+  const list = Array.isArray(existing.value) ? existing.value : [];
+  const msg = { id: uid("msg"), senderId: fromUser.id, body, createdAt: Date.now(), broadcast: true };
+  await setJSON(`messages:${cid}`, [...list, msg], true);
+
+  const summaryUpdate = async (userId, otherId, otherName, otherAvatar) => {
+    const list2 = await getJSON(`conversationsFor:${userId}`, true, []);
+    const idx = list2.findIndex((c) => c.id === cid);
+    const entry = { id: cid, otherUserId: otherId, otherUserName: otherName, otherUserAvatar: otherAvatar, lastMessage: body, lastAt: msg.createdAt };
+    const next2 = idx >= 0 ? [entry, ...list2.slice(0, idx), ...list2.slice(idx + 1)] : [entry, ...list2];
+    await setJSON(`conversationsFor:${userId}`, next2, true);
+  };
+  await summaryUpdate(fromUser.id, toUserId, toUserName, toUserAvatar);
+  await summaryUpdate(toUserId, fromUser.id, fromUser.name, fromUser.avatar);
+  await notifyUser(toUserId, "message", `Update from ${fromUser.name}`, text.slice(0, 80), { screen: "messages", cid });
+  return true;
 }
 
 /* ============================================================================
@@ -4348,10 +4498,19 @@ function ToggleSwitch({ checked, onChange }) {
    SECTION 15: EXPLORE VIEW
 ============================================================================ */
 function ExploreView({ navigate }) {
-  const { products, shops, shopsById, userLoc, favShops, me, showToast, globalSearch, setGlobalSearch } = useApp();
+  const { products: allProducts, shops: allShops, shopsById, userLoc, favShops, me, showToast, globalSearch, setGlobalSearch } = useApp();
   const { filters, setFilters, filterOpen, setFilterOpen, exploreView: view, setExploreView: setView, registerSaveSearch } = useApp();
   const searchDraft = globalSearch;
   const setSearchDraft = setGlobalSearch;
+
+  // Shops with a lapsed plan are excluded from general browse/search/map
+  // results entirely — including for their own owner, who manages a lapsed
+  // shop from Account > Selling instead of finding it in normal listings.
+  const shops = useMemo(() => allShops.filter(isShopBrowsable), [allShops]);
+  const products = useMemo(() => {
+    const visibleShopIds = new Set(shops.map((s) => s.id));
+    return allProducts.filter((p) => visibleShopIds.has(p.shopId));
+  }, [allProducts, shops]);
   const [savedSearches, setSavedSearches] = useState([]);
 
   useEffect(() => {
@@ -4381,7 +4540,11 @@ function ExploreView({ navigate }) {
   }, [registerSaveSearch, saveCurrentSearch]);
 
   useEffect(() => {
-    const t = setTimeout(() => setFilters((f) => ({ ...f, search: searchDraft })), 250);
+    const t = setTimeout(() => {
+      setFilters((f) => ({ ...f, search: searchDraft }));
+      const term = (searchDraft || "").trim().toLowerCase();
+      if (term.length >= 2) logAnalyticsEvent("search", { entityId: term });
+    }, 250);
     return () => clearTimeout(t);
   }, [searchDraft]);
 
@@ -5389,6 +5552,18 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
 ============================================================================ */
 function ProductDetailModal({ product, open, onClose, navigate }) {
   const { shopsById, favProducts, toggleFavorite, incrementShare, me, userLoc, showToast } = useApp();
+
+  useEffect(() => {
+    if (!open || !product) return;
+    const shopForView = shopsById[product.shopId];
+    if (shopForView && me && me.id === shopForView.ownerId) return;
+    const loc = splitCityState(me?.homeLocation?.label);
+    logViewOnce(`product:${product.id}`, () => {
+      logAnalyticsEvent("view_product", { entityId: product.id, entityName: product.name, shopId: product.shopId, city: loc.city, state: loc.state });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, product?.id, me?.id]);
+
   if (!product) return null;
   const shop = shopsById[product.shopId];
   const cat = catInfo(product.category);
@@ -5548,7 +5723,21 @@ function ShopProfileView({ shopId, navigate }) {
   const [deletingProduct, setDeletingProduct] = useState(null);
   const shop = shopsById[shopId];
 
+  useEffect(() => {
+    if (!shop || (me && me.id === shop.ownerId)) return;
+    // Logged with the *viewer's* home location, not the shop's — this is what
+    // powers the "who's engaging with your shop, and from where" panel.
+    const loc = splitCityState(me?.homeLocation?.label);
+    logViewOnce(`shop:${shop.id}`, () => {
+      logAnalyticsEvent("view_shop", { entityId: shop.id, entityName: shop.name, shopId: shop.id, city: loc.city, state: loc.state });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shop?.id, me?.id]);
+
   if (!shop) return <EmptyState icon={Store} title="Shop not found" body="This storefront may have moved." />;
+  if (!isShopVisible(shop, me?.id)) {
+    return <EmptyState icon={Store} title="This storefront is currently unavailable" body="Its owner's plan has lapsed — it may return soon." />;
+  }
 
   const theme = themeInfo(shop.themeId);
   const shopProducts = products.filter((p) => p.shopId === shop.id);
@@ -7198,20 +7387,259 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
 /* ============================================================================
    SECTION 22: ACCOUNT MODAL
 ============================================================================ */
-const SUBSCRIPTION_TIERS = [
-  { id: "sprout", name: "Sprout", price: "Free", features: ["Up to 10 listings", "1 storefront theme", "Standard placement"] },
-  { id: "bloom", name: "Bloom", price: "$9/mo", features: ["Unlimited listings", "All themes & banners", "Priority placement", "Vendor dashboard"] },
-  { id: "harvest", name: "Harvest", price: "$19/mo", features: ["Everything in Bloom", "Verified badge review", "Advanced analytics"] },
-];
+/* ============================================================================
+   TIERED PLANS — Free / Basic / Premium. No real billing yet: "purchasing" a
+   plan just flips the tier flags below via a clearly-labeled test-mode
+   checkout, so the whole product surface can be built and demoed honestly
+   before a payment processor is wired in.
+============================================================================ */
+const PLAN_CATALOG = {
+  free: {
+    id: "free",
+    name: "Free",
+    tagline: "Browse, favorite, and connect",
+    monthly: 0,
+    annual: 0,
+    features: ["Search & browse every listing", "Favorite items and shops", "Message vendors directly", "View any storefront or profile"],
+  },
+  basic: {
+    id: "basic",
+    name: "Basic",
+    tagline: "Build your storefront",
+    monthly: 10,
+    annual: 70,
+    features: ["Everything in Free", "Create your own storefront", "Unlimited listings & photos", "Reviews, responses & sharing", "Standard shop stats"],
+  },
+  premium: {
+    id: "premium",
+    name: "Premium",
+    tagline: "Sell like a pro",
+    monthly: 15,
+    annual: 100,
+    features: ["Everything in Basic", "Full analytics dashboard", "Keyword search intelligence", "Mailing list & mass messaging", "Priority placement in search"],
+  },
+};
+const REFUND_WINDOW_DAYS = 30;
+const ABANDON_DAYS = 90;
+
+function planTier(me) {
+  return me?.plan?.tier || "free";
+}
+function isBasicPlus(me) {
+  return planTier(me) === "basic" || planTier(me) === "premium";
+}
+function isPremiumPlan(me) {
+  return planTier(me) === "premium";
+}
+function planPrice(tier, billing) {
+  const p = PLAN_CATALOG[tier];
+  if (!p) return 0;
+  return billing === "annual" ? p.annual : p.monthly;
+}
+function planPeriodLabel(billing) {
+  return billing === "annual" ? "/yr" : "/mo";
+}
+function formatMoney(n) {
+  return n % 1 === 0 ? `$${n}` : `$${n.toFixed(2)}`;
+}
+
+// Small gold badge marking a feature or screen as premium. Kept as one tiny
+// component instead of an emoji so every "Premium" mention in the app looks
+// identical — the consistency is what makes it feel considered rather than
+// bolted on.
+function CrownPill({ size = "sm", className = "" }) {
+  const isSm = size === "sm";
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 text-amber-950 font-bold shadow-sm ${isSm ? "px-2 py-0.5 text-[10px]" : "px-3 py-1 text-xs"} ${className}`}
+    >
+      <Crown size={isSm ? 11 : 13} /> Premium
+    </span>
+  );
+}
+
+// A locked control styled to look like a real, inviting button rather than a
+// greyed-out dead end — the goal is to make upgrading feel like unlocking
+// something, the way Apple/LinkedIn/Tesla dangle a feature just out of reach.
+// Clicking always routes straight to the plans screen.
+function LockedFeatureButton({ label, sub, navigate, className = "", icon: Icon = Lock }) {
+  return (
+    <button
+      onClick={() => navigate({ screen: "plans" })}
+      className={`group relative w-full flex items-center gap-3 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 to-yellow-50 px-4 py-3 text-left overflow-hidden transition hover:border-amber-300 hover:shadow-md ${className}`}
+    >
+      <span className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0 shadow-sm">
+        <Icon size={16} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-bold text-stone-900">{label}</span>
+        <span className="block text-xs text-amber-700 font-medium">{sub || "Premium Plan feature only"}</span>
+      </span>
+      <ChevronRight size={16} className="text-amber-500 shrink-0 group-hover:translate-x-0.5 transition" />
+    </button>
+  );
+}
+
+// Small inline nudge for a feature that's already visible, rather than fully
+// blocked — a hint, not a wall.
+function UpgradeHint({ text = "Premium feature", navigate }) {
+  return (
+    <button onClick={() => navigate({ screen: "plans" })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 hover:text-amber-800">
+      <Crown size={11} /> {text}
+    </button>
+  );
+}
+
+/* ============================================================================
+   SECTION 24b: PLANS + CHECKOUT — Free / Basic / Premium, monthly or annual.
+   No payment processor yet: "purchasing" is an explicit test-mode action so
+   the whole tiered product can be built and demoed honestly today.
+============================================================================ */
+function PlansScreen({ navigate }) {
+  const { me } = useApp();
+  const [billing, setBilling] = useState("monthly");
+  const currentTier = planTier(me);
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-4xl mx-auto px-4 pt-4">
+        <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+          <ArrowLeft size={15} /> Back
+        </button>
+        <div className="text-center mb-6">
+          <h1 className="text-3xl font-bold text-stone-900 mb-1" style={displayFont}>Choose your plan</h1>
+          <p className="text-stone-500 text-sm">No payment is collected yet — this is a fully working test-mode preview.</p>
+        </div>
+
+        <div className="flex justify-center mb-8">
+          <div className="flex gap-1 bg-stone-100 rounded-full p-1">
+            {[{ id: "monthly", label: "Monthly" }, { id: "annual", label: "Annual · save ~40%" }].map((b) => (
+              <button key={b.id} onClick={() => setBilling(b.id)} className={`px-4 py-1.5 rounded-full text-xs font-semibold transition ${billing === b.id ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>
+                {b.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-4">
+          {Object.values(PLAN_CATALOG).map((p) => {
+            const isCurrent = currentTier === p.id;
+            const price = billing === "annual" ? p.annual : p.monthly;
+            const isPremiumCard = p.id === "premium";
+            return (
+              <div
+                key={p.id}
+                className={`rounded-2xl p-5 border-2 flex flex-col ${
+                  isPremiumCard ? "border-amber-300 bg-gradient-to-b from-amber-50 to-white shadow-lg" : isCurrent ? "border-emerald-700 bg-emerald-50" : "border-stone-200 bg-white"
+                }`}
+              >
+                <div className="flex items-center gap-1.5 mb-1">
+                  {isPremiumCard && <Crown size={16} className="text-amber-500" />}
+                  <p className="text-lg font-bold text-stone-900" style={displayFont}>{p.name}</p>
+                  {isCurrent && <span className="ml-auto text-[10px] font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">Current</span>}
+                </div>
+                <p className="text-sm text-stone-500 mb-3">{p.tagline}</p>
+                <p className="text-3xl font-bold text-stone-900 mb-1" style={displayFont}>
+                  {formatMoney(price)}
+                  {price > 0 && <span className="text-sm font-medium text-stone-400">{planPeriodLabel(billing)}</span>}
+                </p>
+                <ul className="text-xs text-stone-600 space-y-1.5 my-4 flex-1">
+                  {p.features.map((f) => (
+                    <li key={f} className="flex items-start gap-1.5">
+                      <BadgeCheck size={13} className={`mt-0.5 shrink-0 ${isPremiumCard ? "text-amber-500" : "text-emerald-700"}`} /> {f}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => (p.id === "free" ? null : navigate({ screen: "checkout", tier: p.id, billing }))}
+                  disabled={isCurrent || p.id === "free"}
+                  className={`w-full py-2.5 rounded-xl font-semibold text-sm transition disabled:opacity-40 ${
+                    isPremiumCard ? "bg-gradient-to-r from-amber-400 to-yellow-500 text-amber-950" : "bg-emerald-800 text-white"
+                  }`}
+                >
+                  {isCurrent ? "Current plan" : p.id === "free" ? "Included" : `Choose ${p.name}`}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <p className="text-center cs-t11 text-stone-400 mt-6">
+          Cancel any paid plan within {REFUND_WINDOW_DAYS} days for a 50% refund. After that, no refund — but you keep access until you cancel.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function CheckoutScreen({ navigate, tier, billing }) {
+  const { purchasePlan, showToast } = useApp();
+  const [busy, setBusy] = useState(false);
+  const plan = PLAN_CATALOG[tier];
+
+  if (!plan || plan.id === "free") {
+    return <EmptyState icon={Sparkles} title="Nothing to check out" action={<button onClick={() => navigate({ screen: "plans" })} className="text-sm font-semibold text-emerald-800">See plans</button>} />;
+  }
+
+  const price = billing === "annual" ? plan.annual : plan.monthly;
+
+  const confirm = async () => {
+    setBusy(true);
+    await purchasePlan(tier, billing);
+    setBusy(false);
+    showToast(`Welcome to ${plan.name} — test mode, no charge made`);
+    navigate({ screen: "dashboard" });
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8 flex items-start justify-center">
+      <div className="max-w-md w-full px-4 pt-6">
+        <button onClick={() => navigate({ screen: "plans" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+          <ArrowLeft size={15} /> Back to plans
+        </button>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 mb-5 flex items-center gap-2">
+          <AlertCircle size={15} className="text-amber-700 shrink-0" />
+          <p className="text-xs font-semibold text-amber-900">TEST MODE — no card, no charge. This confirms instantly.</p>
+        </div>
+
+        <div className="bg-white border border-stone-200 rounded-2xl p-5 mb-5">
+          <p className="text-xs font-bold text-stone-400 uppercase mb-3">Order summary</p>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-sm font-semibold text-stone-800 flex items-center gap-1.5">
+              {plan.id === "premium" && <Crown size={13} className="text-amber-500" />} {plan.name} plan
+            </span>
+            <span className="text-sm font-bold text-stone-900">
+              {formatMoney(price)}
+              {planPeriodLabel(billing)}
+            </span>
+          </div>
+          <p className="cs-t11 text-stone-400 mb-3">Billed {billing === "annual" ? "yearly" : "monthly"} · cancel any time</p>
+          <div className="border-t border-stone-100 pt-3 flex items-center justify-between">
+            <span className="text-sm font-bold text-stone-900">Due today</span>
+            <span className="text-sm font-bold text-stone-900">$0.00 (test mode)</span>
+          </div>
+        </div>
+
+        <button onClick={confirm} disabled={busy} className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition">
+          {busy ? "Setting up…" : `Confirm ${plan.name} (Test Mode)`}
+        </button>
+        <p className="text-center cs-t10 text-stone-400 mt-3">Real payments aren't collected yet — this is a placeholder so the product can be built and tested end to end.</p>
+      </div>
+    </div>
+  );
+}
 
 function AccountModal({ open, onClose }) {
-  const { me, updateMe, signOut, navigate, userLoc, setUserLoc, showToast } = useApp();
+  const { me, updateMe, signOut, navigate, userLoc, setUserLoc, showToast, cancelPlan } = useApp();
   const [tab, setTab] = useState("profile");
   const [name, setName] = useState(me?.name || "");
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [storageReport, setStorageReport] = useState(null);
   const [checking, setChecking] = useState(false);
+  const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   // Writes a probe, reads it back, and counts what is actually stored, so a
   // persistence problem can be identified instead of guessed at.
@@ -7323,6 +7751,7 @@ function AccountModal({ open, onClose }) {
     { id: "vendor", label: "Selling", icon: Store },
     { id: "subscription", label: "Plan", icon: Sparkles },
     { id: "notifications", label: "Alerts", icon: Bell },
+    { id: "dashboard", label: "Dashboard", icon: TrendingUp, link: true },
     { id: "places", label: "Places", icon: MapPin },
     { id: "blocked", label: "Blocked", icon: AlertCircle },
     { id: "data", label: "Data", icon: Package },
@@ -7338,7 +7767,11 @@ function AccountModal({ open, onClose }) {
 
         <div className="flex gap-1 overflow-x-auto mb-5 -mx-1 px-1">
           {tabs.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition ${tab === t.id ? "bg-emerald-800 text-white" : "bg-stone-100 text-stone-500"}`}>
+            <button
+              key={t.id}
+              onClick={() => (t.link ? (onClose(), navigate({ screen: t.id })) : setTab(t.id))}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition ${tab === t.id ? "bg-emerald-800 text-white" : "bg-stone-100 text-stone-500"}`}
+            >
               <t.icon size={13} /> {t.label}
             </button>
           ))}
@@ -7393,30 +7826,94 @@ function AccountModal({ open, onClose }) {
               <button onClick={() => { onClose(); navigate({ screen: "storeEditor" }); }} className="w-full bg-emerald-800 text-white font-semibold py-2.5 rounded-xl mb-2">Edit my storefront</button>
               <button onClick={() => { onClose(); navigate({ screen: "dashboard" }); }} className="w-full border border-stone-200 font-semibold py-2.5 rounded-xl text-stone-700">View dashboard</button>
             </div>
+          ) : isBasicPlus(me) ? (
+            <div>
+              <p className="text-sm text-stone-600 mb-4">Not selling yet — set up your storefront any time.</p>
+              <button onClick={() => { onClose(); navigate({ screen: "store" }); }} className="w-full bg-emerald-800 text-white font-semibold py-2.5 rounded-xl">Start selling</button>
+            </div>
           ) : (
             <div>
-              <p className="text-sm text-stone-600 mb-4">Not selling yet — set up a free storefront any time.</p>
-              <button onClick={() => { onClose(); navigate({ screen: "store" }); }} className="w-full bg-emerald-800 text-white font-semibold py-2.5 rounded-xl">Start selling</button>
+              <p className="text-sm text-stone-600 mb-4">Building a storefront is a Basic Plan feature.</p>
+              <LockedFeatureButton label="Build your storefront" sub="Basic Plan feature only" navigate={(r) => { onClose(); navigate(r); }} icon={Store} />
             </div>
           ))}
 
         {tab === "subscription" && (
           <div className="flex flex-col gap-3">
-            <p className="text-xs text-stone-400 mb-1">Preview only — no payment is collected here.</p>
-            {SUBSCRIPTION_TIERS.map((t) => (
-              <div key={t.id} className={`border-2 rounded-xl p-3.5 ${me.subscriptionTier === t.id ? "border-emerald-700 bg-emerald-50" : "border-stone-200"}`}>
-                <div className="flex items-center justify-between mb-1.5">
-                  <p className="font-bold text-stone-900">{t.name}</p>
-                  <p className="font-bold text-stone-700">{t.price}</p>
+            {(() => {
+              const tier = planTier(me);
+              const catalog = PLAN_CATALOG[tier];
+              const isPaid = tier !== "free";
+              return (
+                <div className={`rounded-xl p-4 border-2 ${tier === "premium" ? "border-amber-300 bg-gradient-to-b from-amber-50 to-white" : tier === "basic" ? "border-emerald-700 bg-emerald-50" : "border-stone-200"}`}>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    {tier === "premium" && <Crown size={15} className="text-amber-500" />}
+                    <p className="font-bold text-stone-900">{catalog.name} plan</p>
+                  </div>
+                  {isPaid ? (
+                    <>
+                      <p className="text-xs text-stone-500 mb-1">
+                        {formatMoney(planPrice(tier, me.plan.billing))}
+                        {planPeriodLabel(me.plan.billing)} · billed {me.plan.billing === "annual" ? "yearly" : "monthly"}
+                      </p>
+                      {me.plan.periodEnd && <p className="cs-t11 text-stone-400 mb-3">Renews {new Date(me.plan.periodEnd).toLocaleDateString()}</p>}
+                    </>
+                  ) : (
+                    <p className="text-xs text-stone-500 mb-3">Browsing, favoriting, and messaging — no storefront.</p>
+                  )}
+                  <div className="flex gap-2">
+                    <button onClick={() => navigate({ screen: "plans" })} className="flex-1 text-xs font-semibold py-2 rounded-lg bg-white border border-stone-300">
+                      {isPaid ? "Change plan" : "See Basic & Premium"}
+                    </button>
+                    {isPaid && (
+                      <button onClick={() => setCancelConfirm(true)} className="flex-1 text-xs font-semibold py-2 rounded-lg bg-white border border-rose-200 text-rose-600">
+                        Cancel plan
+                      </button>
+                    )}
+                  </div>
+                  {isPaid && cancelConfirm && (
+                    <div className="mt-3 pt-3 border-t border-stone-200">
+                      <p className="text-xs text-stone-600 mb-2">
+                        {daysBetween(me.plan.startedAt || Date.now(), Date.now()) <= REFUND_WINDOW_DAYS
+                          ? `You're within the ${REFUND_WINDOW_DAYS}-day window — cancelling now refunds 50% (test mode).`
+                          : `It's past day ${REFUND_WINDOW_DAYS} of this term, so no refund applies — access is removed immediately.`}
+                        {" "}Your storefront stays on the platform, inactive, for {ABANDON_DAYS} days in case you come back.
+                      </p>
+                      <div className="flex gap-2">
+                        <button onClick={() => setCancelConfirm(false)} className="flex-1 text-xs font-semibold py-2 rounded-lg border border-stone-200">Keep plan</button>
+                        <button
+                          onClick={async () => {
+                            setCancelling(true);
+                            const { refundPct } = await cancelPlan();
+                            setCancelling(false);
+                            setCancelConfirm(false);
+                            showToast(refundPct > 0 ? `Cancelled — ${refundPct}% refunded (test mode)` : "Cancelled — no refund available");
+                          }}
+                          disabled={cancelling}
+                          className="flex-1 text-xs font-semibold py-2 rounded-lg bg-rose-600 text-white disabled:opacity-50"
+                        >
+                          {cancelling ? "Cancelling…" : "Confirm cancel"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <ul className="text-xs text-stone-500 mb-3 space-y-0.5">
-                  {t.features.map((f) => <li key={f}>• {f}</li>)}
-                </ul>
-                <button onClick={() => updateMe({ subscriptionTier: t.id })} disabled={me.subscriptionTier === t.id} className="w-full text-xs font-semibold py-2 rounded-lg bg-white border border-stone-300 disabled:opacity-40">
-                  {me.subscriptionTier === t.id ? "Current plan" : `Switch to ${t.name}`}
-                </button>
-              </div>
-            ))}
+              );
+            })()}
+
+            <div className="grid grid-cols-1 gap-2 mt-1">
+              {Object.values(PLAN_CATALOG)
+                .filter((p) => p.id !== "free")
+                .map((p) => (
+                  <div key={p.id} className="border border-stone-200 rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-bold text-stone-900 flex items-center gap-1">{p.id === "premium" && <Crown size={12} className="text-amber-500" />} {p.name}</span>
+                      <span className="text-xs font-semibold text-stone-600">{formatMoney(p.monthly)}/mo · {formatMoney(p.annual)}/yr</span>
+                    </div>
+                    <p className="cs-t11 text-stone-500">{p.tagline}</p>
+                  </div>
+                ))}
+            </div>
           </div>
         )}
 
@@ -7612,204 +8109,759 @@ function NotificationsModal({ open, onClose, navigate, onOpenProduct }) {
 }
 
 
-/* Deterministic two-year history: slow early growth, a sharp lift over the last
-   three months, and the recent floors the vendor expects to see. */
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const STATS_MONTHS = 24;
-
-function buildVendorStats(seedKey, now = new Date()) {
-  let seed = String(seedKey || "shop").split("").reduce((a, c) => a + c.charCodeAt(0), 17);
-  const rand = () => {
-    seed = (seed * 1103515245 + 12345) % 2147483648;
-    return seed / 2147483648;
-  };
-
-  const months = [];
-  for (let i = STATS_MONTHS - 1; i >= 0; i--) {
-    const idx = STATS_MONTHS - 1 - i; // 0 = oldest, 23 = current
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const isCurrent = i === 0;
-    const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-    const days = isCurrent ? now.getDate() : daysInMonth;
-
-    // Baseline daily views, and a floor the month must not fall below.
-    let base;
-    let floor = 0;
-    if (idx <= 19) base = 5 + idx * 1.6;          // slow climb, roughly 5 to 36
-    else if (idx === 20) base = 52;               // things start moving
-    else if (idx === 21) { base = 96; floor = 88; }
-    else if (idx === 22) { base = 112; floor = 88; }
-    else { base = 162; floor = 145; }             // current month
-
-    const daily = [];
-    for (let day = 1; day <= days; day++) {
-      const weekday = new Date(d.getFullYear(), d.getMonth(), day).getDay();
-      const weekendLift = weekday === 0 || weekday === 6 ? 1.18 : 1;
-      const noise = 0.88 + rand() * 0.26;
-      daily.push({ day, views: Math.max(floor, Math.round(base * weekendLift * noise)) });
-    }
-
-    const views = daily.reduce((a, x) => a + x.views, 0);
-    const busiest = daily.reduce((best, x) => (x.views > best.views ? x : best), daily[0]);
-    months.push({
-      key: `${d.getFullYear()}-${d.getMonth()}`,
-      year: d.getFullYear(),
-      month: d.getMonth(),
-      label: `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`,
-      days,
-      daily,
-      views,
-      avgPerDay: Math.round(views / days),
-      busiestDay: busiest,
-      favorites: Math.round(views * (0.05 + rand() * 0.02)),
-      messages: Math.round(views * (0.015 + rand() * 0.012)),
-      shares: Math.round(views * (0.008 + rand() * 0.008)),
-      newFollowers: Math.round(views * (0.02 + rand() * 0.01)),
-    });
-  }
-  return months;
-}
 
 /* ============================================================================
-   SECTION 24: VENDOR DASHBOARD
+   SECTION 24: VENDOR DASHBOARD — Premium analytics terminal
+   Every number here is real, drawn from analytics_events (Supabase) and the
+   shop/product/review data already in context — nothing simulated. A shop
+   that just started will show mostly zeros, honestly, until real activity
+   happens.
 ============================================================================ */
-function seededTrend(seedStr, endValue, points = 7) {
-  let seed = String(seedStr).split("").reduce((s, c) => s + c.charCodeAt(0), 7);
-  const rand = () => {
-    seed = (seed * 9301 + 49297) % 233280;
-    return seed / 233280;
-  };
-  const arr = [];
-  let v = Math.max(2, Math.round(endValue * 0.5));
-  for (let i = 0; i < points; i++) {
-    v = Math.max(1, Math.round(v + (rand() - 0.4) * Math.max(endValue, 4) * 0.3));
-    arr.push(v);
+const DASHBOARD_RANGES = [
+  { id: "hours", label: "Hours", ms: 24 * 3600000, granularity: "hour" },
+  { id: "days", label: "Days", ms: 14 * 86400000, granularity: "day" },
+  { id: "weeks", label: "Weeks", ms: 12 * 7 * 86400000, granularity: "week" },
+  { id: "months", label: "Months", ms: 365 * 86400000, granularity: "month" },
+  { id: "years", label: "Years", ms: 5 * 365 * 86400000, granularity: "year" },
+];
+const DASH_STOPWORDS = new Set(["the", "and", "was", "for", "with", "this", "that", "very", "have", "just", "from", "are", "but", "you", "your", "not", "all", "its", "it's", "they", "them"]);
+
+function dayKey(ts) {
+  return Math.floor(ts / 86400000);
+}
+function bucketLabelFor(ts, granularity) {
+  const d = new Date(ts);
+  switch (granularity) {
+    case "hour":
+      return d.toLocaleTimeString([], { hour: "numeric" });
+    case "day":
+    case "week":
+      return d.toLocaleDateString([], { month: "short", day: "numeric" });
+    case "month":
+      return d.toLocaleDateString([], { month: "short", year: "2-digit" });
+    default:
+      return String(d.getFullYear());
   }
-  arr[arr.length - 1] = endValue;
-  return arr.map((val, i) => ({ day: `D${i + 1}`, views: val }));
+}
+// Index-based bucketing (not calendar week-of-year) so it never has to worry
+// about year-boundary edge cases — just even slices of the selected range.
+function bucketSeries(events, granularity, sinceMs, nowMs) {
+  const stepMs = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 }[granularity] || 86400000;
+  const bucketCount = Math.max(1, Math.ceil((nowMs - sinceMs) / stepMs));
+  const buckets = Array.from({ length: bucketCount }, (_, i) => {
+    const at = sinceMs + i * stepMs;
+    return { key: i, label: bucketLabelFor(at, granularity), count: 0, at };
+  });
+  events.forEach((e) => {
+    const t = new Date(e.created_at).getTime();
+    const idx = clamp(Math.floor((t - sinceMs) / stepMs), 0, bucketCount - 1);
+    buckets[idx].count += 1;
+  });
+  return buckets;
+}
+async function fetchAnalyticsEvents({ types, shopId, sinceMs, limit = 4000 }) {
+  try {
+    let q = supabase
+      .from("analytics_events")
+      .select("event_type, entity_id, entity_name, shop_id, actor_id, city, state, meta, created_at")
+      .gte("created_at", new Date(sinceMs).toISOString())
+      .order("created_at", { ascending: true })
+      .limit(limit);
+    if (types?.length) q = q.in("event_type", types);
+    if (shopId) q = q.eq("shop_id", shopId);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data || [];
+  } catch (e) {
+    console.error("dashboard fetch failed", e);
+    return [];
+  }
+}
+
+function DashStat({ icon: Icon, label, value, sub, delta }) {
+  return (
+    <div className="bg-white border border-stone-200 rounded-xl p-3.5">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-700">
+          <Icon size={14} />
+        </span>
+        {delta != null && (
+          <span className={`inline-flex items-center gap-0.5 text-[11px] font-bold ${delta >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+            {delta >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />} {Math.abs(delta)}%
+          </span>
+        )}
+      </div>
+      <p className="text-xl font-bold text-stone-900 font-mono tabular-nums">{value}</p>
+      <p className="cs-t11 text-stone-500">{label}</p>
+      {sub && <p className="cs-t10 text-stone-400 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+function DashPanel({ title, icon: Icon, right, children, className = "" }) {
+  return (
+    <div className={`bg-white border border-stone-200 rounded-xl p-4 ${className}`}>
+      <div className="flex items-center justify-between mb-3 gap-2">
+        <p className="text-xs font-bold text-stone-400 uppercase flex items-center gap-1.5 shrink-0">
+          {Icon && <Icon size={13} />} {title}
+        </p>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+// "Most of the chart/numbers/data blurred out" with a crown to unlock — the
+// header and range controls above this stay sharp so a free/basic vendor can
+// still see the shape of the tool, just not the real numbers inside it.
+function PremiumGate({ unlocked, navigate, children }) {
+  if (unlocked) return <>{children}</>;
+  return (
+    <div className="relative">
+      <div className="pointer-events-none select-none" style={{ filter: "blur(5px)" }}>
+        {children}
+      </div>
+      <div className="absolute inset-0 flex items-start justify-center pt-16 px-4">
+        <button
+          onClick={() => navigate({ screen: "plans" })}
+          className="sticky top-24 flex items-center gap-2 bg-white shadow-xl border border-amber-300 rounded-full pl-2.5 pr-4 py-2 hover:shadow-2xl transition"
+        >
+          <span className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0">
+            <Crown size={14} />
+          </span>
+          <span className="text-xs font-bold text-stone-900 whitespace-nowrap">Unlock Premium Analytics</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Loads/edits the shop owner's mailing list — anyone who's ever messaged a
+// Premium vendor for the first time lands here automatically (see
+// ensureConversation), and can be removed by the owner at any time.
+function useMailingList(ownerId) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    if (!ownerId) {
+      setList([]);
+      setLoading(false);
+      return;
+    }
+    const res = await readJSON(`mailingList:${ownerId}`, true, []);
+    setList(res.ok && Array.isArray(res.value) ? res.value : []);
+    setLoading(false);
+  }, [ownerId]);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const removeSubscriber = useCallback(
+    async (userId) => {
+      const next = list.filter((s) => s.userId !== userId);
+      setList(next);
+      await setJSON(`mailingList:${ownerId}`, next, true);
+    },
+    [list, ownerId]
+  );
+  return { list, loading, removeSubscriber, reload: load };
+}
+
+// Real in-app broadcast, not outbound SMTP email — deliberately labeled that
+// way in the UI rather than implied, since there's no email provider wired
+// up yet. Every subscriber gets an actual message + notification, today.
+function MassMessageComposer({ me, shop, subscribers, onSent, showToast }) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const activeSubs = subscribers.filter((s) => s.subscribed !== false);
+
+  const send = async () => {
+    if (!text.trim() || !activeSubs.length) return;
+    setSending(true);
+    let ok = 0;
+    for (const sub of activeSubs) {
+      try {
+        const delivered = await deliverBroadcastMessage(me, sub.userId, sub.name, sub.avatar, text.trim());
+        if (delivered) ok++;
+      } catch (e) {
+        console.error("broadcast send failed", e);
+      }
+    }
+    setSending(false);
+    setText("");
+    showToast(`Sent to ${ok} subscriber${ok === 1 ? "" : "s"}`);
+    onSent?.();
+  };
+
+  return (
+    <div>
+      <TextField
+        value={text}
+        onChange={setText}
+        multiline
+        rows={3}
+        placeholder={`What's new at ${shop.name}?`}
+        label="Broadcast message"
+        className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700 mb-2"
+      />
+      <div className="flex items-center justify-between gap-2">
+        <p className="cs-t11 text-stone-400">{activeSubs.length} subscriber{activeSubs.length === 1 ? "" : "s"} will get this as a message</p>
+        <button
+          onClick={send}
+          disabled={sending || !text.trim() || !activeSubs.length}
+          className="bg-emerald-800 text-white text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-40 shrink-0"
+        >
+          {sending ? "Sending…" : "Send broadcast"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function VendorDashboard({ navigate }) {
-  const { me, shopsById, products } = useApp();
+  const { me, shopsById, shops, products, conversations, updateMe, showToast } = useApp();
   const shop = me?.shopId ? shopsById[me.shopId] : null;
-  const { avgRating, count } = useReviews("shop", shop?.id || "none");
+  const { reviews: shopReviews, avgRating, count } = useReviews("shop", shop?.id || "none");
+  const premium = isPremiumPlan(me);
+  const mailing = useMailingList(shop?.ownerId || null);
 
-  const months = useMemo(() => buildVendorStats(shop?.id || "none"), [shop?.id]);
-  const years = useMemo(() => [...new Set(months.map((m) => m.year))].sort((a, b) => b - a), [months]);
-  const latest = months[months.length - 1];
-  const [year, setYear] = useState(latest.year);
-  const [monthKey, setMonthKey] = useState(latest.key);
+  const [rangeId, setRangeId] = useState("days");
+  const range = DASHBOARD_RANGES.find((r) => r.id === rangeId) || DASHBOARD_RANGES[1];
+  const [lookupTerm, setLookupTerm] = useState("");
+  const [goalMetric, setGoalMetric] = useState(me?.dashboardGoal?.metric || "favorites");
+  const [goalTarget, setGoalTarget] = useState(me?.dashboardGoal?.target || 50);
 
-  const monthsInYear = useMemo(() => months.filter((m) => m.year === year), [months, year]);
-  const selected = useMemo(
-    () => months.find((m) => m.key === monthKey) || monthsInYear[monthsInYear.length - 1] || latest,
-    [months, monthKey, monthsInYear, latest]
-  );
-  const prior = useMemo(() => {
-    const i = months.findIndex((m) => m.key === selected.key);
-    return i > 0 ? months[i - 1] : null;
-  }, [months, selected]);
+  const [rangeEvents, setRangeEvents] = useState({ shop: [], signups: [], searches: [] });
+  const [digestEvents, setDigestEvents] = useState([]);
+  const [respLoading, setRespLoading] = useState(true);
+  const [avgResponseMin, setAvgResponseMin] = useState(null);
 
-  const changePct = prior && prior.views ? Math.round(((selected.views - prior.views) / prior.views) * 100) : null;
+  const nowMs = Date.now();
+  const sinceMs = nowMs - range.ms;
+
+  useEffect(() => {
+    if (!shop) return;
+    let cancelled = false;
+    Promise.all([
+      fetchAnalyticsEvents({ types: ["view_shop", "view_product", "favorite", "share", "message"], shopId: shop.id, sinceMs }),
+      fetchAnalyticsEvents({ types: ["signup"], sinceMs }),
+      fetchAnalyticsEvents({ types: ["search"], sinceMs }),
+    ]).then(([shopEv, su, sr]) => {
+      if (!cancelled) setRangeEvents({ shop: shopEv, signups: su, searches: sr });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shop?.id, rangeId]);
+
+  // A fixed trailing-35-day window, independent of the range selector above,
+  // so the weekly digest and monthly goal always have what they need.
+  useEffect(() => {
+    if (!shop) return;
+    let cancelled = false;
+    fetchAnalyticsEvents({ types: ["view_shop", "view_product", "favorite", "share", "message"], shopId: shop.id, sinceMs: nowMs - 35 * 86400000 }).then((ev) => {
+      if (!cancelled) setDigestEvents(ev);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shop?.id]);
+
+  // Real average first-response time, from the vendor's own most recent
+  // conversation threads (bounded to 10 so this stays cheap).
+  useEffect(() => {
+    if (!shop || !me) {
+      setRespLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setRespLoading(true);
+    (async () => {
+      const recent = (conversations || []).slice(0, 10);
+      const gaps = [];
+      for (const c of recent) {
+        const res = await readJSON(`messages:${c.id}`, true, []);
+        const list = res.ok && Array.isArray(res.value) ? res.value : [];
+        const firstIn = list.find((m) => m.senderId !== me.id);
+        if (!firstIn) continue;
+        const firstOut = list.find((m) => m.senderId === me.id && m.createdAt >= firstIn.createdAt);
+        if (firstOut) gaps.push((firstOut.createdAt - firstIn.createdAt) / 60000);
+      }
+      if (!cancelled) {
+        setAvgResponseMin(gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : null);
+        setRespLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shop?.id, conversations?.length]);
+
+  const shopProducts = useMemo(() => (shop ? products.filter((p) => p.shopId === shop.id) : []), [products, shop]);
+
+  const viewEvents = useMemo(() => rangeEvents.shop.filter((e) => e.event_type === "view_shop" || e.event_type === "view_product"), [rangeEvents]);
+  const favoriteEvents = useMemo(() => rangeEvents.shop.filter((e) => e.event_type === "favorite"), [rangeEvents]);
+  const shareEvents = useMemo(() => rangeEvents.shop.filter((e) => e.event_type === "share"), [rangeEvents]);
+  const messageEvents = useMemo(() => rangeEvents.shop.filter((e) => e.event_type === "message"), [rangeEvents]);
+
+  const midpoint = sinceMs + range.ms / 2;
+  const pctChange = (events) => {
+    const first = events.filter((e) => new Date(e.created_at).getTime() < midpoint).length;
+    const second = events.length - first;
+    if (!first) return second > 0 ? 100 : null;
+    return Math.round(((second - first) / first) * 100);
+  };
+
+  const viewSeries = useMemo(() => bucketSeries(viewEvents, range.granularity, sinceMs, nowMs), [viewEvents, range, sinceMs, nowMs]);
+  const favoriteSeries = useMemo(() => bucketSeries(favoriteEvents, range.granularity, sinceMs, nowMs), [favoriteEvents, range, sinceMs, nowMs]);
+
+  const trendingSearches = useMemo(() => {
+    const counts = new Map();
+    rangeEvents.searches.forEach((e) => {
+      if (!e.entity_id) return;
+      counts.set(e.entity_id, (counts.get(e.entity_id) || 0) + 1);
+    });
+    return [...counts.entries()].map(([term, n]) => ({ term, n })).sort((a, b) => b.n - a.n).slice(0, 10);
+  }, [rangeEvents.searches]);
+
+  const lookupCount = useMemo(() => {
+    const term = lookupTerm.trim().toLowerCase();
+    if (!term) return null;
+    return rangeEvents.searches.filter((e) => e.entity_id === term).length;
+  }, [lookupTerm, rangeEvents.searches]);
+
+  const usersByState = useMemo(() => {
+    const counts = new Map();
+    rangeEvents.signups.forEach((e) => {
+      const s = e.state || "Unknown";
+      counts.set(s, (counts.get(s) || 0) + 1);
+    });
+    return [...counts.entries()].map(([state, n]) => ({ state, n })).sort((a, b) => b.n - a.n).slice(0, 10);
+  }, [rangeEvents.signups]);
+
+  const newShopsByState = useMemo(() => {
+    const counts = new Map();
+    (shops || []).forEach((s) => {
+      if ((s.createdAt || 0) >= sinceMs) counts.set(s.state || "Unknown", (counts.get(s.state || "Unknown") || 0) + 1);
+    });
+    return [...counts.entries()].map(([state, n]) => ({ state, n })).sort((a, b) => b.n - a.n).slice(0, 10);
+  }, [shops, sinceMs]);
+
+  const funnel = useMemo(() => {
+    const v = viewEvents.length;
+    const f = favoriteEvents.length;
+    const m = messageEvents.length;
+    return [
+      { label: "Views", value: v, pct: 100 },
+      { label: "Favorites", value: f, pct: v ? Math.round((f / v) * 100) : 0 },
+      { label: "Messages", value: m, pct: v ? Math.round((m / v) * 100) : 0 },
+    ];
+  }, [viewEvents, favoriteEvents, messageEvents]);
+
+  const repeatStats = useMemo(() => {
+    const byActor = new Map();
+    viewEvents.forEach((e) => {
+      if (!e.actor_id) return;
+      if (!byActor.has(e.actor_id)) byActor.set(e.actor_id, new Set());
+      byActor.get(e.actor_id).add(dayKey(new Date(e.created_at).getTime()));
+    });
+    const total = byActor.size;
+    const repeat = [...byActor.values()].filter((days) => days.size > 1).length;
+    return { total, repeat, pct: total ? Math.round((repeat / total) * 100) : 0 };
+  }, [viewEvents]);
+
+  const heatmap = useMemo(() => {
+    const grid = Array.from({ length: 7 }, () => Array(24).fill(0));
+    viewEvents.forEach((e) => {
+      const d = new Date(e.created_at);
+      grid[d.getDay()][d.getHours()] += 1;
+    });
+    return grid;
+  }, [viewEvents]);
+  const heatmapMax = useMemo(() => Math.max(1, ...heatmap.flat()), [heatmap]);
+
+  const platformAvgRating = useMemo(() => {
+    const rated = (shops || []).filter((s) => s.id !== shop?.id && s.reviewCount > 0);
+    if (!rated.length) return null;
+    return rated.reduce((sum, s) => sum + s.avgRating, 0) / rated.length;
+  }, [shops, shop]);
+
+  const leaderboard = useMemo(() => {
+    const scored = shopProducts.map((p) => ({ ...p, score: (p.favoriteCount || 0) * 2 + (p.shareCount || 0) }));
+    const sorted = [...scored].sort((a, b) => b.score - a.score);
+    return { top: sorted.slice(0, 5), bottom: sorted.slice(-5).reverse() };
+  }, [shopProducts]);
+
+  const publishedReviews = useMemo(() => shopReviews.filter((r) => r.status === "published"), [shopReviews]);
+  const sentimentSeries = useMemo(() => {
+    const sorted = [...publishedReviews].sort((a, b) => a.createdAt - b.createdAt);
+    let runningSum = 0;
+    return sorted.map((r, i) => {
+      runningSum += r.rating;
+      return { key: r.id, label: new Date(r.createdAt).toLocaleDateString([], { month: "short", day: "numeric" }), rolling: +(runningSum / (i + 1)).toFixed(2) };
+    });
+  }, [publishedReviews]);
+  const reviewWordCloud = useMemo(() => {
+    const counts = new Map();
+    publishedReviews.forEach((r) => {
+      (r.body || "").toLowerCase().match(/[a-z']+/g)?.forEach((w) => {
+        if (w.length < 4 || DASH_STOPWORDS.has(w)) return;
+        counts.set(w, (counts.get(w) || 0) + 1);
+      });
+    });
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  }, [publishedReviews]);
+
+  const topCities = useMemo(() => {
+    const counts = new Map();
+    [...viewEvents, ...favoriteEvents].forEach((e) => {
+      if (!e.city) return;
+      const key = e.state ? `${e.city}, ${e.state}` : e.city;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return [...counts.entries()].map(([place, n]) => ({ place, n })).sort((a, b) => b.n - a.n).slice(0, 8);
+  }, [viewEvents, favoriteEvents]);
+
+  const digest = useMemo(() => {
+    const weekAgo = nowMs - 7 * 86400000;
+    const twoWeeksAgo = nowMs - 14 * 86400000;
+    const countType = (list, type) => list.filter((e) => e.event_type === type).length;
+    const thisWeek = digestEvents.filter((e) => new Date(e.created_at).getTime() >= weekAgo);
+    const lastWeek = digestEvents.filter((e) => {
+      const t = new Date(e.created_at).getTime();
+      return t >= twoWeeksAgo && t < weekAgo;
+    });
+    return {
+      views: countType(thisWeek, "view_shop") + countType(thisWeek, "view_product"),
+      favorites: countType(thisWeek, "favorite"),
+      favoritesPrior: countType(lastWeek, "favorite"),
+      reviews: publishedReviews.filter((r) => r.createdAt >= weekAgo).length,
+      topSearchThisWeek: trendingSearches[0]?.term || null,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [digestEvents, publishedReviews, trendingSearches]);
+
+  const monthStart = useMemo(() => {
+    const d = new Date();
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }, []);
+  const goalMetricSaved = me?.dashboardGoal?.metric || "favorites";
+  const goalTargetSaved = me?.dashboardGoal?.target || 50;
+  const goalProgress = useMemo(() => {
+    const type = goalMetricSaved === "views" ? "view_shop" : goalMetricSaved === "messages" ? "message" : "favorite";
+    return digestEvents.filter((e) => new Date(e.created_at).getTime() >= monthStart && e.event_type === type).length;
+  }, [digestEvents, monthStart, goalMetricSaved]);
+  const saveGoal = async () => {
+    await updateMe({ dashboardGoal: { metric: goalMetric, target: Number(goalTarget) || 50 } });
+    showToast("Goal updated");
+  };
 
   if (!shop) {
-    return <EmptyState icon={TrendingUp} title="No storefront yet" action={<button onClick={() => navigate({ screen: "store" })} className="text-sm font-semibold text-emerald-800">Start selling</button>} />;
+    return (
+      <EmptyState
+        icon={TrendingUp}
+        title="No storefront yet"
+        body="Your dashboard lights up once you have a storefront."
+        action={<button onClick={() => navigate({ screen: "store" })} className="text-sm font-semibold text-emerald-800">Start selling</button>}
+      />
+    );
   }
-  const shopProducts = products.filter((p) => p.shopId === shop.id);
-
-  const cards = [
-    { label: "Views", value: selected.views.toLocaleString(), sub: `${selected.avgPerDay}/day`, icon: Eye },
-    { label: "New favourites", value: selected.favorites, sub: "saved your shop", icon: Heart },
-    { label: "Messages", value: selected.messages, sub: "buyers reached out", icon: MessageCircle },
-    { label: "Shares", value: selected.shares, sub: "sent to friends", icon: Share2 },
-    { label: "New followers", value: selected.newFollowers, sub: "following updates", icon: Users },
-    { label: "Avg rating", value: count > 0 ? avgRating.toFixed(1) : "—", sub: `${count} review${count === 1 ? "" : "s"}`, icon: Star },
-  ];
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-      <div className="max-w-3xl mx-auto px-4 pt-4">
+      <div className="max-w-5xl mx-auto px-4 pt-4">
         <button onClick={() => navigate({ screen: "shop", shopId: shop.id })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
           <ArrowLeft size={15} /> Back to storefront
         </button>
-        <h1 className="text-2xl font-bold text-stone-900 mb-1" style={displayFont}>{shop.name} dashboard</h1>
-        <p className="text-stone-400 text-sm mb-4">{shopProducts.length} active listings · two years of history</p>
 
-        <div className="flex gap-2 mb-3">
-          <select
-            value={year}
-            onChange={(e) => {
-              const y = Number(e.target.value);
-              setYear(y);
-              const first = months.filter((m) => m.year === y).slice(-1)[0];
-              if (first) setMonthKey(first.key);
-            }}
-            className="border border-stone-200 rounded-lg px-3 py-2 text-sm bg-white font-semibold"
-            aria-label="Select year"
-          >
-            {years.map((y) => (
-              <option key={y} value={y}>{y}</option>
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <h1 className="text-2xl font-bold text-stone-900" style={displayFont}>{shop.name} dashboard</h1>
+          {premium ? (
+            <CrownPill size="md" />
+          ) : (
+            <button onClick={() => navigate({ screen: "plans" })} className="text-xs font-bold text-amber-700 flex items-center gap-1 shrink-0">
+              <Crown size={13} /> Preview only
+            </button>
+          )}
+        </div>
+        <p className="text-stone-400 text-sm mb-4">{shopProducts.length} active listing{shopProducts.length === 1 ? "" : "s"} · real activity, not simulated</p>
+
+        <div className="flex flex-wrap items-center gap-2 mb-5">
+          <div className="flex gap-1 bg-stone-100 rounded-full p-1">
+            {DASHBOARD_RANGES.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => setRangeId(r.id)}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition ${rangeId === r.id ? "bg-white shadow text-stone-900" : "text-stone-500"}`}
+              >
+                {r.label}
+              </button>
             ))}
-          </select>
-          <select
-            value={selected.key}
-            onChange={(e) => setMonthKey(e.target.value)}
-            className="flex-1 border border-stone-200 rounded-lg px-3 py-2 text-sm bg-white font-semibold"
-            aria-label="Select month"
-          >
-            {monthsInYear.map((m) => (
-              <option key={m.key} value={m.key}>{MONTH_NAMES[m.month]}</option>
-            ))}
-          </select>
+          </div>
+          <div className="flex items-center gap-1.5 border border-stone-200 rounded-full px-3 py-1.5 bg-white">
+            <Search size={13} className="text-stone-400" />
+            <input value={lookupTerm} onChange={(e) => setLookupTerm(e.target.value)} placeholder="Look up a search term…" className="text-xs outline-none w-40" />
+          </div>
+          {lookupTerm.trim() && (
+            <span className="text-xs font-semibold text-stone-600">"{lookupTerm.trim()}" searched {lookupCount ?? 0}× in this range</span>
+          )}
         </div>
 
-        {changePct !== null && (
-          <p className={`text-sm font-semibold mb-4 ${changePct >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
-            {changePct >= 0 ? "▲" : "▼"} {Math.abs(changePct)}% vs {prior.label}
-          </p>
-        )}
+        <PremiumGate unlocked={premium} navigate={navigate}>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+            <DashStat icon={Eye} label="Views" value={viewEvents.length.toLocaleString()} delta={pctChange(viewEvents)} />
+            <DashStat icon={Heart} label="New favorites" value={favoriteEvents.length} delta={pctChange(favoriteEvents)} />
+            <DashStat icon={MessageCircle} label="Messages" value={messageEvents.length} delta={pctChange(messageEvents)} />
+            <DashStat icon={Share2} label="Shares" value={shareEvents.length} delta={pctChange(shareEvents)} />
+            <DashStat icon={Star} label="Avg rating" value={count > 0 ? avgRating.toFixed(1) : "—"} sub={`${count} review${count === 1 ? "" : "s"}`} />
+            <DashStat icon={Users} label="Repeat visitors" value={`${repeatStats.pct}%`} sub={`${repeatStats.repeat} of ${repeatStats.total} viewers`} />
+          </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-          {cards.map((c) => (
-            <div key={c.label} className="bg-white border border-stone-200 rounded-xl p-3.5">
-              <c.icon size={15} className="text-emerald-700 mb-1.5" />
-              <p className="text-xl font-bold text-stone-900" style={displayFont}>{c.value}</p>
-              <p className="cs-t11 text-stone-500">{c.label}</p>
-              <p className="cs-t10 text-stone-400 mt-0.5">{c.sub}</p>
+          <DashPanel title="Views over time" icon={TrendingUp} className="mb-4">
+            <div style={{ width: "100%", height: 190 }}>
+              <ResponsiveContainer>
+                <AreaChart data={viewSeries}>
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(viewSeries.length / 8))} />
+                  <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={32} />
+                  <Tooltip />
+                  <Area type="monotone" dataKey="count" stroke="#065f46" fill="#a7f3d0" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
             </div>
-          ))}
-        </div>
+          </DashPanel>
 
-        <div className="bg-white border border-stone-200 rounded-xl p-4 mb-4">
-          <div className="flex items-baseline justify-between mb-3">
-            <p className="text-xs font-bold text-stone-400 uppercase">Daily views · {selected.label}</p>
-            <p className="cs-t11 text-stone-500">Best day: {selected.busiestDay.day} ({selected.busiestDay.views})</p>
-          </div>
-          <div style={{ width: "100%", height: 190 }}>
-            <ResponsiveContainer>
-              <LineChart data={selected.daily}>
-                <XAxis dataKey="day" tick={{ fontSize: 10 }} stroke="#a8a29e" interval={Math.max(1, Math.floor(selected.days / 8))} />
-                <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={32} />
-                <Tooltip />
-                <Line type="monotone" dataKey="views" stroke="#065f46" strokeWidth={2.2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+          <div className="grid md:grid-cols-2 gap-4 mb-4">
+            <DashPanel title="Keyword search intelligence" icon={Search}>
+              <p className="cs-t11 text-stone-500 mb-2">Platform-wide, this range</p>
+              {trendingSearches.length === 0 ? (
+                <p className="text-sm text-stone-400 py-4 text-center">No searches logged yet in this range.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {trendingSearches.map((t, i) => (
+                    <div key={t.term} className="flex items-center gap-2">
+                      <span className="cs-t11 text-stone-400 w-4">{i + 1}</span>
+                      <span className="text-sm font-semibold text-stone-800 flex-1 truncate">{t.term}</span>
+                      <span className="text-xs font-mono font-bold text-emerald-700">{t.n}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </DashPanel>
 
-        <div className="bg-white border border-stone-200 rounded-xl p-4">
-          <p className="text-xs font-bold text-stone-400 uppercase mb-3">Monthly views · last two years</p>
-          <div style={{ width: "100%", height: 180 }}>
-            <ResponsiveContainer>
-              <BarChart data={months.map((m) => ({ name: `${MONTH_NAMES[m.month]} ${String(m.year).slice(2)}`, views: m.views }))}>
-                <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={3} />
-                <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={38} />
-                <Tooltip />
-                <Bar dataKey="views" fill="#4d7c4a" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <DashPanel title="Favorites over time" icon={Heart}>
+              <div style={{ width: "100%", height: 150 }}>
+                <ResponsiveContainer>
+                  <LineChart data={favoriteSeries}>
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(favoriteSeries.length / 6))} />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="count" stroke="#b45309" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="cs-t11 text-stone-400 mt-2">Top listings: {leaderboard.top.slice(0, 3).map((p) => p.name).join(", ") || "—"}</p>
+            </DashPanel>
           </div>
-        </div>
+
+          <div className="grid md:grid-cols-2 gap-4 mb-4">
+            <DashPanel title="New users by state" icon={UserPlus}>
+              {usersByState.length === 0 ? (
+                <p className="text-sm text-stone-400 py-4 text-center">No signups in this range.</p>
+              ) : (
+                <div style={{ width: "100%", height: 160 }}>
+                  <ResponsiveContainer>
+                    <BarChart data={usersByState.map((x) => ({ name: x.state, n: x.n }))}>
+                      <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
+                      <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
+                      <Tooltip />
+                      <Bar dataKey="n" fill="#0d9488" radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </DashPanel>
+            <DashPanel title="New storefronts by state" icon={Store}>
+              {newShopsByState.length === 0 ? (
+                <p className="text-sm text-stone-400 py-4 text-center">No new storefronts in this range.</p>
+              ) : (
+                <div style={{ width: "100%", height: 160 }}>
+                  <ResponsiveContainer>
+                    <BarChart data={newShopsByState.map((x) => ({ name: x.state, n: x.n }))}>
+                      <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
+                      <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
+                      <Tooltip />
+                      <Bar dataKey="n" fill="#7c3aed" radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </DashPanel>
+          </div>
+
+          <DashPanel title="Conversion funnel" icon={Target} className="mb-4">
+            <div className="space-y-2">
+              {funnel.map((f) => (
+                <div key={f.label}>
+                  <div className="flex items-center justify-between text-xs mb-0.5">
+                    <span className="font-semibold text-stone-700">{f.label}</span>
+                    <span className="font-mono text-stone-500">{f.value} · {f.pct}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
+                    <div className="h-full bg-emerald-700 rounded-full" style={{ width: `${f.pct}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </DashPanel>
+
+          <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4">
+            <div className="overflow-x-auto">
+              <div className="inline-grid gap-[2px]" style={{ gridTemplateColumns: "repeat(24, 8px)" }}>
+                {heatmap.map((row, d) =>
+                  row.map((v, h) => (
+                    <div
+                      key={`${d}-${h}`}
+                      title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
+                      className="w-2 h-2 rounded-sm"
+                      style={{ backgroundColor: `rgba(6,95,70,${0.08 + 0.85 * (v / heatmapMax)})` }}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+            <p className="cs-t11 text-stone-400 mt-2">Darker = busier. Rows are Sun–Sat, columns are hour of day.</p>
+          </DashPanel>
+
+          <div className="grid md:grid-cols-2 gap-4 mb-4">
+            <DashPanel title="Category benchmarking" icon={Award}>
+              <p className="text-sm text-stone-600 mb-1">Your avg rating: <span className="font-bold text-stone-900">{count > 0 ? avgRating.toFixed(2) : "—"}</span></p>
+              <p className="text-sm text-stone-600 mb-1">Platform avg: <span className="font-bold text-stone-900">{platformAvgRating != null ? platformAvgRating.toFixed(2) : "—"}</span></p>
+              {platformAvgRating != null && count > 0 && (
+                <p className={`text-xs font-semibold ${avgRating >= platformAvgRating ? "text-emerald-700" : "text-rose-600"}`}>
+                  {avgRating >= platformAvgRating ? "Above" : "Below"} the platform average
+                </p>
+              )}
+              <p className="text-sm text-stone-600 mt-2">
+                Response time:{" "}
+                <span className="font-bold text-stone-900">
+                  {respLoading ? "…" : avgResponseMin != null ? (avgResponseMin < 60 ? `${avgResponseMin}m` : `${(avgResponseMin / 60).toFixed(1)}h`) : "No data yet"}
+                </span>
+              </p>
+            </DashPanel>
+            <DashPanel title="Listing leaderboard" icon={Zap}>
+              <p className="cs-t11 text-stone-400 mb-1">Top performers</p>
+              {leaderboard.top.length === 0 ? (
+                <p className="text-sm text-stone-400 py-2">No listings yet.</p>
+              ) : (
+                leaderboard.top.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between text-sm py-0.5">
+                    <span className="truncate flex-1">{p.name}</span>
+                    <span className="cs-t11 font-mono text-emerald-700">♥{p.favoriteCount || 0} · ↗{p.shareCount || 0}</span>
+                  </div>
+                ))
+              )}
+            </DashPanel>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4 mb-4">
+            <DashPanel title="Review sentiment trend" icon={Star}>
+              {sentimentSeries.length < 2 ? (
+                <p className="text-sm text-stone-400 py-4 text-center">Need a couple more reviews for a trend line.</p>
+              ) : (
+                <div style={{ width: "100%", height: 130 }}>
+                  <ResponsiveContainer>
+                    <LineChart data={sentimentSeries}>
+                      <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" />
+                      <YAxis domain={[1, 5]} tick={{ fontSize: 10 }} stroke="#a8a29e" width={24} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="rolling" stroke="#b45309" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+              {reviewWordCloud.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {reviewWordCloud.map(([w, n]) => (
+                    <span key={w} className="text-[11px] font-semibold bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">
+                      {w} · {n}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </DashPanel>
+            <DashPanel title="Where your engagement comes from" icon={MapPin}>
+              {topCities.length === 0 ? (
+                <p className="text-sm text-stone-400 py-4 text-center">Not enough location data yet.</p>
+              ) : (
+                topCities.map((c) => (
+                  <div key={c.place} className="flex items-center justify-between text-sm py-0.5">
+                    <span className="truncate flex-1">{c.place}</span>
+                    <span className="cs-t11 font-mono text-stone-500">{c.n}</span>
+                  </div>
+                ))
+              )}
+            </DashPanel>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4 mb-4">
+            <DashPanel title="This week's digest" icon={Calendar}>
+              <ul className="text-sm text-stone-700 space-y-1">
+                <li>{digest.views} views</li>
+                <li>
+                  {digest.favorites} new favorite{digest.favorites === 1 ? "" : "s"}
+                  {digest.favoritesPrior ? ` (${digest.favorites >= digest.favoritesPrior ? "+" : ""}${digest.favorites - digest.favoritesPrior} vs last week)` : ""}
+                </li>
+                <li>{digest.reviews} new review{digest.reviews === 1 ? "" : "s"}</li>
+                {digest.topSearchThisWeek && <li>Trending search: "{digest.topSearchThisWeek}"</li>}
+              </ul>
+            </DashPanel>
+            <DashPanel
+              title="Monthly goal"
+              icon={Target}
+              right={
+                <select value={goalMetric} onChange={(e) => setGoalMetric(e.target.value)} className="text-[11px] border border-stone-200 rounded px-1 py-0.5">
+                  <option value="favorites">Favorites</option>
+                  <option value="views">Views</option>
+                  <option value="messages">Messages</option>
+                </select>
+              }
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <input type="number" value={goalTarget} onChange={(e) => setGoalTarget(e.target.value)} className="w-20 border border-stone-200 rounded-lg px-2 py-1 text-sm" />
+                <button onClick={saveGoal} className="text-xs font-semibold text-emerald-800">Set goal</button>
+              </div>
+              <div className="h-2.5 rounded-full bg-stone-100 overflow-hidden mb-1">
+                <div className="h-full bg-emerald-700 rounded-full" style={{ width: `${Math.min(100, Math.round((goalProgress / Math.max(1, goalTargetSaved)) * 100))}%` }} />
+              </div>
+              <p className="cs-t11 text-stone-500">{goalProgress} / {goalTargetSaved} this month ({goalMetricSaved})</p>
+            </DashPanel>
+          </div>
+
+          <DashPanel title="Mailing list & mass messages" icon={Megaphone} className="mb-4">
+            <p className="cs-t11 text-stone-400 mb-3">
+              {mailing.list.length} subscriber{mailing.list.length === 1 ? "" : "s"} — anyone who messages you gets added automatically. Broadcasts deliver as an in-app message + notification, not an outside email.
+            </p>
+            <MassMessageComposer me={me} shop={shop} subscribers={mailing.list} onSent={mailing.reload} showToast={showToast} />
+            {mailing.list.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-stone-100 space-y-1 max-h-40 overflow-y-auto">
+                {mailing.list.map((s) => (
+                  <div key={s.userId} className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-1.5">
+                      <span>{s.avatar}</span> {s.name}
+                    </span>
+                    <button onClick={() => mailing.removeSubscriber(s.userId)} className="text-stone-300 hover:text-rose-600 text-xs">
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </DashPanel>
+        </PremiumGate>
       </div>
     </div>
   );
@@ -7819,12 +8871,59 @@ function VendorDashboard({ navigate }) {
    SECTION 25: STORE SCREEN (own shop or become-a-vendor prompt)
 ============================================================================ */
 function StoreScreen({ navigate }) {
-  const { me, createShopForUser, updateMe } = useApp();
+  const { me, shopsById, createShopForUser, updateMe, purchasePlan, showToast } = useApp();
   const [shopName, setShopName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [reactivating, setReactivating] = useState(false);
+  const shop = me.isVendor && me.shopId ? shopsById[me.shopId] : null;
 
-  if (me.isVendor && me.shopId) {
+  if (shop && shop.billingStatus === "inactive") {
+    const daysLeft = Math.max(0, Math.ceil(ABANDON_DAYS - daysBetween(shop.inactiveSince || Date.now(), Date.now())));
+    return (
+      <div className="flex-1 overflow-y-auto flex items-center justify-center p-6">
+        <div className="max-w-sm text-center">
+          <div className="text-5xl mb-4">🌙</div>
+          <h2 className="text-2xl font-bold text-stone-900 mb-2" style={displayFont}>{shop.name} is inactive</h2>
+          <p className="text-stone-500 mb-1">Your plan lapsed, so this storefront is hidden from other shoppers.</p>
+          <p className="text-stone-500 mb-5">It's kept for {daysLeft} more day{daysLeft === 1 ? "" : "s"} before it's removed for good — re-up any time before then to bring it back online.</p>
+          <button
+            onClick={async () => {
+              setReactivating(true);
+              await purchasePlan("basic", "monthly");
+              setReactivating(false);
+              showToast("Storefront reactivated");
+              navigate({ screen: "shop", shopId: shop.id });
+            }}
+            disabled={reactivating}
+            className="w-full bg-emerald-800 text-white font-semibold py-3 rounded-xl disabled:opacity-40 mb-2"
+          >
+            {reactivating ? "Reactivating…" : "Reactivate with Basic (test mode)"}
+          </button>
+          <button onClick={() => navigate({ screen: "plans" })} className="text-xs font-semibold text-stone-500">See all plans</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (shop) {
     return <ShopProfileView shopId={me.shopId} navigate={navigate} />;
+  }
+
+  if (!isBasicPlus(me)) {
+    return (
+      <div className="flex-1 overflow-y-auto flex items-center justify-center p-6">
+        <div className="max-w-sm text-center">
+          <span className="inline-flex w-16 h-16 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 items-center justify-center mb-4 shadow-md">
+            <Crown size={28} className="text-white" />
+          </span>
+          <h2 className="text-2xl font-bold text-stone-900 mb-2" style={displayFont}>Storefronts are a Basic Plan feature</h2>
+          <p className="text-stone-500 mb-5">Upgrade to Basic to build your own storefront, add listings, and start selling — {formatMoney(PLAN_CATALOG.basic.monthly)}/mo or {formatMoney(PLAN_CATALOG.basic.annual)}/yr.</p>
+          <button onClick={() => navigate({ screen: "plans" })} className="w-full bg-gradient-to-r from-amber-400 to-yellow-500 text-amber-950 font-bold py-3 rounded-xl shadow-sm">
+            See Basic & Premium plans
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -7832,7 +8931,7 @@ function StoreScreen({ navigate }) {
       <div className="max-w-sm text-center">
         <div className="text-5xl mb-4">🧺</div>
         <h2 className="text-2xl font-bold text-stone-900 mb-2" style={displayFont}>Start selling on CropSwap</h2>
-        <p className="text-stone-500 mb-5">Set up a free storefront in seconds — customize everything after.</p>
+        <p className="text-stone-500 mb-5">Set up your storefront in seconds — customize everything after.</p>
         <TextField
           value={shopName}
           onChange={setShopName}
@@ -7843,8 +8942,8 @@ function StoreScreen({ navigate }) {
         <button
           onClick={async () => {
             setCreating(true);
-            const shop = await createShopForUser(me, shopName.trim());
-            await updateMe({ isVendor: true, shopId: shop.id });
+            const newShop = await createShopForUser(me, shopName.trim());
+            await updateMe({ isVendor: true, shopId: newShop.id });
             setCreating(false);
             navigate({ screen: "storeEditor" });
           }}
@@ -7929,6 +9028,19 @@ function Onboarding({ onCreate }) {
 function RootShell() {
   const { me, hasSession, loading: meLoading, createProfile, updateMe, signOut } = useCurrentUser();
   const market = useMarketData();
+
+  // If this account's shop was removed by the ABANDON_DAYS sweep (see
+  // useMarketData.loadAll) while they were signed out, their own private
+  // profile still points at it until they're back — only their own session
+  // can write to it, so this is where that gets corrected.
+  useEffect(() => {
+    if (!me?.shopId || market.loading) return;
+    if (!market.shopsById[me.shopId]) {
+      updateMe({ isVendor: false, shopId: null });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.shopId, market.loading, market.shopsById]);
+
   const fav = useFavorites(me);
   const notif = useNotifications(me);
   const convo = useConversations(me);
@@ -7993,6 +9105,7 @@ function RootShell() {
         market.updateShop(entity.id, { favoriteCount: newCount });
         if (added && entity.ownerId && entity.ownerId !== me.id) {
           notifyShopOwner(entity, "favorite", `${me.name} favorited your shop`, entity.name);
+          logAnalyticsEvent("favorite", { entityId: entity.id, entityName: entity.name, shopId: entity.id, meta: { kind: "shop" } });
         }
       } else {
         market.updateProduct(entity.shopId, entity.id, { favoriteCount: newCount });
@@ -8002,6 +9115,7 @@ function RootShell() {
             screen: "product",
             productId: entity.id,
           });
+          logAnalyticsEvent("favorite", { entityId: entity.id, entityName: entity.name, shopId: entity.shopId, meta: { kind: "product" } });
         }
       }
     },
@@ -8017,14 +9131,55 @@ function RootShell() {
       const nextCount = (entity.shareCount || 0) + 1;
       if (type === "shop") {
         market.updateShop(entity.id, { shareCount: nextCount });
+        logAnalyticsEvent("share", { entityId: entity.id, entityName: entity.name, shopId: entity.id, meta: { kind: "shop" } });
       } else {
         market.updateProduct(entity.shopId, entity.id, { shareCount: nextCount });
+        logAnalyticsEvent("share", { entityId: entity.id, entityName: entity.name, shopId: entity.shopId, meta: { kind: "product" } });
       }
     },
     [market]
   );
 
   const productsById = useMemo(() => Object.fromEntries(market.products.map((p) => [p.id, p])), [market.products]);
+
+  // No real payment processor yet — "purchasing" a plan is an explicit,
+  // clearly-labeled test-mode action (see CheckoutScreen) that just sets the
+  // tier + billing period on the profile, and reactivates a lapsed storefront
+  // if the vendor is re-upping before the 90-day abandonment window closes.
+  const purchasePlan = useCallback(
+    async (tier, billing) => {
+      if (!me) return;
+      const now = Date.now();
+      const periodEnd = addDays(now, billing === "annual" ? 365 : 30);
+      await updateMe({ plan: { tier, billing, status: "active", startedAt: now, periodEnd, cancelledAt: null, refundPct: null } });
+      if (me.shopId) {
+        const shop = market.shopsById[me.shopId];
+        if (shop?.billingStatus === "inactive") {
+          await market.updateShop(me.shopId, { billingStatus: "active", inactiveSince: null });
+        }
+      }
+    },
+    [me, updateMe, market]
+  );
+
+  // Cancelling locks Premium/Basic features immediately (tier reverts to
+  // free right away, not at period end) and computes the test-mode refund:
+  // 50% inside the first REFUND_WINDOW_DAYS of the current paid term, none
+  // after. Any storefront goes inactive rather than being deleted outright.
+  const cancelPlan = useCallback(async () => {
+    if (!me || !me.plan?.startedAt) return { refundPct: 0 };
+    const now = Date.now();
+    const daysIn = daysBetween(me.plan.startedAt, now);
+    const refundPct = daysIn <= REFUND_WINDOW_DAYS ? 50 : 0;
+    await updateMe({ plan: { tier: "free", billing: null, status: "cancelled", startedAt: null, periodEnd: null, cancelledAt: now, refundPct } });
+    if (me.shopId) {
+      const shop = market.shopsById[me.shopId];
+      if (shop?.billingStatus !== "inactive") {
+        await market.updateShop(me.shopId, { billingStatus: "inactive", inactiveSince: now });
+      }
+    }
+    return { refundPct };
+  }, [me, updateMe, market]);
 
   const ctxValue = {
     me,
@@ -8053,6 +9208,8 @@ function RootShell() {
     favShops: fav.favShops,
     toggleFavorite,
     incrementShare,
+    purchasePlan,
+    cancelPlan,
     notifications: notif.notifications,
     unreadCount: notif.unreadCount,
     markAllRead: notif.markAllRead,
@@ -8082,7 +9239,7 @@ function RootShell() {
 
   if (meLoading) return <LoadingScreen />;
   if (!hasSession) return <AuthGate />;
-  if (!me) return <Onboarding onCreate={createProfile} />;
+  if (!me) return <Onboarding onCreate={(d) => createProfile({ ...d, homeLocation: userLoc })} />;
   if (market.loading) return <LoadingScreen />;
 
   return (
@@ -8139,6 +9296,8 @@ function RootShell() {
               />
             )}
             {route.screen === "dashboard" && <VendorDashboard navigate={navigate} />}
+            {route.screen === "plans" && <PlansScreen navigate={navigate} />}
+            {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
           </main>
         </div>
         <BottomNav route={route} navigate={navigate} />
