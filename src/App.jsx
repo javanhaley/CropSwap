@@ -4951,6 +4951,32 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
 
   const zoomBy = (delta) => setZoom((z) => clamp(z + delta, MIN_ZOOM, MAX_ZOOM));
 
+  // Trackpad pinch and Ctrl+scroll arrive as wheel events with ctrlKey set.
+  // Left alone, the browser treats that as a request to zoom the whole page
+  // (fonts, layout, everything) rather than our map, which is what produced
+  // the blank strips and stuck-zoom feeling. Attached natively (not via
+  // React's onWheel) so preventDefault actually takes effect — React makes
+  // its synthetic wheel listener passive by default, which silently no-ops
+  // preventDefault. A plain, non-ctrl wheel is left untouched so the page
+  // can still be scrolled normally while the cursor is over the map.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    let accum = 0;
+    const onWheel = (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      accum += e.deltaY;
+      const STEP = 12;
+      if (Math.abs(accum) >= STEP) {
+        zoomBy(accum < 0 ? 1 : -1);
+        accum = 0;
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   return (
     <div>
       <div className="relative">
@@ -5008,9 +5034,13 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
           );
         })}
 
-        {/* Zoom controls */}
+        {/* Zoom controls. onPointerDown stops the click from being eaten by
+            the map's own pan handler, which captures the pointer on the
+            wrapping div the moment any press lands inside it — the same fix
+            already applied to the shop pins below. */}
         <div className="absolute top-3 right-3 flex flex-col gap-2">
           <button
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={() => zoomBy(1)}
             disabled={zoom >= MAX_ZOOM}
             className="w-12 h-12 rounded-xl bg-white shadow-lg border border-stone-200 flex items-center justify-center text-2xl font-bold text-stone-700 disabled:opacity-40 active:bg-stone-100"
@@ -5019,6 +5049,7 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
             +
           </button>
           <button
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={() => zoomBy(-1)}
             disabled={zoom <= MIN_ZOOM}
             className="w-12 h-12 rounded-xl bg-white shadow-lg border border-stone-200 flex items-center justify-center text-2xl font-bold text-stone-700 disabled:opacity-40 active:bg-stone-100"
@@ -5031,6 +5062,7 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
         <div className="absolute bottom-3 left-3 flex gap-2">
           {userLoc && (
             <button
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={() => {
                 setCenter({ lat: userLoc.lat, lng: userLoc.lng });
                 setZoom(9);
@@ -5041,6 +5073,7 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
             </button>
           )}
           <button
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={() => {
               setCenter(US_CENTER);
               setZoom(4);
