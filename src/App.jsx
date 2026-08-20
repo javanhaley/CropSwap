@@ -2253,7 +2253,12 @@ function useMarketData() {
   const loadAll = useCallback(async () => {
     const res = await readJSON(MARKET_KEY, true, null);
     const stored = res.ok ? res.value : null;
-    if (stored && Array.isArray(stored.shops) && stored.shops.length) {
+    // Any stored market object — even one with zero shops — means the key
+    // has already been initialized (whether by first-run seeding or by an
+    // intentional reset). Only a genuinely missing key (stored === null)
+    // should trigger demo reseeding; otherwise an intentionally emptied
+    // market would silently repopulate with fake shops on next load.
+    if (stored && Array.isArray(stored.shops)) {
       applyMarket(stored.shops, Array.isArray(stored.products) ? stored.products : []);
       setLoading(false);
       return;
