@@ -1609,7 +1609,7 @@ const LEARN_PHOTO = (id, w = 800) => `https://images.pexels.com/photos/${id}/pex
 
 const LEARN_STATIC = {
   companions: {
-    hero: { url: LEARN_PHOTO("4207910"), alt: "Hands planting a seedling into garden soil" },
+    hero: { url: LEARN_PHOTO("23825134"), alt: "Hands planting a seedling into garden soil" },
     intro: "Some crops genuinely help their neighbors — trading shade, structure, or pest confusion — and some just compete for the same nutrients or trade the same diseases back and forth. None of this is exact science, but it's old, widely-repeated market-garden wisdom worth planning around.",
     good: [
       { a: "Tomatoes", b: "Basil", why: "Grown side by side for generations — similar sun and water needs, and basil is widely believed to help keep some pests off tomatoes." },
@@ -1686,6 +1686,7 @@ const GOOD_BUGS = [
     name: "Ladybug (Lady Beetle)",
     tagline: "Aphid patrol, 24/7",
     photo: { url: LEARN_PHOTO("121472"), alt: "A ladybug resting on a green leaf" },
+    emoji: "🐞",
     facts: [
       "A single ladybug can eat 50 or more aphids a day, and thousands over its lifetime.",
       "Both the adult beetle and its spiky, alligator-shaped larva are predators — don't mistake the larva for a pest and squash it.",
@@ -1701,6 +1702,7 @@ const GOOD_BUGS = [
     name: "Honeybee & Bumblebee",
     tagline: "Your fruit set depends on them",
     photo: { url: LEARN_PHOTO("1029567"), alt: "A honeybee gathering pollen on a flower" },
+    emoji: "🐝",
     facts: [
       "Roughly a third of the food humans eat depends on pollination by bees.",
       "A single hive can visit millions of flowers in a single day.",
@@ -1746,6 +1748,7 @@ const GOOD_BUGS = [
     name: "Garden (Orb-Weaver) Spider",
     tagline: "A pest net you don't have to build",
     photo: { url: LEARN_PHOTO("51394"), alt: "An orb-weaver spider on its web" },
+    emoji: "🕷️",
     facts: [
       "A single orb-weaver can catch and eat dozens of flying insects overnight.",
       "They often rebuild their web daily, eating the old silk to recycle the protein in it.",
@@ -1760,7 +1763,8 @@ const GOOD_BUGS = [
     id: "butterfly",
     name: "Monarch & Pollinator Butterflies",
     tagline: "Pollination with a light touch",
-    photo: { url: LEARN_PHOTO("17993986"), alt: "A butterfly resting on a daisy flower" },
+    photo: { url: LEARN_PHOTO("1046287"), alt: "A monarch butterfly resting on a flower" },
+    emoji: "🦋",
     facts: [
       "Butterflies pollinate while feeding on nectar, though less efficiently than bees since they carry less pollen per visit.",
       "Monarch caterpillars eat only milkweed — without it, they can't complete their life cycle at all.",
@@ -1776,6 +1780,7 @@ const GOOD_BUGS = [
     name: "Earthworm",
     tagline: "The original soil engineer",
     photo: { url: LEARN_PHOTO("4386496"), alt: "An earthworm on green grass" },
+    emoji: "🪱",
     facts: [
       "Earthworms can process roughly their own body weight in soil every day.",
       "Their tunnels aerate compacted soil and improve drainage.",
@@ -1785,6 +1790,21 @@ const GOOD_BUGS = [
     whyGood: "They're not technically an insect, but no list of good garden creatures is complete without them — they build the healthy, well-drained soil every other plant and bug on this list depends on.",
     keepAlive: "Keep soil covered with mulch or compost so it doesn't dry out or overheat, minimize tilling (which shreds worms and their tunnels), and skip synthetic fertilizers and pesticides that can harm them.",
     predators: "Birds — robins especially — along with moles, toads, and ground beetles are major earthworm predators.",
+  },
+  {
+    id: "isopod",
+    name: "Pill Bug (Roly-Poly / Isopod)",
+    tagline: "The garden's cleanup crew",
+    photo: { url: LEARN_PHOTO("12568711"), alt: "A pill bug (woodlouse) on a green leaf" },
+    facts: [
+      "Pill bugs aren't insects at all — they're land-dwelling crustaceans, more closely related to shrimp and crabs than to any bug.",
+      "They breathe through gill-like structures and need damp conditions to survive, which is why you find them under logs, mulch, and flower pots.",
+      "Many species roll into a tight ball when threatened, which is exactly where the name \"roly-poly\" comes from.",
+      "A single pill bug can live 2 to 5 years — unusually long for something so small.",
+    ],
+    whyGood: "Pill bugs are decomposers, not predators — they break down dead leaves, rotting wood, and other organic matter into the nutrients your soil needs. They'll occasionally nibble a soft seedling, but their overall effect on soil health is strongly positive.",
+    keepAlive: "Keep some damp mulch, leaf litter, or a rotting log pile somewhere in the garden for them to live and feed in, and avoid letting that habitat dry out or get tilled under. Plenty of decaying material to eat keeps them away from your seedlings too.",
+    predators: "Toads, birds, shrews, centipedes, and some spiders and ground beetles all eat pill bugs.",
   },
 ];
 
@@ -4680,6 +4700,9 @@ function Sidebar({ route, navigate }) {
     { id: "store", label: me?.isVendor ? "My Store" : "Start Selling", icon: Store },
     { id: "messages", label: "Messages", icon: MessageCircle },
     { id: "favorites", label: "Favorites", icon: Heart },
+    { id: "dashboard", label: "Dashboard", icon: TrendingUp },
+    { id: "learn", label: "Learn", icon: BookOpen },
+    { id: "places", label: "Places", icon: MapPin },
   ];
   return (
     <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-stone-200 p-5 gap-1">
@@ -8194,6 +8217,47 @@ function CheckoutScreen({ navigate, tier, billing }) {
   );
 }
 
+// Standalone version of the "Places" list that also lives inside the account
+// modal's Places tab — promoted to its own route so it's reachable straight
+// from the desktop sidebar instead of only through the account menu.
+function PlacesScreen({ navigate }) {
+  const { me, updateMe, userLoc, setUserLoc, showToast } = useApp();
+  if (!me) return null;
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-lg mx-auto px-4 pt-4">
+        <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+          <ArrowLeft size={15} /> Back
+        </button>
+        <h1 className="text-2xl font-bold text-stone-900 mb-1" style={displayFont}>Your Places</h1>
+        <p className="text-sm text-stone-500 mb-4">Save the places you shop from — handy if you split time between towns.</p>
+        <div className="flex flex-col gap-2 mb-4">
+          {(me.savedPlaces || []).map((pl) => (
+            <div key={pl.label} className="flex items-center gap-2 border border-stone-200 rounded-xl px-3 py-2.5">
+              <MapPin size={14} className="text-emerald-700 shrink-0" />
+              <span className="flex-1 text-sm font-medium text-stone-700">{pl.label}</span>
+              <button onClick={() => { setUserLoc(pl); showToast(`Now browsing near ${pl.label}`); }} className="text-xs font-semibold text-emerald-800">Use</button>
+              <button onClick={() => updateMe({ savedPlaces: (me.savedPlaces || []).filter((x) => x.label !== pl.label) })} className="text-stone-300 hover:text-rose-600" aria-label="Remove"><X size={14} /></button>
+            </div>
+          ))}
+          {(me.savedPlaces || []).length === 0 && <p className="text-sm text-stone-400">No saved places yet.</p>}
+        </div>
+        <button
+          onClick={() => {
+            const exists = (me.savedPlaces || []).some((p) => p.label === userLoc.label);
+            if (exists) { showToast("Already saved"); return; }
+            updateMe({ savedPlaces: [...(me.savedPlaces || []), userLoc] });
+            showToast(`Saved ${userLoc.label}`);
+          }}
+          className="w-full border border-stone-200 font-semibold py-2.5 rounded-xl text-stone-700 text-sm"
+        >
+          Save current location ({userLoc.label})
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AccountModal({ open, onClose }) {
   const { me, updateMe, signOut, navigate, userLoc, setUserLoc, showToast } = useApp();
   const [tab, setTab] = useState("profile");
@@ -8202,6 +8266,13 @@ function AccountModal({ open, onClose }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [storageReport, setStorageReport] = useState(null);
   const [checking, setChecking] = useState(false);
+
+  // The modal stays mounted between opens (only `open` toggles), so without
+  // this the tab would silently remember whatever was last clicked. Tapping
+  // the profile icon should always land on Profile, every time.
+  useEffect(() => {
+    if (open) setTab("profile");
+  }, [open]);
 
   // Writes a probe, reads it back, and counts what is actually stored, so a
   // persistence problem can be identified instead of guessed at.
@@ -8310,7 +8381,7 @@ function AccountModal({ open, onClose }) {
   if (!me) return null;
   const tabs = [
     { id: "profile", label: "Profile", icon: User },
-    { id: "vendor", label: "Selling", icon: Store },
+    { id: "vendor", label: "My Store", icon: Store, link: true, linkScreen: "store" },
     { id: "subscription", label: "Plan", icon: Sparkles, link: true, linkScreen: "plans" },
     { id: "notifications", label: "Alerts", icon: Bell },
     { id: "dashboard", label: "Dashboard", icon: TrendingUp, link: true },
@@ -8381,25 +8452,6 @@ function AccountModal({ open, onClose }) {
             <p className="text-xs text-stone-400">Member since {new Date(me.createdAt).toLocaleDateString()}</p>
           </div>
         )}
-
-        {tab === "vendor" &&
-          (me.isVendor ? (
-            <div>
-              <p className="text-sm text-stone-600 mb-4">You're set up as a vendor.</p>
-              <button onClick={() => { onClose(); navigate({ screen: "storeEditor" }); }} className="w-full bg-emerald-800 text-white font-semibold py-2.5 rounded-xl mb-2">Edit my storefront</button>
-              <button onClick={() => { onClose(); navigate({ screen: "dashboard" }); }} className="w-full border border-stone-200 font-semibold py-2.5 rounded-xl text-stone-700">View dashboard</button>
-            </div>
-          ) : isBasicPlus(me) ? (
-            <div>
-              <p className="text-sm text-stone-600 mb-4">Not selling yet — set up your storefront any time.</p>
-              <button onClick={() => { onClose(); navigate({ screen: "store" }); }} className="w-full bg-emerald-800 text-white font-semibold py-2.5 rounded-xl">Start selling</button>
-            </div>
-          ) : (
-            <div>
-              <p className="text-sm text-stone-600 mb-4">Building a storefront is a Basic Plan feature.</p>
-              <LockedFeatureButton label="Build your storefront" sub="Basic Plan feature only" navigate={(r) => { onClose(); navigate(r); }} icon={Store} />
-            </div>
-          ))}
 
         {tab === "notifications" && (
           <div>
@@ -9553,17 +9605,56 @@ function StoreScreen({ navigate }) {
   }
 
   if (!isBasicPlus(me)) {
+    const sampleProducts = [
+      { name: "Heirloom Tomatoes", emoji: "🍅", price: "$4.50/lb" },
+      { name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz" },
+      { name: "Raw Honey", emoji: "🍯", price: "$9.00/pint" },
+      { name: "Sweet Corn", emoji: "🌽", price: "$5.00/bushel" },
+    ];
     return (
-      <div className="flex-1 overflow-y-auto flex items-center justify-center p-6">
-        <div className="max-w-sm text-center">
-          <span className="inline-flex w-16 h-16 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 items-center justify-center mb-4 shadow-md">
-            <Crown size={28} className="text-white" />
-          </span>
-          <h2 className="text-2xl font-bold text-stone-900 mb-2" style={displayFont}>Storefronts are a Basic Plan feature</h2>
-          <p className="text-stone-500 mb-5">Upgrade to Basic to build your own storefront, add listings, and start selling — {formatMoney(PLAN_CATALOG.basic.monthly)}/mo or {formatMoney(PLAN_CATALOG.basic.annual)}/yr.</p>
-          <button onClick={() => navigate({ screen: "plans" })} className="w-full bg-gradient-to-r from-amber-400 to-yellow-500 text-amber-950 font-bold py-3 rounded-xl shadow-sm">
-            See Basic & Premium plans
+      <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+        <div className="max-w-2xl mx-auto p-4">
+          <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+            <ArrowLeft size={15} /> Back
           </button>
+          <h1 className="text-2xl font-bold text-stone-900 mb-1" style={displayFont}>My Store</h1>
+          <p className="text-stone-500 text-sm mb-4">A preview of what your storefront could look like — upgrade any time to make it real.</p>
+
+          <div className="relative h-32 rounded-t-2xl overflow-hidden bg-gradient-to-br from-emerald-700 to-teal-600 flex items-center justify-center">
+            <p className="text-white font-bold text-xl" style={displayFont}>Example Farm Stand</p>
+          </div>
+          <div className="border border-t-0 border-stone-200 rounded-b-2xl px-5 pt-4 pb-5 mb-2">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="w-10 h-10 -mt-9 rounded-full bg-white border-4 border-white shadow-md flex items-center justify-center text-lg shrink-0">🧺</span>
+              <span className="cs-t11 font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Actively selling</span>
+            </div>
+            <p className="text-stone-500 font-medium text-sm">@yourfarmname · Your Town, {stateInfo((homeLoc.state || "").toUpperCase().slice(0, 2))?.name || "Your State"}</p>
+
+            <ToolLock locked navigate={navigate} label="Upgrade to build your own storefront">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4">
+                {sampleProducts.map((p) => (
+                  <div key={p.name} className="border border-stone-200 rounded-xl p-2.5 text-center">
+                    <div className="text-2xl mb-1">{p.emoji}</div>
+                    <p className="text-xs font-semibold text-stone-800 leading-tight">{p.name}</p>
+                    <p className="cs-t10 text-emerald-700 font-bold mt-0.5">{p.price}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-1.5 mt-4">
+                {["Products", "Updates", "Tools", "Contact"].map((t) => (
+                  <span key={t} className="px-3 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-500">{t}</span>
+                ))}
+              </div>
+            </ToolLock>
+          </div>
+
+          <LockedFeatureButton
+            label="Create your own storefront"
+            sub={`Upgrade to Basic (${formatMoney(PLAN_CATALOG.basic.monthly)}/mo) or Premium to start selling`}
+            navigate={navigate}
+            icon={Store}
+            className="mt-3"
+          />
         </div>
       </div>
     );
@@ -9638,9 +9729,9 @@ function StoreScreen({ navigate }) {
    well, what animals do well) and three are general market-farming reading.
 ============================================================================ */
 const LEARN_TOPICS = [
-  { id: "planting", label: "Planting times", icon: Calendar, locationAware: true, blurb: "Best planting windows for your state", section: "Growing in your area", hero: { url: LEARN_PHOTO("7728082"), alt: "A farmer planting seedlings into soil" } },
-  { id: "crops", label: "What grows well here", icon: Sprout, locationAware: true, blurb: "Crops suited to your climate", section: "Growing in your area", hero: { url: LEARN_PHOTO("2255924"), alt: "A colorful basket of assorted vegetables" } },
-  { id: "animals", label: "Animals that do well here", icon: PawPrint, locationAware: true, blurb: "Livestock and poultry for your area", section: "Growing in your area", hero: { url: LEARN_PHOTO("5210298"), alt: "A herd of goats grazing in a pasture" } },
+  { id: "planting", label: "Planting times", icon: Calendar, locationAware: true, blurb: "Best planting windows for your state", section: "Growing in your area", hero: { url: LEARN_PHOTO("12314915"), alt: "Hands planting a young vegetable seedling into rich soil" } },
+  { id: "crops", label: "What grows well here", icon: Sprout, locationAware: true, blurb: "Crops suited to your climate", section: "Growing in your area", hero: { url: LEARN_PHOTO("16723207"), alt: "A vibrant assortment of fresh vegetables in a wicker basket" } },
+  { id: "animals", label: "Animals that do well here", icon: PawPrint, locationAware: true, blurb: "Livestock and poultry for your area", section: "Growing in your area", hero: { url: LEARN_PHOTO("31875441"), alt: "A herd of goats grazing in a lush green pasture" } },
   { id: "bugs", label: "Good bugs for your garden", icon: Bug, locationAware: false, blurb: "Meet the field guide of helpful garden insects", section: "Field guide" },
   { id: "companions", label: "Companion planting pairs", icon: Link2, locationAware: false, blurb: "What to plant together — and what to avoid", section: "Field guide" },
   { id: "soil", label: "Composting & soil health", icon: Recycle, locationAware: false, blurb: "Build the soil everything else depends on", section: "Field guide" },
@@ -9834,13 +9925,37 @@ function LearnStaticPanel({ topic }) {
 // One "good bug" as a medium-sized popup — a picture, quick facts, why it
 // helps, how to keep it around, and what preys on it. Reuses the app's
 // standard Modal, which renders at a comfortable medium max-width.
+// Whole-subject bug photo: object-contain (never object-cover) so a tall or
+// oddly-framed macro shot never gets its head, legs, or wings cropped off —
+// letterboxed on a soft themed gradient instead of cutting the bug itself.
+// Falls back to the same gradient plus an emoji if the photo can't load.
+function BugPhoto({ src, alt, emoji, className = "" }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  return (
+    <div className={`bg-gradient-to-br from-emerald-50 via-amber-50 to-emerald-100 flex items-center justify-center ${className}`}>
+      {!failed ? (
+        <img
+          src={src}
+          alt={alt || ""}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+          className="w-full h-full object-contain"
+        />
+      ) : (
+        <span className="text-4xl">{emoji || "🐛"}</span>
+      )}
+    </div>
+  );
+}
+
 function BugModal({ bug, onClose }) {
   if (!bug) return null;
   return (
     <Modal open={!!bug} onClose={onClose} labelledBy="bug-title">
-      <div className="w-full h-44 sm:h-56 bg-stone-100 overflow-hidden rounded-t-3xl sm:rounded-t-3xl">
-        <img src={bug.photo.url} alt={bug.photo.alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
-      </div>
+      <BugPhoto src={bug.photo.url} alt={bug.photo.alt} emoji={bug.emoji} className="w-full h-48 sm:h-60 overflow-hidden rounded-t-3xl sm:rounded-t-3xl" />
       <div className="p-5">
         <div className="flex items-start justify-between gap-2 mb-1">
           <div>
@@ -9890,9 +10005,7 @@ function LearnBugsPanel() {
             onClick={() => setOpenBug(bug)}
             className="text-left border border-stone-200 rounded-xl overflow-hidden bg-white hover:shadow-md transition"
           >
-            <div className="w-full h-24 bg-stone-100 overflow-hidden">
-              <img src={bug.photo.url} alt={bug.photo.alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
-            </div>
+            <BugPhoto src={bug.photo.url} alt={bug.photo.alt} emoji={bug.emoji} className="w-full h-28 overflow-hidden" />
             <div className="p-2.5">
               <p className="text-sm font-bold text-stone-900 leading-tight">{bug.name}</p>
               <p className="cs-t10 text-emerald-700 font-semibold mt-0.5">{bug.tagline}</p>
@@ -10304,6 +10417,7 @@ function RootShell() {
             {route.screen === "plans" && <PlansScreen navigate={navigate} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "learn" && <LearnScreen navigate={navigate} topic={route.topic} />}
+            {route.screen === "places" && <PlacesScreen navigate={navigate} />}
           </main>
         </div>
         <BottomNav route={route} navigate={navigate} />
