@@ -6,6 +6,7 @@ import {
   Home, Package, Filter, GripVertical, BadgeCheck, AlertCircle,
   LayoutGrid, UserPlus, ShoppingBag, Sparkles, ShieldAlert, Bookmark,
   Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
+  Sprout, PawPrint, BookOpen, Link2, DollarSign, Archive,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -105,6 +106,15 @@ const BANNER_PRESETS = [
   { id: "in_season", label: "In Season", classes: "bg-amber-500 text-stone-900" },
   { id: "limited", label: "Limited Batch", classes: "bg-rose-700 text-white" },
   { id: "free", label: "Free", classes: "bg-teal-700 text-white" },
+];
+// Promotional specials sit in the same single-badge slot as the status
+// presets above — a listing shows one badge at a time, so "Buy One Get One"
+// and "Sold Out" are mutually exclusive rather than stacked.
+const SPECIAL_PRESETS = [
+  { id: "bogo", label: "Buy 1 Get 1 Free", classes: "bg-rose-600 text-white" },
+  { id: "bogo_half", label: "BOGO 50% Off", classes: "bg-amber-600 text-white" },
+  { id: "bundle", label: "Bundle & Save", classes: "bg-violet-700 text-white" },
+  { id: "flash_sale", label: "Flash Sale", classes: "bg-rose-700 text-white" },
 ];
 
 const SOCIAL_PLATFORMS = [
@@ -1417,6 +1427,221 @@ function nearbyShops(shop, allShops, limit = 4) {
 }
 
 /* ============================================================================
+   SECTION 3b: US GEOGRAPHY
+   A state picker plus enough of an approximate location per state to place a
+   new shop somewhere real on the map immediately, rather than leaving it
+   sitting on a placeholder point until someone happens to edit it by hand.
+   "zone" is a coarse climate band, used by the growing-guide content in the
+   Learn tab — nowhere near USDA-precise, just enough to say "your winters are
+   mild" vs "your winters are hard" for a given state.
+============================================================================ */
+const US_STATES = [
+  { code: "AL", name: "Alabama", lat: 32.8, lng: -86.8, zone: "subtropical" },
+  { code: "AK", name: "Alaska", lat: 64.2, lng: -149.4, zone: "cold" },
+  { code: "AZ", name: "Arizona", lat: 34.2, lng: -111.9, zone: "hot_arid" },
+  { code: "AR", name: "Arkansas", lat: 34.9, lng: -92.4, zone: "warm" },
+  { code: "CA", name: "California", lat: 37.2, lng: -119.4, zone: "pacific" },
+  { code: "CO", name: "Colorado", lat: 39.0, lng: -105.5, zone: "temperate" },
+  { code: "CT", name: "Connecticut", lat: 41.6, lng: -72.7, zone: "temperate" },
+  { code: "DE", name: "Delaware", lat: 39.0, lng: -75.5, zone: "temperate" },
+  { code: "DC", name: "District of Columbia", lat: 38.9, lng: -77.0, zone: "temperate" },
+  { code: "FL", name: "Florida", lat: 28.6, lng: -82.4, zone: "subtropical" },
+  { code: "GA", name: "Georgia", lat: 32.6, lng: -83.4, zone: "subtropical" },
+  { code: "HI", name: "Hawaii", lat: 20.3, lng: -156.3, zone: "subtropical" },
+  { code: "ID", name: "Idaho", lat: 44.4, lng: -114.6, zone: "cold" },
+  { code: "IL", name: "Illinois", lat: 40.0, lng: -89.2, zone: "temperate" },
+  { code: "IN", name: "Indiana", lat: 39.9, lng: -86.3, zone: "temperate" },
+  { code: "IA", name: "Iowa", lat: 42.0, lng: -93.5, zone: "temperate" },
+  { code: "KS", name: "Kansas", lat: 38.5, lng: -98.4, zone: "temperate" },
+  { code: "KY", name: "Kentucky", lat: 37.5, lng: -85.3, zone: "warm" },
+  { code: "LA", name: "Louisiana", lat: 31.0, lng: -92.0, zone: "subtropical" },
+  { code: "ME", name: "Maine", lat: 45.4, lng: -69.2, zone: "cold" },
+  { code: "MD", name: "Maryland", lat: 39.0, lng: -76.7, zone: "temperate" },
+  { code: "MA", name: "Massachusetts", lat: 42.3, lng: -71.8, zone: "temperate" },
+  { code: "MI", name: "Michigan", lat: 44.3, lng: -85.4, zone: "temperate" },
+  { code: "MN", name: "Minnesota", lat: 46.3, lng: -94.3, zone: "cold" },
+  { code: "MS", name: "Mississippi", lat: 32.7, lng: -89.7, zone: "subtropical" },
+  { code: "MO", name: "Missouri", lat: 38.5, lng: -92.5, zone: "temperate" },
+  { code: "MT", name: "Montana", lat: 47.0, lng: -109.6, zone: "cold" },
+  { code: "NE", name: "Nebraska", lat: 41.5, lng: -99.8, zone: "temperate" },
+  { code: "NV", name: "Nevada", lat: 39.3, lng: -116.6, zone: "hot_arid" },
+  { code: "NH", name: "New Hampshire", lat: 43.7, lng: -71.6, zone: "cold" },
+  { code: "NJ", name: "New Jersey", lat: 40.1, lng: -74.7, zone: "temperate" },
+  { code: "NM", name: "New Mexico", lat: 34.4, lng: -106.1, zone: "warm" },
+  { code: "NY", name: "New York", lat: 42.9, lng: -75.5, zone: "temperate" },
+  { code: "NC", name: "North Carolina", lat: 35.6, lng: -79.4, zone: "warm" },
+  { code: "ND", name: "North Dakota", lat: 47.5, lng: -100.5, zone: "cold" },
+  { code: "OH", name: "Ohio", lat: 40.3, lng: -82.8, zone: "temperate" },
+  { code: "OK", name: "Oklahoma", lat: 35.5, lng: -97.5, zone: "warm" },
+  { code: "OR", name: "Oregon", lat: 43.9, lng: -120.6, zone: "pacific" },
+  { code: "PA", name: "Pennsylvania", lat: 40.9, lng: -77.7, zone: "temperate" },
+  { code: "RI", name: "Rhode Island", lat: 41.7, lng: -71.5, zone: "temperate" },
+  { code: "SC", name: "South Carolina", lat: 33.9, lng: -80.9, zone: "subtropical" },
+  { code: "SD", name: "South Dakota", lat: 44.4, lng: -100.2, zone: "cold" },
+  { code: "TN", name: "Tennessee", lat: 35.9, lng: -86.3, zone: "warm" },
+  { code: "TX", name: "Texas", lat: 31.5, lng: -99.3, zone: "subtropical" },
+  { code: "UT", name: "Utah", lat: 39.3, lng: -111.7, zone: "temperate" },
+  { code: "VT", name: "Vermont", lat: 44.0, lng: -72.7, zone: "cold" },
+  { code: "VA", name: "Virginia", lat: 37.5, lng: -78.8, zone: "warm" },
+  { code: "WA", name: "Washington", lat: 47.4, lng: -120.5, zone: "pacific" },
+  { code: "WV", name: "West Virginia", lat: 38.6, lng: -80.6, zone: "temperate" },
+  { code: "WI", name: "Wisconsin", lat: 44.6, lng: -89.9, zone: "cold" },
+  { code: "WY", name: "Wyoming", lat: 43.0, lng: -107.5, zone: "cold" },
+];
+function stateInfo(code) {
+  return US_STATES.find((s) => s.code === (code || "").toUpperCase()) || null;
+}
+// A small deterministic spread so shops in the same state don't all stack on
+// exactly one point — same seed always lands on the same offset, rather than
+// drifting on every reload.
+function jitterFromSeed(seed, spread) {
+  let h = 0;
+  const s = String(seed || "");
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  const a = ((h % 1000) / 1000) * 2 - 1;
+  const b = (((Math.floor(h / 1000)) % 1000) / 1000) * 2 - 1;
+  return { dLat: a * spread, dLng: b * spread * 1.4 };
+}
+function stateApproxLatLng(code, seed) {
+  const st = stateInfo(code);
+  if (!st) return null;
+  const { dLat, dLng } = jitterFromSeed(seed, 0.45);
+  return { lat: st.lat + dLat, lng: st.lng + dLng };
+}
+
+/* ============================================================================
+   SECTION 3c: GROWING-GUIDE CONTENT (Learn tab)
+   Keyed by the coarse "zone" band on each US_STATES entry. General enough to
+   be true across a whole climate band rather than precise to one county —
+   plenty for "roughly when do I plant" and "what tends to do well here."
+============================================================================ */
+const ZONE_INFO = {
+  cold: {
+    label: "Cold winters, short growing season",
+    blurb: "Hard freezes, real winters, and a growing season that rewards getting your timing right.",
+    frost: { lastSpring: "mid-to-late May", firstFall: "mid-to-late September" },
+    season: "roughly 90–130 frost-free days",
+    plantingGuide: [
+      { window: "As soon as the soil can be worked (April)", crops: "peas, spinach, lettuce, radishes, kale, onion sets" },
+      { window: "After the last frost (late May–June)", crops: "tomatoes, peppers, squash, beans, corn, cucumbers, melons" },
+      { window: "Late summer, for a fall crop", crops: "quick greens, another round of peas, radishes, spinach" },
+    ],
+    bestCrops: ["Potatoes", "Carrots", "Cabbage & other brassicas", "Peas", "Kale", "Rhubarb", "Cold-hardy berries (currants, honeyberries)", "Root vegetables generally"],
+    bestAnimals: ["Chickens (cold-hardy breeds: Chantecler, Wyandotte, Buff Orpington)", "Rabbits (with a sheltered, draft-free hutch)", "Cold-hardy sheep (Icelandic, Romney)", "Bees, with real winter hive prep"],
+  },
+  temperate: {
+    label: "Four real seasons, moderate winters",
+    blurb: "A long, dependable growing season with a genuine winter — the classic setup for a mixed small farm.",
+    frost: { lastSpring: "mid-April to early May", firstFall: "mid-to-late October" },
+    season: "roughly 150–190 frost-free days",
+    plantingGuide: [
+      { window: "Early spring (March–April)", crops: "peas, lettuce, spinach, radishes, broccoli transplants" },
+      { window: "After last frost (May)", crops: "tomatoes, peppers, squash, beans, sweet corn, cucumbers" },
+      { window: "Midsummer, for a fall crop", crops: "carrots, beets, another round of greens, brassicas" },
+    ],
+    bestCrops: ["Sweet corn", "Tomatoes", "Apples & pears", "Winter squash & pumpkins", "Berries (strawberries, raspberries)", "Leafy greens", "Garlic (fall-planted)"],
+    bestAnimals: ["Chickens (most breeds do well)", "Dairy & meat goats", "Pigs", "Bees", "Sheep"],
+  },
+  warm: {
+    label: "Mild winters, long growing season",
+    blurb: "Winters rarely bite hard, which stretches the growing calendar well past what a northern garden gets.",
+    frost: { lastSpring: "late March to mid-April", firstFall: "mid-November" },
+    season: "roughly 200–230 frost-free days",
+    plantingGuide: [
+      { window: "Late winter (February–March)", crops: "peas, lettuce, greens, potatoes" },
+      { window: "Spring (April–May)", crops: "tomatoes, peppers, beans, squash, sweet corn, melons" },
+      { window: "Fall (September)", crops: "a full second round of cool-season crops, often better than spring's" },
+    ],
+    bestCrops: ["Tomatoes", "Peppers (sweet & hot)", "Sweet potatoes", "Okra", "Muscadine & other grapes", "Blackberries", "Greens through most of winter"],
+    bestAnimals: ["Chickens", "Meat goats (Boer, Kiko)", "Cattle on pasture", "Bees"],
+  },
+  hot_arid: {
+    label: "Hot and dry — water is the whole game",
+    blurb: "Intense summer heat and low rainfall mean irrigation and heat tolerance matter more than frost dates.",
+    frost: { lastSpring: "mid-March", firstFall: "late November" },
+    season: "roughly 230–280 frost-free days, with a brutal midsummer lull",
+    plantingGuide: [
+      { window: "Late winter (February)", crops: "cool-season crops before real heat arrives: lettuce, peas, greens" },
+      { window: "Early spring, before summer heat", crops: "tomatoes, peppers, squash — timed to fruit before the worst heat" },
+      { window: "Fall, once heat breaks (September–October)", crops: "a second, often better growing window for most vegetables" },
+    ],
+    bestCrops: ["Chiles & peppers", "Melons", "Dates & figs", "Desert-adapted squash", "Drought-tolerant herbs (rosemary, sage, thyme)", "Pistachios & olives (established plantings)"],
+    bestAnimals: ["Heat-tolerant chicken breeds (Leghorn, Egyptian Fayoumi)", "Goats", "Desert-adapted sheep (Navajo-Churro)", "Bees, with reliable water nearby"],
+  },
+  subtropical: {
+    label: "Hot, humid, and barely a winter",
+    blurb: "Frost is rare or absent, so the growing calendar looks completely different from the rest of the country.",
+    frost: { lastSpring: "rare, or none at all", firstFall: "rare, or none at all" },
+    season: "often close to year-round",
+    plantingGuide: [
+      { window: "Fall through winter (October–February)", crops: "tomatoes, peppers, greens, broccoli — the mild season, not summer" },
+      { window: "Spring (February–April)", crops: "beans, squash, sweet corn, before summer's heat and humidity peak" },
+      { window: "Summer", crops: "heat-lovers only: okra, sweet potatoes, southern peas, some tropical fruit" },
+    ],
+    bestCrops: ["Citrus", "Okra", "Sweet potatoes", "Southern peas (black-eyed, crowder)", "Bananas & other tropicals", "Collards & other heat-tolerant greens"],
+    bestAnimals: ["Heat-tolerant chicken breeds", "Cattle on pasture (with shade & water)", "Bees, watching for year-round pest pressure"],
+  },
+  pacific: {
+    label: "Mild and marine — wet winters, dry summers",
+    blurb: "Rarely extreme in either direction, but the rain and dry season fall opposite most of the country's.",
+    frost: { lastSpring: "March to mid-April", firstFall: "late October to November" },
+    season: "roughly 180–250 frost-free days, varying a lot with distance from the coast",
+    plantingGuide: [
+      { window: "Early spring (March)", crops: "peas, lettuce, brassicas — the mild wet season suits them well" },
+      { window: "Late spring, once soil warms (May)", crops: "tomatoes, squash, beans, corn — often started indoors first" },
+      { window: "Late summer", crops: "a fall round of greens and brassicas before the rains return" },
+    ],
+    bestCrops: ["Berries (blueberries, raspberries, blackberries)", "Brassicas of all kinds", "Wine grapes", "Hazelnuts", "Leafy greens nearly year-round near the coast"],
+    bestAnimals: ["Chickens", "Dairy goats", "Sheep on pasture", "Bees, with shelter from wind and rain"],
+  },
+};
+function zoneInfoFor(stateCode) {
+  const st = stateInfo(stateCode);
+  return (st && ZONE_INFO[st.zone]) || null;
+}
+
+// The three non-location topics in the Learn tab — general enough to hold
+// true anywhere, so they don't need a state picker.
+const LEARN_STATIC = {
+  companions: {
+    intro: "Some crops genuinely help their neighbors — trading shade, structure, or pest confusion — and some just compete for the same nutrients or trade the same diseases back and forth. None of this is exact science, but it's old, widely-repeated market-garden wisdom worth planning around.",
+    good: [
+      { a: "Tomatoes", b: "Basil", why: "Grown side by side for generations — similar sun and water needs, and basil is widely believed to help keep some pests off tomatoes." },
+      { a: "Corn, beans & squash", b: "(the \"Three Sisters\")", why: "Corn gives beans a pole to climb, beans fix nitrogen in the soil the corn uses heavily, and squash's broad leaves shade out weeds at everyone's feet." },
+      { a: "Carrots", b: "Onions", why: "Onions' strong scent is thought to help confuse the carrot rust fly, and carrots return the favor for onion pests." },
+      { a: "Cucumbers", b: "Sunflowers", why: "A sturdy sunflower stalk gives cucumber vines something to climb, plus a little welcome afternoon shade." },
+      { a: "Cabbage family", b: "Dill or nasturtiums", why: "Nasturtiums lure aphids away as a \"trap crop\"; dill attracts the predatory insects that eat cabbage pests." },
+    ],
+    avoid: [
+      { a: "Tomatoes", b: "Corn", why: "Both are magnets for the same pest (corn earworm, which is the same insect as the tomato fruitworm) — planting together concentrates the problem." },
+      { a: "Beans", b: "Onions or garlic", why: "Alliums release compounds that can stunt nearby bean growth." },
+      { a: "Potatoes", b: "Tomatoes", why: "Both nightshades that share the same diseases, blight included — grouping them raises the odds of one outbreak taking both." },
+      { a: "Carrots", b: "Dill", why: "Fine as seedlings, but mature dill can slow young carrots down if planted too close together." },
+    ],
+  },
+  pricing: {
+    intro: "There's no single formula, but a few habits keep a price fair to the shopper without quietly shorting yourself.",
+    sections: [
+      { title: "Start from your real costs", body: "Seed or starts, water, soil amendments, packaging, and your own time — growing it and hauling it to market — all belong in the number before you land on a price. A price that doesn't cover labor isn't sustainable no matter how fair it looks on the sign." },
+      { title: "Check the going rate around you", body: "Other vendors at the same market, plus nearby grocery or co-op prices for comparable quality, give you a realistic ceiling and floor to work inside rather than guessing." },
+      { title: "Let the season move the price", body: "The first tomatoes of summer or the last squash before frost are scarce and usually priced higher; peak-season abundance is when shoppers expect — and vendors can afford — a lower price." },
+      { title: "Price in bundles shoppers can picture", body: "A bunch, a pint, or a quart is often easier for someone to reason about at a glance than pure per-pound math, and a small discount for a bigger bundle encourages a fuller basket." },
+      { title: "Don't race to the bottom", body: "Undercutting every other stand chips away at the whole market's prices, yours included. Freshness, variety, and how something was grown usually earn loyalty — and a fair price — better than simply being the cheapest table." },
+    ],
+  },
+  preserving: {
+    intro: "A big harvest doesn't have to be sold or eaten all at once — these are the standard ways small growers stretch it out.",
+    methods: [
+      { name: "Water-bath canning", body: "The go-to for high-acid foods — jams, pickles, tomatoes with a little added acid. Basic equipment, shelf-stable for a year or more." },
+      { name: "Pressure canning", body: "Needed for low-acid foods like most vegetables and meats, since they need higher heat than a water bath reaches to be safely shelf-stable." },
+      { name: "Freezing", body: "Usually the fastest way to preserve with the least prep. Blanching most vegetables first — a quick dunk in boiling water, then ice water — helps hold onto color, texture, and nutrients." },
+      { name: "Drying / dehydrating", body: "Well suited to herbs, fruit, and some vegetables. Concentrates flavor and takes up almost no storage space once finished." },
+      { name: "Fermenting", body: "Sauerkraut, kimchi, traditional pickles — needs no canning equipment at all, just salt, time, and a container, and adds beneficial bacteria along the way." },
+    ],
+  },
+};
+
+/* ============================================================================
    SECTION 4: UTILITIES — pure functions (unit-testable outside React)
 ============================================================================ */
 function uid(prefix) {
@@ -1432,9 +1657,31 @@ function haversineMiles(lat1, lng1, lat2, lng2) {
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
-function formatPrice(n) {
+// Quick-tap choices for "priced per ___". "each" is the default and is never
+// shown (a plain "$4.00" already reads as per-item), so it isn't included in
+// the tap row itself — see PRICE_UNIT_CHOICES below.
+const PRICE_UNITS = [
+  { id: "each", label: "each" },
+  { id: "lb", label: "lb" },
+  { id: "oz", label: "oz" },
+  { id: "doz", label: "dozen" },
+  { id: "bunch", label: "bunch" },
+  { id: "pint", label: "pint" },
+  { id: "qt", label: "quart" },
+  { id: "gal", label: "gallon" },
+  { id: "L", label: "liter" },
+  { id: "bushel", label: "bushel" },
+  { id: "basket", label: "basket" },
+];
+const PRICE_UNIT_CHOICES = PRICE_UNITS.filter((u) => u.id !== "each");
+function priceUnitLabel(id) {
+  return (PRICE_UNITS.find((u) => u.id === id) || PRICE_UNITS[0]).label;
+}
+function formatPrice(n, unit) {
   if (n === 0) return "Free";
-  return `$${n.toFixed(2)}`;
+  const base = `$${n.toFixed(2)}`;
+  if (!unit || unit === "each") return base;
+  return `${base}/${priceUnitLabel(unit)}`;
 }
 function formatDistance(miles) {
   if (miles < 1) return "< 1 mi";
@@ -2444,17 +2691,26 @@ function useMarketData() {
   );
 
   const createShopForUser = useCallback(
-    async (user, shopName) => {
+    async (user, shopName, location) => {
       const id = uid("shop");
+      // Placed for real from the start: an exact lat/lng (device location or a
+      // picked city) wins outright; a bare state falls back to that state's
+      // approximate center so the pin at least lands in the right part of the
+      // country instead of squatting on the geographic center of the whole US
+      // until someone happens to notice and fix it by hand.
+      const stateCode = (location?.state || "").toUpperCase().slice(0, 2);
+      const hasExactPoint = typeof location?.lat === "number" && typeof location?.lng === "number";
+      const approx = !hasExactPoint ? stateApproxLatLng(stateCode, id) : null;
+      const point = hasExactPoint ? { lat: location.lat, lng: location.lng } : approx || { lat: US_CENTER.lat, lng: US_CENTER.lng };
       const newShop = {
         id,
         ownerId: user.id,
         name: shopName || `${user.name}'s Farm Stand`,
         handle: (shopName || user.name).toLowerCase().replace(/[^a-z0-9]+/g, "") || "farmstand",
-        city: "Your Town",
-        state: "US",
-        lat: 39.5 + (Math.random() - 0.5) * 4,
-        lng: -98.35 + (Math.random() - 0.5) * 8,
+        city: location?.city || "Your Town",
+        state: stateCode || "US",
+        lat: point.lat,
+        lng: point.lng,
         bio: "Tell people what you grow and how to find you.",
         themeId: "harvest",
         bannerScene: "hills",
@@ -3867,9 +4123,20 @@ function BannerRibbon({ bannerId, customText, className = "" }) {
     if (!customText) return null;
     return <PriceTag tone="white" className={className}>{customText}</PriceTag>;
   }
-  const preset = BANNER_PRESETS.find((b) => b.id === bannerId);
+  const preset = BANNER_PRESETS.find((b) => b.id === bannerId) || SPECIAL_PRESETS.find((b) => b.id === bannerId);
   if (!preset) return null;
-  const toneMap = { sold_out: "stone", new: "emerald", preorder: "violet", in_season: "amber", limited: "rose", free: "emerald" };
+  const toneMap = {
+    sold_out: "stone",
+    new: "emerald",
+    preorder: "violet",
+    in_season: "amber",
+    limited: "rose",
+    free: "emerald",
+    bogo: "rose",
+    bogo_half: "amber",
+    bundle: "violet",
+    flash_sale: "rose",
+  };
   return (
     <PriceTag tone={toneMap[bannerId] || "stone"} className={className}>
       {preset.label}
@@ -4062,7 +4329,7 @@ function ProductCard({ product, onEdit, onDelete }) {
         <h3 className="font-semibold text-stone-900 leading-snug truncate" style={displayFont}>{product.name}</h3>
         {shop && <p className="cs-t11 text-stone-500 mt-0.5 truncate tracking-wide">{shop.name} · {shop.city}, {shop.state}</p>}
         <div className="mt-2.5 pt-2.5 border-t border-stone-100 flex items-baseline justify-between">
-          <span className="cs-t17 font-semibold text-stone-900" style={displayFont}>{formatPrice(product.price)}</span>
+          <span className="cs-t17 font-semibold text-stone-900" style={displayFont}>{formatPrice(product.price, product.priceUnit)}</span>
           {dist != null && <span className="cs-t10 text-stone-400 font-medium uppercase tracking-wider">{formatDistance(dist)}</span>}
         </div>
       </div>
@@ -5548,7 +5815,7 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
   const dist = shop && userLoc ? haversineMiles(userLoc.lat, userLoc.lng, shop.lat, shop.lng) : null;
 
   const handleShare = async () => {
-    const res = await shareContent({ title: product.name, text: `Check out ${product.name} from ${shop?.name} on CropSwap — ${formatPrice(product.price)}.` });
+    const res = await shareContent({ title: product.name, text: `Check out ${product.name} from ${shop?.name} on CropSwap — ${formatPrice(product.price, product.priceUnit)}.` });
     if (res.ok) incrementShare("product", product);
     if (res.method === "clipboard") showToast("Link copied to clipboard");
     else if (res.method === "none") showToast("Sharing isn't available on this device");
@@ -5567,7 +5834,7 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
             <div>
               <h2 id="prod-title" className="text-xl font-bold text-stone-900" style={displayFont}>{product.name}</h2>
             </div>
-            <span className="text-xl font-semibold text-stone-900 shrink-0" style={displayFont}>{formatPrice(product.price)}</span>
+            <span className="text-xl font-semibold text-stone-900 shrink-0" style={displayFont}>{formatPrice(product.price, product.priceUnit)}</span>
           </div>
 
           {/* Full-width so a long shop name wraps instead of being clipped, and
@@ -5982,7 +6249,7 @@ function BlockReorderList({ blocks, onReorder }) {
 }
 
 function LayoutTab({ shop }) {
-  const { updateShop } = useApp();
+  const { updateShop, userLoc, showToast } = useApp();
   const [bio, setBio] = useState(shop.bio);
   const [handle, setHandle] = useState(shop.handle || "");
   const [city, setCity] = useState(shop.city || "");
@@ -6094,18 +6361,41 @@ function LayoutTab({ shop }) {
           className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
         />
         </div>
-        <div className="w-20">
+        <div className="w-28">
         <label className="block cs-t11 font-semibold text-stone-500 mb-1">State</label>
-        <TextField
+        <select
           value={stateCode}
-          onChange={setStateCode}
-          onBlur={(v) => updateShop(shop.id, { state: (v || "").toUpperCase().slice(0, 2) || shop.state })}
-          label="State"
-          placeholder="ID"
-          className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
-        />
+          onChange={(e) => {
+            const code = e.target.value;
+            setStateCode(code);
+            // Re-centers the shop's map pin on the newly chosen state so it
+            // actually shows up there, not just in the text on the page —
+            // this is the fix for shops landing in the wrong part of the map.
+            const approx = stateApproxLatLng(code, shop.id);
+            updateShop(shop.id, approx ? { state: code, lat: approx.lat, lng: approx.lng } : { state: code });
+          }}
+          aria-label="State"
+          className="w-full border border-stone-200 rounded-xl px-2 py-2.5 text-sm bg-white"
+        >
+          <option value="">State…</option>
+          {US_STATES.map((s) => (
+            <option key={s.code} value={s.code}>{s.code}</option>
+          ))}
+        </select>
         </div>
       </div>
+      {userLoc && (
+        <button
+          type="button"
+          onClick={() => {
+            updateShop(shop.id, { lat: userLoc.lat, lng: userLoc.lng });
+            showToast?.("Shop pinned to your exact current location");
+          }}
+          className="flex items-center gap-1.5 cs-t11 font-semibold text-emerald-800 mb-4"
+        >
+          <MapPin size={12} /> Use my exact current location for the map pin
+        </button>
+      )}
       <label className="block cs-t11 font-semibold text-stone-500 mb-1">Pickup &amp; hours</label>
       <TextField
         value={pickup}
@@ -6389,6 +6679,7 @@ function AddProductForm({ shop, onClose, editing }) {
   const [name, setName] = useState(editing?.name || "");
   const [category, setCategory] = useState(editing?.category || "Veggie");
   const [price, setPrice] = useState(editing ? String(editing.price) : "");
+  const [priceUnit, setPriceUnit] = useState(editing?.priceUnit || "each");
   const [desc, setDesc] = useState(editing?.desc || "");
   const [saving, setSaving] = useState(false);
   const canSave = name.trim() && price !== "" && !isNaN(Number(price));
@@ -6400,6 +6691,7 @@ function AddProductForm({ shop, onClose, editing }) {
       name: name.trim(),
       category,
       price: Math.max(0, Number(price)),
+      priceUnit,
       desc: desc.trim(),
       photoId,
       art,
@@ -6499,6 +6791,27 @@ function AddProductForm({ shop, onClose, editing }) {
             </div>
           </div>
 
+          <label className="block cs-t11 font-semibold text-stone-500 mb-1">Priced per</label>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            <button
+              type="button"
+              onClick={() => setPriceUnit("each")}
+              className={`px-2.5 py-1 rounded-full cs-t11 font-semibold border transition ${priceUnit === "each" ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-500"}`}
+            >
+              each
+            </button>
+            {PRICE_UNIT_CHOICES.map((u) => (
+              <button
+                key={u.id}
+                type="button"
+                onClick={() => setPriceUnit(u.id)}
+                className={`px-2.5 py-1 rounded-full cs-t11 font-semibold border transition ${priceUnit === u.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-500"}`}
+              >
+                {u.label}
+              </button>
+            ))}
+          </div>
+
           <label className="block cs-t11 font-semibold text-stone-500 mb-1">Description</label>
           <TextField
             value={desc}
@@ -6524,7 +6837,7 @@ function AddProductForm({ shop, onClose, editing }) {
   );
 }
 
-function ProductEditRow({ product, shop }) {
+function ProductEditRow({ product, shop, onEditDetails }) {
   const { updateProduct, removeProduct } = useApp();
   const [customText, setCustomText] = useState(product.customBannerText || "");
   const [expanded, setExpanded] = useState(false);
@@ -6542,8 +6855,11 @@ function ProductEditRow({ product, shop }) {
         <ProductImage src={product.image} photoId={product.photoId} artKey={product.art} category={product.category} emoji={product.emoji} alt="" className="w-11 h-11 shrink-0" rounded="rounded-lg" showCredit={false} />
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm text-stone-800 truncate">{product.name}</p>
-          <p className="text-xs text-stone-400">{formatPrice(product.price)} · {catInfo(product.category).label}</p>
+          <p className="text-xs text-stone-400">{formatPrice(product.price, product.priceUnit)} · {catInfo(product.category).label}</p>
         </div>
+        <button onClick={onEditDetails} className="text-stone-400 hover:text-emerald-800" aria-label="Edit details">
+          <Pencil size={15} />
+        </button>
         <button onClick={() => setExpanded((v) => !v)} className="text-stone-400" aria-label="Expand">
           <ChevronDown size={16} className={`transition-transform ${expanded ? "rotate-180" : ""}`} />
         </button>
@@ -6560,6 +6876,12 @@ function ProductEditRow({ product, shop }) {
       )}
       {expanded && (
         <div className="mt-3 pt-3 border-t border-stone-100">
+          <p className="cs-t11 font-bold text-stone-400 uppercase mb-1.5 flex items-center gap-1"><Megaphone size={12} /> Special offer</p>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {SPECIAL_PRESETS.map((b) => (
+              <button key={b.id} onClick={() => setBanner(b.id)} className={`px-2.5 py-1 rounded-full cs-t11 font-semibold border transition ${product.bannerId === b.id ? "bg-rose-700 text-white border-rose-700" : "border-stone-200 text-stone-500"}`}>{b.label}</button>
+            ))}
+          </div>
           <p className="cs-t11 font-bold text-stone-400 uppercase mb-1.5">Banner</p>
           <div className="flex flex-wrap gap-1.5">
             <button onClick={() => setBanner(null)} className={`px-2.5 py-1 rounded-full cs-t11 font-semibold border transition ${!product.bannerId ? "bg-stone-800 text-white border-stone-800" : "border-stone-200 text-stone-500"}`}>None</button>
@@ -6585,20 +6907,23 @@ function ProductEditRow({ product, shop }) {
 }
 
 function ProductsTab({ shop, products }) {
-  const [showAdd, setShowAdd] = useState(false);
+  // null = closed, "new" = add flow, a product object = editing that listing.
+  const [formTarget, setFormTarget] = useState(null);
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Your listings ({products.length})</p>
-        <button onClick={() => setShowAdd(true)} className="flex items-center gap-1 text-sm font-semibold text-emerald-800"><Plus size={15} /> Add listing</button>
+        <button onClick={() => setFormTarget("new")} className="flex items-center gap-1 text-sm font-semibold text-emerald-800"><Plus size={15} /> Add listing</button>
       </div>
       <div className="flex flex-col gap-2 mb-6">
         {products.map((pr) => (
-          <ProductEditRow key={pr.id} product={pr} shop={shop} />
+          <ProductEditRow key={pr.id} product={pr} shop={shop} onEditDetails={() => setFormTarget(pr)} />
         ))}
         {products.length === 0 && <p className="text-sm text-stone-400">No listings yet — add your first one.</p>}
       </div>
-      {showAdd && <AddProductForm shop={shop} onClose={() => setShowAdd(false)} />}
+      {formTarget && (
+        <AddProductForm shop={shop} onClose={() => setFormTarget(null)} editing={formTarget === "new" ? null : formTarget} />
+      )}
     </div>
   );
 }
@@ -6630,11 +6955,11 @@ function StorefrontEditor({ navigate }) {
         <div className="flex gap-1 overflow-x-auto">
           {[
             { id: "layout", label: "Theme & Layout", icon: LayoutGrid },
+            { id: "products", label: "Products", icon: ShoppingBag },
             { id: "updates", label: "Updates", icon: Bell },
             { id: "tools", label: "Tools & FAQ", icon: TrendingUp },
             { id: "banners", label: "Banners", icon: Sparkles },
             { id: "contact", label: "Contact Card", icon: UserPlus },
-            { id: "products", label: "Products & Banners", icon: ShoppingBag },
           ].map((t) => (
             <button key={t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition ${tab === t.id ? "border-emerald-800 text-emerald-800" : "border-transparent text-stone-400"}`}>
               <t.icon size={15} /> {t.label}
@@ -6677,11 +7002,45 @@ const BANNER_TEXT_SIZES = [
 ];
 const bannerSizePx = (id) => (BANNER_TEXT_SIZES.find((s) => s.id === id) || BANNER_TEXT_SIZES[1]).px;
 
+// A wavy/scalloped bottom edge, built as a zigzag rather than a true curve —
+// clip-path's path() form needs fixed pixel coordinates, which can't track a
+// banner that resizes with its text, so a percentage-based polygon is what
+// stays correct at any width. Enough segments and it still reads as a wave.
+function scallopEdgeClip(segments, depthPct) {
+  const pts = ["0% 0%", "100% 0%"];
+  for (let i = segments; i >= 0; i--) {
+    const x = (i / segments) * 100;
+    const y = i % 2 === 0 ? 100 : 100 - depthPct;
+    pts.push(`${x.toFixed(2)}% ${y}%`);
+  }
+  return `polygon(${pts.join(", ")})`;
+}
+
+// Ten silhouettes a banner can take, purely geometric (no imagery of any
+// kind — just clipped polygon edges), so a vendor picks a shape the same
+// tap-to-choose way they already pick colour and size. padX widens the
+// horizontal padding on shapes that cut into the sides, so their text never
+// runs into a notch or point.
+const BANNER_SHAPES = [
+  { id: "classic", label: "Classic", clipPath: null, padX: "1rem", rounded: true },
+  { id: "ribbon", label: "Ribbon", clipPath: "polygon(0% 0%, 100% 0%, 92% 50%, 100% 100%, 0% 100%, 8% 50%)", padX: "1.6rem" },
+  { id: "pennant", label: "Pennant", clipPath: "polygon(0% 0%, 84% 0%, 100% 50%, 84% 100%, 0% 100%)", padX: "1.5rem" },
+  { id: "arrow", label: "Arrow", clipPath: "polygon(0% 0%, 80% 0%, 100% 50%, 80% 100%, 0% 100%, 14% 50%)", padX: "1.8rem" },
+  { id: "hexagon", label: "Hexagon", clipPath: "polygon(6% 0%, 94% 0%, 100% 50%, 94% 100%, 6% 100%, 0% 50%)", padX: "1.5rem" },
+  { id: "wavy", label: "Wavy", clipPath: scallopEdgeClip(12, 20), padX: "1rem", padBottom: "0.9rem" },
+  { id: "scalloped", label: "Scalloped", clipPath: scallopEdgeClip(6, 34), padX: "1rem", padBottom: "1.3rem" },
+  { id: "flag", label: "Flag", clipPath: "polygon(0% 0%, 100% 0%, 100% 100%, 56% 100%, 50% 76%, 44% 100%, 0% 100%)", padX: "1rem", padBottom: "0.7rem" },
+  { id: "slant", label: "Slant", clipPath: "polygon(8% 0%, 100% 0%, 92% 100%, 0% 100%)", padX: "1.3rem" },
+  { id: "tag", label: "Tag", clipPath: "polygon(16% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 16%)", padX: "1.2rem" },
+];
+const bannerShapeInfo = (id) => BANNER_SHAPES.find((s) => s.id === id) || BANNER_SHAPES[0];
+
 function ShopBannerRibbon({ banner, className = "" }) {
   if (!banner || !banner.text) return null;
+  const shape = bannerShapeInfo(banner.shape);
   return (
     <span
-      className={`inline-block px-3 py-1 rounded shadow-sm max-w-full truncate ${className}`}
+      className={`inline-block shadow-sm max-w-full truncate ${shape.rounded ? "rounded" : ""} ${className}`}
       style={{
         background: banner.bg || "#047857",
         color: banner.color || "#ffffff",
@@ -6690,6 +7049,11 @@ function ShopBannerRibbon({ banner, className = "" }) {
         fontStyle: banner.italic ? "italic" : "normal",
         fontFamily: banner.serif ? "'Fraunces', serif" : "'Inter', sans-serif",
         letterSpacing: banner.wide ? "0.08em" : "normal",
+        clipPath: shape.clipPath || undefined,
+        paddingLeft: shape.padX,
+        paddingRight: shape.padX,
+        paddingTop: "0.25rem",
+        paddingBottom: shape.padBottom || "0.25rem",
       }}
     >
       {banner.text}
@@ -6715,6 +7079,7 @@ function BannersTab({ shop }) {
         italic: false,
         serif: false,
         wide: false,
+        shape: "classic",
       },
     ]);
   const editBanner = (id, part) => patch(banners.map((b) => (b.id === id ? { ...b, ...part } : b)));
@@ -6816,6 +7181,25 @@ function BannersTab({ shop }) {
                   aria-pressed={!!b[opt.key]}
                 >
                   {opt.label}
+                </button>
+              ))}
+            </div>
+
+            <p className="cs-t11 font-bold text-stone-400 uppercase mt-3 mb-1.5">Shape</p>
+            <div className="grid grid-cols-5 gap-1.5">
+              {BANNER_SHAPES.map((shape) => (
+                <button
+                  key={shape.id}
+                  onClick={() => editBanner(b.id, { shape: shape.id })}
+                  className={`rounded-lg border-2 p-1.5 flex flex-col items-center gap-1 transition ${(b.shape || "classic") === shape.id ? "border-emerald-700 bg-emerald-50" : "border-stone-200"}`}
+                  aria-pressed={(b.shape || "classic") === shape.id}
+                  title={shape.label}
+                >
+                  <span
+                    className={`block w-full h-4 ${shape.rounded ? "rounded" : ""}`}
+                    style={{ background: b.bg || "#047857", clipPath: shape.clipPath || undefined }}
+                  />
+                  <span className="cs-t9 font-semibold text-stone-500 truncate w-full text-center">{shape.label}</span>
                 </button>
               ))}
             </div>
@@ -7740,6 +8124,7 @@ function AccountModal({ open, onClose }) {
     { id: "places", label: "Places", icon: MapPin },
     { id: "blocked", label: "Blocked", icon: AlertCircle },
     { id: "data", label: "Data", icon: Package },
+    { id: "learn", label: "Learn", icon: BookOpen },
   ];
 
   return (
@@ -7750,14 +8135,14 @@ function AccountModal({ open, onClose }) {
           <button onClick={onClose} aria-label="Close"><X size={20} className="text-stone-400" /></button>
         </div>
 
-        <div className="flex gap-1 overflow-x-auto mb-5 -mx-1 px-1">
+        <div className="grid grid-cols-5 gap-1.5 mb-5">
           {tabs.map((t) => (
             <button
               key={t.id}
               onClick={() => (t.link ? (onClose(), navigate({ screen: t.id })) : setTab(t.id))}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition ${tab === t.id ? "bg-emerald-800 text-white" : "bg-stone-100 text-stone-500"}`}
+              className={`flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-full text-[11px] font-semibold whitespace-nowrap transition ${tab === t.id ? "bg-emerald-800 text-white" : "bg-stone-100 text-stone-500"}`}
             >
-              <t.icon size={13} /> {t.label}
+              <t.icon size={12} /> {t.label}
             </button>
           ))}
         </div>
@@ -8005,6 +8390,30 @@ function AccountModal({ open, onClose }) {
               ))}
             </div>
           ))}
+
+        {tab === "learn" && (
+          <div>
+            <p className="text-xs font-bold text-stone-400 uppercase mb-2">Pick something to learn about</p>
+            <div className="flex flex-col gap-1.5">
+              {LEARN_TOPICS.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => { onClose(); navigate({ screen: "learn", topic: t.id }); }}
+                  className="w-full flex items-center gap-3 border border-stone-200 rounded-xl px-3 py-2.5 text-left hover:bg-stone-50 transition"
+                >
+                  <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                    <t.icon size={16} />
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-semibold text-stone-800">{t.label}</span>
+                    {t.blurb && <span className="block text-xs text-stone-400 truncate">{t.blurb}</span>}
+                  </span>
+                  <ChevronRight size={16} className="text-stone-300 shrink-0" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <button onClick={() => { signOut(); onClose(); }} className="w-full flex items-center justify-center gap-1.5 text-sm font-semibold text-stone-400 mt-6 pt-4 border-t border-stone-100">
           <LogOut size={14} /> Sign out
@@ -8864,8 +9273,11 @@ function VendorDashboard({ navigate }) {
    SECTION 25: STORE SCREEN (own shop or become-a-vendor prompt)
 ============================================================================ */
 function StoreScreen({ navigate }) {
-  const { me, shopsById, createShopForUser, updateMe, purchasePlan, showToast } = useApp();
+  const { me, shopsById, createShopForUser, updateMe, purchasePlan, showToast, userLoc } = useApp();
   const [shopName, setShopName] = useState("");
+  const homeLoc = splitCityState(me?.homeLocation?.label);
+  const [shopCity, setShopCity] = useState(homeLoc.city || "");
+  const [shopState, setShopState] = useState((homeLoc.state || "").toUpperCase().slice(0, 2));
   const [creating, setCreating] = useState(false);
   const [reactivating, setReactivating] = useState(false);
   const shop = me.isVendor && me.shopId ? shopsById[me.shopId] : null;
@@ -8932,19 +9344,230 @@ function StoreScreen({ navigate }) {
           placeholder="Your farm or shop name"
           className="w-full border border-stone-200 rounded-xl px-4 py-3 text-sm mb-3 outline-none focus:border-emerald-700 text-left"
         />
+        <div className="flex gap-2 mb-1">
+          <div className="flex-1">
+            <TextField
+              value={shopCity}
+              onChange={setShopCity}
+              label="Town or city"
+              placeholder="Town or city"
+              className="w-full border border-stone-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-emerald-700 text-left"
+            />
+          </div>
+          <div className="w-32">
+            <select
+              value={shopState}
+              onChange={(e) => setShopState(e.target.value)}
+              aria-label="State"
+              className="w-full h-full border border-stone-200 rounded-xl px-2 text-sm bg-white text-left"
+            >
+              <option value="">State…</option>
+              {US_STATES.map((s) => (
+                <option key={s.code} value={s.code}>{s.code}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <p className="cs-t11 text-stone-400 mb-3 text-left">So shoppers looking near you can actually find you on the map.</p>
         <button
           onClick={async () => {
             setCreating(true);
-            const newShop = await createShopForUser(me, shopName.trim());
+            const newShop = await createShopForUser(me, shopName.trim(), {
+              city: shopCity.trim(),
+              state: shopState,
+              lat: userLoc?.lat,
+              lng: userLoc?.lng,
+            });
             await updateMe({ isVendor: true, shopId: newShop.id });
             setCreating(false);
             navigate({ screen: "storeEditor" });
           }}
-          disabled={creating || !shopName.trim()}
+          disabled={creating || !shopName.trim() || !shopState}
           className="w-full bg-emerald-800 text-white font-semibold py-3 rounded-xl disabled:opacity-40"
         >
           {creating ? "Setting up…" : "Create my storefront"}
         </button>
+        {!shopState && <p className="cs-t11 text-stone-400 text-center mt-2">Pick a state to continue.</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================================
+   SECTION 25b: LEARN
+   Six short, self-contained reference topics reachable from the Learn tab in
+   Your Account. Three are tailored to a state (planting times, what grows
+   well, what animals do well) and three are general market-farming reading.
+============================================================================ */
+const LEARN_TOPICS = [
+  { id: "planting", label: "Planting times", icon: Calendar, locationAware: true, blurb: "Best planting windows for your state" },
+  { id: "crops", label: "What grows well here", icon: Sprout, locationAware: true, blurb: "Crops suited to your climate" },
+  { id: "animals", label: "Animals that do well here", icon: PawPrint, locationAware: true, blurb: "Livestock and poultry for your area" },
+  { id: "companions", label: "Companion planting pairs", icon: Link2, locationAware: false, blurb: "What to plant together — and what to avoid" },
+  { id: "pricing", label: "Pricing your produce fairly", icon: DollarSign, locationAware: false, blurb: "Simple ways to price your goods" },
+  { id: "preserving", label: "Preserving your harvest", icon: Archive, locationAware: false, blurb: "Canning, drying, and storage basics" },
+];
+
+function LearnLocationPanel({ topic }) {
+  const { me } = useApp();
+  const homeLoc = splitCityState(me?.homeLocation?.label);
+  const guess = (homeLoc.state || "").toUpperCase().slice(0, 2);
+  const [stateCode, setStateCode] = useState(stateInfo(guess) ? guess : "");
+  const zone = zoneInfoFor(stateCode);
+
+  return (
+    <div>
+      <div className="bg-white border border-stone-200 rounded-xl p-4 mb-5">
+        <label className="block cs-t11 font-semibold text-stone-500 mb-1.5">Show this for</label>
+        <select
+          value={stateCode}
+          onChange={(e) => setStateCode(e.target.value)}
+          className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm bg-white"
+        >
+          <option value="">Pick a state…</option>
+          {US_STATES.map((s) => (
+            <option key={s.code} value={s.code}>{s.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {!zone ? (
+        <p className="text-sm text-stone-400">Pick a state above to see guidance tailored to that area.</p>
+      ) : topic === "planting" ? (
+        <div>
+          <div className="bg-white border border-stone-200 rounded-xl p-4 mb-4">
+            <p className="text-sm font-semibold text-stone-800 mb-1">{zone.label}</p>
+            <p className="text-sm text-stone-500 mb-3">{zone.blurb}</p>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <div><span className="cs-t10 font-bold text-stone-400 uppercase block mb-0.5">Typical last spring frost</span>{zone.frost.lastSpring}</div>
+              <div><span className="cs-t10 font-bold text-stone-400 uppercase block mb-0.5">Typical first fall frost</span>{zone.frost.firstFall}</div>
+              <div><span className="cs-t10 font-bold text-stone-400 uppercase block mb-0.5">Growing season</span>{zone.season}</div>
+            </div>
+          </div>
+          <div className="flex flex-col gap-3">
+            {zone.plantingGuide.map((g, i) => (
+              <div key={i} className="border border-stone-200 rounded-xl p-3.5">
+                <p className="text-sm font-semibold text-emerald-800 mb-1">{g.window}</p>
+                <p className="text-sm text-stone-600">{g.crops}</p>
+              </div>
+            ))}
+          </div>
+          <p className="cs-t11 text-stone-400 mt-4">Rough guidance for the area, not a guarantee — always weigh it against your own local frost history.</p>
+        </div>
+      ) : topic === "crops" ? (
+        <div>
+          <p className="text-sm text-stone-500 mb-4">{zone.blurb}</p>
+          <div className="grid grid-cols-2 gap-2">
+            {zone.bestCrops.map((c, i) => (
+              <div key={i} className="flex items-center gap-2 border border-stone-200 rounded-xl px-3 py-2.5">
+                <Sprout size={14} className="text-emerald-700 shrink-0" />
+                <span className="text-sm text-stone-700">{c}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div>
+          <p className="text-sm text-stone-500 mb-4">{zone.blurb}</p>
+          <div className="flex flex-col gap-2">
+            {zone.bestAnimals.map((a, i) => (
+              <div key={i} className="flex items-center gap-2 border border-stone-200 rounded-xl px-3 py-2.5">
+                <PawPrint size={14} className="text-emerald-700 shrink-0" />
+                <span className="text-sm text-stone-700">{a}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LearnStaticPanel({ topic }) {
+  if (topic === "companions") {
+    const data = LEARN_STATIC.companions;
+    return (
+      <div>
+        <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
+        <p className="cs-t11 font-bold text-emerald-800 uppercase mb-2">Good pairings</p>
+        <div className="flex flex-col gap-2.5 mb-5">
+          {data.good.map((p, i) => (
+            <div key={i} className="border border-stone-200 rounded-xl p-3.5">
+              <p className="text-sm font-semibold text-stone-800 mb-1">{p.a} + {p.b}</p>
+              <p className="text-sm text-stone-500">{p.why}</p>
+            </div>
+          ))}
+        </div>
+        <p className="cs-t11 font-bold text-rose-700 uppercase mb-2">Keep apart</p>
+        <div className="flex flex-col gap-2.5">
+          {data.avoid.map((p, i) => (
+            <div key={i} className="border border-stone-200 rounded-xl p-3.5">
+              <p className="text-sm font-semibold text-stone-800 mb-1">{p.a} + {p.b}</p>
+              <p className="text-sm text-stone-500">{p.why}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (topic === "pricing") {
+    const data = LEARN_STATIC.pricing;
+    return (
+      <div>
+        <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
+        <div className="flex flex-col gap-3">
+          {data.sections.map((s, i) => (
+            <div key={i} className="border border-stone-200 rounded-xl p-3.5">
+              <p className="text-sm font-semibold text-stone-800 mb-1">{s.title}</p>
+              <p className="text-sm text-stone-500">{s.body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  const data = LEARN_STATIC.preserving;
+  return (
+    <div>
+      <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
+      <div className="flex flex-col gap-3">
+        {data.methods.map((m, i) => (
+          <div key={i} className="border border-stone-200 rounded-xl p-3.5">
+            <p className="text-sm font-semibold text-stone-800 mb-1">{m.name}</p>
+            <p className="text-sm text-stone-500">{m.body}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LearnScreen({ navigate, topic }) {
+  const current = LEARN_TOPICS.find((t) => t.id === topic) || LEARN_TOPICS[0];
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-2xl mx-auto p-4">
+        <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+          <ArrowLeft size={15} /> Back
+        </button>
+        <div className="flex items-center gap-2.5 mb-1">
+          <span className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-800 shrink-0">
+            <current.icon size={18} />
+          </span>
+          <h1 className="text-xl font-bold text-stone-900" style={displayFont}>{current.label}</h1>
+        </div>
+        <div className="flex flex-wrap gap-1.5 my-4">
+          {LEARN_TOPICS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => navigate({ screen: "learn", topic: t.id })}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${t.id === current.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-600"}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {current.locationAware ? <LearnLocationPanel topic={current.id} /> : <LearnStaticPanel topic={current.id} />}
       </div>
     </div>
   );
@@ -9291,6 +9914,7 @@ function RootShell() {
             {route.screen === "dashboard" && <VendorDashboard navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
+            {route.screen === "learn" && <LearnScreen navigate={navigate} topic={route.topic} />}
           </main>
         </div>
         <BottomNav route={route} navigate={navigate} />
