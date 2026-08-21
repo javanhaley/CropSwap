@@ -3720,6 +3720,46 @@ function GlobalStyles() {
       .cs-z-modal { z-index: 100; }
       .cs-z-pop   { z-index: 110; }
       .cs-z-sheet { z-index: 200; }
+      .cs-z-sprout { z-index: 300; }
+      /* Seed-to-seedling burst played once when a search is submitted. Timed
+         to ~1s total: the seed pops, the stem draws, the two leaves unfurl in
+         sequence, then the whole mark settles and fades. */
+      @keyframes cs-sprout-pop {
+        0%   { opacity: 0; transform: scale(0.85); }
+        14%  { opacity: 1; transform: scale(1); }
+        82%  { opacity: 1; transform: scale(1); }
+        100% { opacity: 0; transform: scale(1.05); }
+      }
+      @keyframes cs-sprout-seed {
+        0%   { opacity: 0; transform: scale(0.2); }
+        10%  { opacity: 1; transform: scale(1); }
+        24%  { opacity: 1; transform: scale(1); }
+        36%  { opacity: 0; transform: scale(0.5); }
+        100% { opacity: 0; }
+      }
+      @keyframes cs-sprout-stem {
+        0%   { stroke-dashoffset: 1; opacity: 0; }
+        20%  { stroke-dashoffset: 1; opacity: 1; }
+        64%  { stroke-dashoffset: 0; opacity: 1; }
+        100% { stroke-dashoffset: 0; opacity: 1; }
+      }
+      @keyframes cs-sprout-leaf-l {
+        0%   { opacity: 0; transform: scale(0.3) rotate(-10deg); }
+        52%  { opacity: 0; transform: scale(0.3) rotate(-10deg); }
+        70%  { opacity: 1; transform: scale(1) rotate(0deg); }
+        100% { opacity: 1; transform: scale(1) rotate(0deg); }
+      }
+      @keyframes cs-sprout-leaf-r {
+        0%   { opacity: 0; transform: scale(0.3) rotate(10deg); }
+        62%  { opacity: 0; transform: scale(0.3) rotate(10deg); }
+        80%  { opacity: 1; transform: scale(1) rotate(0deg); }
+        100% { opacity: 1; transform: scale(1) rotate(0deg); }
+      }
+      .cs-sprout-group  { animation: cs-sprout-pop 1000ms ease-out forwards; transform-origin: 50% 85%; }
+      .cs-sprout-seed   { animation: cs-sprout-seed 1000ms ease-out forwards; transform-origin: 50% 100%; }
+      .cs-sprout-stem   { animation: cs-sprout-stem 1000ms ease-out forwards; }
+      .cs-sprout-leaf-l { animation: cs-sprout-leaf-l 1000ms ease-out forwards; transform-origin: 60% 100%; }
+      .cs-sprout-leaf-r { animation: cs-sprout-leaf-r 1000ms ease-out forwards; transform-origin: 40% 100%; }
       .cs-map { height: 420px; }
       @media (min-width: 768px) { .cs-map { height: 520px; } }
       .cs-track-wide { letter-spacing: 0.18em; }
@@ -4566,7 +4606,48 @@ function SproutMark({ size = 20 }) {
   );
 }
 
-function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, onGoHome, onOpenFilters, filterCount }) {
+// Plays once when a search is submitted: a seed pops, the stem draws, the
+// two leaves unfurl, then it settles and fades — about a second, centred,
+// roughly a third of the screen. Rendered as a RootShell-level sibling (not
+// inside TopBar) since TopBar's backdrop-blur would otherwise re-anchor a
+// position:fixed child to the header instead of the real viewport.
+function SearchSproutBurst({ onDone }) {
+  useEffect(() => {
+    const t = setTimeout(() => onDone?.(), 1050);
+    return () => clearTimeout(t);
+  }, [onDone]);
+  return (
+    <div className="fixed inset-0 flex items-center justify-center pointer-events-none cs-z-sprout" aria-hidden="true">
+      <div
+        className="cs-sprout-group relative flex items-center justify-center"
+        style={{ width: "clamp(160px, 33vmin, 420px)", height: "clamp(160px, 33vmin, 420px)" }}
+      >
+        <div
+          className="absolute inset-0 rounded-full"
+          style={{ background: "radial-gradient(circle, rgba(16,185,129,0.24) 0%, rgba(16,185,129,0) 70%)" }}
+        />
+        <svg viewBox="0 0 24 24" width="70%" height="70%" className="relative">
+          <ellipse cx="12" cy="21.6" rx="7" ry="1.3" fill="#78716c" opacity="0.16" />
+          <circle className="cs-sprout-seed" cx="12" cy="21" r="1.6" fill="#a8752f" />
+          <path
+            className="cs-sprout-stem"
+            d="M12 21.5V11.5"
+            stroke="#15803d"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            fill="none"
+            pathLength="1"
+            style={{ strokeDasharray: 1 }}
+          />
+          <path className="cs-sprout-leaf-l" d="M11.6 13.2C11.6 9.4 9 6.6 5.2 6.4c-.3 3.9 2.3 6.8 6.4 6.8Z" fill="#22c55e" />
+          <path className="cs-sprout-leaf-r" d="M12.6 15.2c0-3.6 2.5-6.3 6.2-6.5.3 3.7-2.3 6.5-6.2 6.5Z" fill="#16a34a" />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, onGoHome, onOpenFilters, onSubmitSearch, filterCount }) {
   const { me, userLoc, openLocationPicker, unreadCount, favProducts, favShops, globalSearch, setGlobalSearch } = useApp();
   const totalFav = Object.keys(favProducts).length + Object.keys(favShops).length;
 
@@ -4595,7 +4676,14 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
           className="flex-1 flex items-center gap-1 bg-stone-100 rounded-full px-2.5 py-2 min-w-0 focus-within:bg-stone-200 transition"
           style={{ minWidth: "96px" }}
         >
-          <Search size={15} className="shrink-0 text-stone-400" />
+          <button
+            type="button"
+            onClick={() => onSubmitSearch?.(globalSearch)}
+            className="shrink-0 text-stone-400 hover:text-emerald-700 transition"
+            aria-label="Search"
+          >
+            <Search size={15} />
+          </button>
           <input
             value={globalSearch}
             onChange={(e) => {
@@ -4603,6 +4691,12 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
               onOpenSearch();
             }}
             onFocus={onOpenSearch}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onSubmitSearch?.(globalSearch);
+              }
+            }}
             placeholder="Search"
             className="bg-transparent outline-none text-sm w-full min-w-0 text-stone-800 placeholder-stone-400"
             aria-label="Search listings and shops"
@@ -4990,11 +5084,14 @@ function ExploreView({ navigate }) {
     return () => registerSaveSearch?.(null);
   }, [registerSaveSearch, saveCurrentSearch]);
 
+  // Live filtering only — this fires on every pause while typing, so it must
+  // never log a "search" analytics event itself (that used to record partial
+  // substrings like "mil" or "ra" mid-keystroke). Completed-search logging
+  // lives in RootShell's logSearchTerm, driven by explicit submit + an idle
+  // fallback long enough to be sure typing has actually stopped.
   useEffect(() => {
     const t = setTimeout(() => {
       setFilters((f) => ({ ...f, search: searchDraft }));
-      const term = (searchDraft || "").trim().toLowerCase();
-      if (term.length >= 2) logAnalyticsEvent("search", { entityId: term });
     }, 250);
     return () => clearTimeout(t);
   }, [searchDraft]);
@@ -10211,6 +10308,33 @@ function RootShell() {
     setTimeout(() => setToast(""), 2500);
   }, []);
 
+  // Completed-search analytics: logs once per distinct term, never on a
+  // mid-keystroke pause. logSearchTerm is called two ways — immediately when
+  // the user submits (button or Enter), and as a fallback after 900ms of
+  // typing inactivity for people who never explicitly submit. Either path
+  // dedupes against the last logged term so the same search never logs twice.
+  const lastLoggedSearchRef = useRef("");
+  const logSearchTerm = useCallback((raw) => {
+    const term = (raw || "").trim().toLowerCase();
+    if (term.length < 2 || term === lastLoggedSearchRef.current) return;
+    lastLoggedSearchRef.current = term;
+    logAnalyticsEvent("search", { entityId: term });
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(() => logSearchTerm(globalSearch), 900);
+    return () => clearTimeout(t);
+  }, [globalSearch, logSearchTerm]);
+
+  const [showSearchBurst, setShowSearchBurst] = useState(false);
+  const submitSearch = useCallback(
+    (term) => {
+      logSearchTerm(term);
+      navigate({ screen: "explore" });
+      setShowSearchBurst(true);
+    },
+    [logSearchTerm, navigate]
+  );
+
   // Favoriting has three effects: record the favorite, persist the new public
   // count through the market layer (so it re-renders), and tell the shop owner.
   const toggleFavorite = useCallback(
@@ -10385,6 +10509,7 @@ function RootShell() {
           onOpenNotifs={() => setNotifOpen(true)}
           onOpenAccount={() => setAccountOpen(true)}
           onOpenFavorites={() => navigate({ screen: "favorites" })}
+          onSubmitSearch={submitSearch}
         />
         {imageSupport === "blocked" && !photoNoteDismissed && (
           <div className="shrink-0 bg-amber-50 border-b border-amber-200 px-4 py-1.5 flex items-center gap-2">
@@ -10442,6 +10567,8 @@ function RootShell() {
           {toast}
         </div>
       )}
+
+      {showSearchBurst && <SearchSproutBurst onDone={() => setShowSearchBurst(false)} />}
     </AppContext.Provider>
   );
 }
