@@ -1607,6 +1607,68 @@ function zoneInfoFor(stateCode) {
 // full-width hero banners rather than small product tiles.
 const LEARN_PHOTO = (id, w = 800) => `https://images.pexels.com/photos/${id}/pexels-photo-${id}.jpeg?auto=compress&cs=tinysrgb&w=${w}`;
 
+// Matches recurring animal/crop terms as they appear inside ZONE_INFO's
+// bestAnimals/bestCrops strings (e.g. "Chickens (cold-hardy breeds: ...)")
+// and the plantingGuide's comma-separated crop lists (e.g. "peas, spinach,
+// lettuce"), so the same photo lookup works for both. First match wins, so
+// more specific terms (sweet potato) are listed ahead of broader ones
+// (potato). Falls back to a themed gradient tile — see ItemPhoto — when
+// nothing matches rather than guessing.
+const ITEM_PHOTO_KEYWORDS = [
+  // animals
+  { test: /chicken/i, url: LEARN_PHOTO(19972937) },
+  { test: /rabbit/i, url: LEARN_PHOTO(326012) },
+  { test: /sheep/i, url: LEARN_PHOTO(18859961) },
+  { test: /goat/i, url: LEARN_PHOTO(5210298) },
+  { test: /\bpig/i, url: LEARN_PHOTO(18138263) },
+  { test: /cattle|\bcow/i, url: LEARN_PHOTO(4577861) },
+  { test: /\bbee/i, url: IMG.bees.url },
+  // crops — specific terms before the broader ones they'd otherwise match
+  { test: /sweet potato/i, url: LEARN_PHOTO(9798976) },
+  { test: /potato/i, url: IMG.potato.url },
+  { test: /carrot/i, url: IMG.carrot.url },
+  { test: /cabbage|brassica/i, url: LEARN_PHOTO(4947354) },
+  { test: /southern pea|\bpea/i, url: IMG.peas.url },
+  { test: /kale|spinach|collard|leafy green|\bgreens\b/i, url: IMG.greens.url },
+  { test: /currant/i, url: IMG.currant.url },
+  { test: /strawberr/i, url: LEARN_PHOTO(12775190) },
+  { test: /raspberr/i, url: IMG.raspberry.url },
+  { test: /blackberr/i, url: IMG.blackberry.url },
+  { test: /blueberr/i, url: IMG.blueberry.url },
+  { test: /berr/i, url: IMG.berries.url },
+  { test: /root vegetable/i, url: IMG.carrot.url },
+  { test: /sweet corn|\bcorn\b/i, url: LEARN_PHOTO(189915) },
+  { test: /tomato/i, url: IMG.tomato.url },
+  { test: /apple/i, url: IMG.apple.url },
+  { test: /\bpear\b/i, url: IMG.pear.url },
+  { test: /squash|pumpkin/i, url: LEARN_PHOTO(4671692) },
+  { test: /garlic/i, url: IMG.garlic.url },
+  { test: /pepper|chile|chili/i, url: LEARN_PHOTO(8540921) },
+  { test: /okra/i, url: LEARN_PHOTO(28577186) },
+  { test: /grape/i, url: IMG.grape.url },
+  { test: /melon/i, url: LEARN_PHOTO(1313267) },
+  { test: /\bdate/i, url: LEARN_PHOTO(17877729) },
+  { test: /\bfig/i, url: LEARN_PHOTO(7890081) },
+  { test: /herb|rosemary|sage|thyme/i, url: IMG.basil.url },
+  { test: /olive/i, url: LEARN_PHOTO(6231898) },
+  { test: /pistachio|hazelnut/i, url: IMG.nut.url },
+  { test: /citrus/i, url: LEARN_PHOTO(34815908) },
+  { test: /banana/i, url: LEARN_PHOTO(1093038) },
+  { test: /cucumber/i, url: LEARN_PHOTO(32879155) },
+  { test: /\bbean/i, url: LEARN_PHOTO(185473) },
+  { test: /broccoli/i, url: LEARN_PHOTO(9893184) },
+  { test: /beet/i, url: LEARN_PHOTO(4963554) },
+  { test: /rhubarb/i, url: IMG.currant.url },
+  { test: /lettuce/i, url: IMG.lettuce.url },
+  { test: /radish/i, url: IMG.radish.url },
+  { test: /onion/i, url: IMG.onion.url },
+  { test: /peach/i, url: IMG.peach.url },
+];
+function itemPhotoFor(label) {
+  const hit = ITEM_PHOTO_KEYWORDS.find((k) => k.test.test(label));
+  return hit ? hit.url : null;
+}
+
 const LEARN_STATIC = {
   companions: {
     hero: { url: LEARN_PHOTO("23825134"), alt: "Hands planting a seedling into garden soil" },
@@ -2326,26 +2388,54 @@ async function renderEditedPhoto({ img, cw, ch, zoom, pan, filterCss, maxDim, ta
   const dispH = nh * scale;
   const left = (cw - dispW) / 2 + pan.x;
   const top = (ch - dispH) / 2 + pan.y;
-  let sx = -left / scale;
-  let sy = -top / scale;
-  let sw = cw / scale;
-  let sh = ch / scale;
-  sx = Math.max(0, Math.min(sx, Math.max(0, nw - sw)));
-  sy = Math.max(0, Math.min(sy, Math.max(0, nh - sh)));
-  sw = Math.min(sw, nw - sx);
-  sh = Math.min(sh, nh - sy);
 
   const aspect = cw / ch;
   const outW = aspect >= 1 ? maxDim : Math.round(maxDim * aspect);
   const outH = aspect >= 1 ? Math.round(maxDim / aspect) : maxDim;
+  const outScale = outW / cw; // === outH / ch, since outW/outH matches cw/ch
 
   const canvas = document.createElement("canvas");
   canvas.width = outW;
   canvas.height = outH;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Your browser couldn't process that photo.");
+
+  // Zoom can now go below "cover" (see PhotoEditorModal's minZoom) so the
+  // whole photo fits in the frame instead of always being cropped to fill
+  // it. When that happens the image no longer spans the full crop window on
+  // one or both axes, so paint a neutral backdrop first and place the photo
+  // at its real size/position — stretching it to fill the canvas regardless
+  // would silently undo the "fit" the person just chose.
+  ctx.fillStyle = "#f5f5f4";
+  ctx.fillRect(0, 0, outW, outH);
+
+  let sx, sw, dx, dw;
+  if (dispW <= cw + 0.01) {
+    sx = 0;
+    sw = nw;
+    dx = left * outScale;
+    dw = dispW * outScale;
+  } else {
+    sx = Math.max(0, Math.min(-left / scale, Math.max(0, nw - cw / scale)));
+    sw = Math.min(cw / scale, nw - sx);
+    dx = 0;
+    dw = outW;
+  }
+  let sy, sh, dy, dh;
+  if (dispH <= ch + 0.01) {
+    sy = 0;
+    sh = nh;
+    dy = top * outScale;
+    dh = dispH * outScale;
+  } else {
+    sy = Math.max(0, Math.min(-top / scale, Math.max(0, nh - ch / scale)));
+    sh = Math.min(ch / scale, nh - sy);
+    dy = 0;
+    dh = outH;
+  }
+
   ctx.filter = filterCss || "none";
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+  ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
 
   let quality = 0.85;
   let out = canvas.toDataURL("image/jpeg", quality);
@@ -2440,6 +2530,13 @@ function PhotoEditorModal({ src, aspect = 4 / 3, round = false, maxDim = PHOTO_M
   };
 
   const baseScale = img ? Math.max(cw / (img.naturalWidth || img.width), ch / (img.naturalHeight || img.height)) : 0;
+  // zoom=1 fills the frame edge-to-edge ("cover"), cropping whatever
+  // overflows — the only option before. minZoom is however far zoom has to
+  // drop to reach "contain" instead, where the entire photo is visible with
+  // the frame's own background showing in the gap on the short axis.
+  const minZoom = img
+    ? Math.min(cw / (img.naturalWidth || img.width), ch / (img.naturalHeight || img.height)) / baseScale
+    : 1;
 
   return (
     <div
@@ -2487,7 +2584,17 @@ function PhotoEditorModal({ src, aspect = 4 / 3, round = false, maxDim = PHOTO_M
 
         <div className="mt-3">
           <label className="cs-t11 font-semibold text-stone-500">Zoom</label>
-          <input type="range" min="1" max="3" step="0.01" value={zoom} onChange={(e) => onZoomChange(Number(e.target.value))} disabled={!img} className="w-full" />
+          <input
+            type="range"
+            min={minZoom}
+            max="3"
+            step="0.01"
+            value={zoom}
+            onChange={(e) => onZoomChange(Number(e.target.value))}
+            disabled={!img}
+            className="w-full"
+          />
+          <p className="cs-t10 text-stone-400 mt-0.5">Zoom all the way out to fit the whole photo in frame.</p>
         </div>
 
         <p className="cs-t11 font-semibold text-stone-500 mt-3 mb-1.5">Filters</p>
@@ -3636,9 +3743,21 @@ function useNotifications(me) {
   return { notifications: notifs, unreadCount, markAllRead, removeNotification, clearNotifications, loading, reload: load };
 }
 
-async function notifyShopOwner(shop, type, title, body, route) {
+// fromUser (optional) is the person who triggered this — e.g. whoever just
+// favorited something — so NotificationsModal can show a small clickable
+// avatar next to the notification that jumps straight to their profile.
+async function notifyShopOwner(shop, type, title, body, route, fromUser) {
   if (!shop || !shop.ownerId) return;
-  const notif = { id: uid("notif"), type, title, body, createdAt: Date.now(), read: false, route: route || { screen: "shop", shopId: shop.id } };
+  const notif = {
+    id: uid("notif"),
+    type,
+    title,
+    body,
+    createdAt: Date.now(),
+    read: false,
+    route: route || { screen: "shop", shopId: shop.id },
+    ...(fromUser ? { fromUserId: fromUser.id, fromUserName: fromUser.name, fromUserAvatar: fromUser.avatar, fromUserAvatarPhotoId: fromUser.avatarPhotoId } : {}),
+  };
   const read = await readJSON(`notifications:${shop.ownerId}`, true, []);
   if (!read.ok) return;
   await setJSON(`notifications:${shop.ownerId}`, [notif, ...(read.value || [])], true);
@@ -3721,45 +3840,61 @@ function GlobalStyles() {
       .cs-z-pop   { z-index: 110; }
       .cs-z-sheet { z-index: 200; }
       .cs-z-sprout { z-index: 300; }
-      /* Seed-to-seedling burst played once when a search is submitted. Timed
-         to ~1s total: the seed pops, the stem draws, the two leaves unfurl in
-         sequence, then the whole mark settles and fades. */
+      /* Seed-to-seedling burst played once when a search is submitted: ~2s,
+         styled as a little time-lapse rather than the flat logo mark — a
+         seed settles into soil, a pale root pushes down while the stem
+         pushes up, two cotyledon leaves unfurl in sequence, a small true
+         leaf buds at the tip, then the whole scene settles and fades. */
       @keyframes cs-sprout-pop {
         0%   { opacity: 0; transform: scale(0.85); }
-        14%  { opacity: 1; transform: scale(1); }
-        82%  { opacity: 1; transform: scale(1); }
-        100% { opacity: 0; transform: scale(1.05); }
+        8%   { opacity: 1; transform: scale(1); }
+        90%  { opacity: 1; transform: scale(1); }
+        100% { opacity: 0; transform: scale(1.04); }
       }
       @keyframes cs-sprout-seed {
-        0%   { opacity: 0; transform: scale(0.2); }
-        10%  { opacity: 1; transform: scale(1); }
-        24%  { opacity: 1; transform: scale(1); }
-        36%  { opacity: 0; transform: scale(0.5); }
+        0%   { opacity: 0; transform: scale(0.3); }
+        8%   { opacity: 1; transform: scale(1); }
+        22%  { opacity: 1; transform: scale(1); }
+        34%  { opacity: 0; transform: scale(0.4); }
         100% { opacity: 0; }
+      }
+      @keyframes cs-sprout-root {
+        0%   { stroke-dashoffset: 1; opacity: 0; }
+        20%  { stroke-dashoffset: 1; opacity: 1; }
+        46%  { stroke-dashoffset: 0; opacity: 1; }
+        100% { stroke-dashoffset: 0; opacity: 1; }
       }
       @keyframes cs-sprout-stem {
         0%   { stroke-dashoffset: 1; opacity: 0; }
-        20%  { stroke-dashoffset: 1; opacity: 1; }
-        64%  { stroke-dashoffset: 0; opacity: 1; }
+        16%  { stroke-dashoffset: 1; opacity: 1; }
+        52%  { stroke-dashoffset: 0; opacity: 1; }
         100% { stroke-dashoffset: 0; opacity: 1; }
       }
       @keyframes cs-sprout-leaf-l {
-        0%   { opacity: 0; transform: scale(0.3) rotate(-10deg); }
-        52%  { opacity: 0; transform: scale(0.3) rotate(-10deg); }
-        70%  { opacity: 1; transform: scale(1) rotate(0deg); }
+        0%   { opacity: 0; transform: scale(0.25) rotate(-18deg); }
+        46%  { opacity: 0; transform: scale(0.25) rotate(-18deg); }
+        64%  { opacity: 1; transform: scale(1) rotate(0deg); }
         100% { opacity: 1; transform: scale(1) rotate(0deg); }
       }
       @keyframes cs-sprout-leaf-r {
-        0%   { opacity: 0; transform: scale(0.3) rotate(10deg); }
-        62%  { opacity: 0; transform: scale(0.3) rotate(10deg); }
-        80%  { opacity: 1; transform: scale(1) rotate(0deg); }
+        0%   { opacity: 0; transform: scale(0.25) rotate(18deg); }
+        54%  { opacity: 0; transform: scale(0.25) rotate(18deg); }
+        72%  { opacity: 1; transform: scale(1) rotate(0deg); }
         100% { opacity: 1; transform: scale(1) rotate(0deg); }
       }
-      .cs-sprout-group  { animation: cs-sprout-pop 1000ms ease-out forwards; transform-origin: 50% 85%; }
-      .cs-sprout-seed   { animation: cs-sprout-seed 1000ms ease-out forwards; transform-origin: 50% 100%; }
-      .cs-sprout-stem   { animation: cs-sprout-stem 1000ms ease-out forwards; }
-      .cs-sprout-leaf-l { animation: cs-sprout-leaf-l 1000ms ease-out forwards; transform-origin: 60% 100%; }
-      .cs-sprout-leaf-r { animation: cs-sprout-leaf-r 1000ms ease-out forwards; transform-origin: 40% 100%; }
+      @keyframes cs-sprout-bud {
+        0%   { opacity: 0; transform: scale(0.2) translateY(3px); }
+        76%  { opacity: 0; transform: scale(0.2) translateY(3px); }
+        92%  { opacity: 1; transform: scale(1) translateY(0); }
+        100% { opacity: 1; transform: scale(1) translateY(0); }
+      }
+      .cs-sprout-group  { animation: cs-sprout-pop 2000ms ease-out forwards; transform-origin: 50% 88%; }
+      .cs-sprout-seed   { animation: cs-sprout-seed 2000ms ease-out forwards; }
+      .cs-sprout-root   { animation: cs-sprout-root 2000ms ease-out forwards; }
+      .cs-sprout-stem   { animation: cs-sprout-stem 2000ms ease-out forwards; }
+      .cs-sprout-leaf-l { animation: cs-sprout-leaf-l 2000ms ease-out forwards; }
+      .cs-sprout-leaf-r { animation: cs-sprout-leaf-r 2000ms ease-out forwards; }
+      .cs-sprout-bud    { animation: cs-sprout-bud 2000ms ease-out forwards; }
       .cs-map { height: 420px; }
       @media (min-width: 768px) { .cs-map { height: 520px; } }
       .cs-track-wide { letter-spacing: 0.18em; }
@@ -4606,14 +4741,16 @@ function SproutMark({ size = 20 }) {
   );
 }
 
-// Plays once when a search is submitted: a seed pops, the stem draws, the
-// two leaves unfurl, then it settles and fades — about a second, centred,
-// roughly a third of the screen. Rendered as a RootShell-level sibling (not
-// inside TopBar) since TopBar's backdrop-blur would otherwise re-anchor a
-// position:fixed child to the header instead of the real viewport.
+// Plays once when a search is submitted: a little ~2s time-lapse of a real
+// seed sprouting — settles into soil, root pushes down as the stem pushes
+// up, two cotyledon leaves unfurl, a small true leaf buds at the tip, then
+// the whole scene settles and fades. Centred, roughly a third of the screen.
+// Rendered as a RootShell-level sibling (not inside TopBar) since TopBar's
+// backdrop-blur would otherwise re-anchor a position:fixed child to the
+// header instead of the real viewport.
 function SearchSproutBurst({ onDone }) {
   useEffect(() => {
-    const t = setTimeout(() => onDone?.(), 1050);
+    const t = setTimeout(() => onDone?.(), 2100);
     return () => clearTimeout(t);
   }, [onDone]);
   return (
@@ -4626,21 +4763,95 @@ function SearchSproutBurst({ onDone }) {
           className="absolute inset-0 rounded-full"
           style={{ background: "radial-gradient(circle, rgba(16,185,129,0.24) 0%, rgba(16,185,129,0) 70%)" }}
         />
-        <svg viewBox="0 0 24 24" width="70%" height="70%" className="relative">
-          <ellipse cx="12" cy="21.6" rx="7" ry="1.3" fill="#78716c" opacity="0.16" />
-          <circle className="cs-sprout-seed" cx="12" cy="21" r="1.6" fill="#a8752f" />
+        <svg viewBox="0 0 100 100" width="80%" height="80%" className="relative">
+          <defs>
+            <linearGradient id="csSproutStem" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stopColor="#4d7c3f" />
+              <stop offset="100%" stopColor="#6fbf5e" />
+            </linearGradient>
+            <linearGradient id="csSproutLeafL" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#7bc86a" />
+              <stop offset="100%" stopColor="#488c42" />
+            </linearGradient>
+            <linearGradient id="csSproutLeafR" x1="1" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#7bc86a" />
+              <stop offset="100%" stopColor="#488c42" />
+            </linearGradient>
+            <radialGradient id="csSproutSoil" cx="50%" cy="30%" r="75%">
+              <stop offset="0%" stopColor="#8a6238" />
+              <stop offset="100%" stopColor="#5f4025" />
+            </radialGradient>
+          </defs>
+
+          {/* soil mound — static ground the seedling grows out of */}
+          <ellipse cx="50" cy="91" rx="35" ry="7" fill="#4a3320" opacity="0.16" />
+          <ellipse cx="50" cy="88.5" rx="27" ry="5.2" fill="url(#csSproutSoil)" opacity="0.85" />
+          <ellipse cx="42" cy="87" rx="3" ry="1.1" fill="#3d2a18" opacity="0.35" />
+          <ellipse cx="60" cy="89" rx="4" ry="1.3" fill="#3d2a18" opacity="0.3" />
+
+          {/* pale root, pushing down into the soil */}
           <path
-            className="cs-sprout-stem"
-            d="M12 21.5V11.5"
-            stroke="#15803d"
-            strokeWidth="1.6"
+            className="cs-sprout-root"
+            d="M50 85.5 C 47.5 90, 44.5 94, 41.5 99"
+            stroke="#e4d3ac"
+            strokeWidth="1.3"
             strokeLinecap="round"
             fill="none"
             pathLength="1"
             style={{ strokeDasharray: 1 }}
           />
-          <path className="cs-sprout-leaf-l" d="M11.6 13.2C11.6 9.4 9 6.6 5.2 6.4c-.3 3.9 2.3 6.8 6.4 6.8Z" fill="#22c55e" />
-          <path className="cs-sprout-leaf-r" d="M12.6 15.2c0-3.6 2.5-6.3 6.2-6.5.3 3.7-2.3 6.5-6.2 6.5Z" fill="#16a34a" />
+
+          {/* the seed itself, sitting at the soil line before it's absorbed */}
+          <ellipse
+            className="cs-sprout-seed"
+            cx="50"
+            cy="85.5"
+            rx="4.4"
+            ry="3.3"
+            fill="#8a5a2f"
+            stroke="#5f3c1d"
+            strokeWidth="0.5"
+            style={{ transformOrigin: "50px 85.5px" }}
+          />
+          <path
+            className="cs-sprout-seed"
+            d="M47 84.5 C 48.5 85.5, 51.5 85.5, 53 84.5"
+            stroke="#5f3c1d"
+            strokeWidth="0.4"
+            fill="none"
+            opacity="0.6"
+            style={{ transformOrigin: "50px 85.5px" }}
+          />
+
+          {/* stem — a gentle natural curve rather than a straight rule */}
+          <path
+            className="cs-sprout-stem"
+            d="M50 86 C 48.8 73, 52.8 60, 50.3 44"
+            stroke="url(#csSproutStem)"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            fill="none"
+            pathLength="1"
+            style={{ strokeDasharray: 1 }}
+          />
+
+          {/* two cotyledon leaves, unfurling in sequence */}
+          <g className="cs-sprout-leaf-l" style={{ transformOrigin: "50px 45px" }}>
+            <path d="M50 45 C 39 42, 29 47, 30.5 56.5 C 40 59.5, 50 54, 50 45 Z" fill="url(#csSproutLeafL)" />
+            <path d="M50 45 C 44 47, 37 51, 32 55.5" stroke="#356b31" strokeWidth="0.5" fill="none" opacity="0.55" />
+          </g>
+          <g className="cs-sprout-leaf-r" style={{ transformOrigin: "51px 45px" }}>
+            <path d="M51 45 C 62 42, 72 47, 70.5 56.5 C 61 59.5, 51 54, 51 45 Z" fill="url(#csSproutLeafR)" />
+            <path d="M51 45 C 57 47, 64 51, 69 55.5" stroke="#356b31" strokeWidth="0.5" fill="none" opacity="0.55" />
+          </g>
+
+          {/* a small true leaf budding at the tip — the payoff of the timelapse */}
+          <path
+            className="cs-sprout-bud"
+            d="M50.3 44 C 48 38, 50.5 32.5, 50 29 C 52.5 32.5, 54.5 39, 50.3 44 Z"
+            fill="#3f9142"
+            style={{ transformOrigin: "50px 44px" }}
+          />
         </svg>
       </div>
     </div>
@@ -5759,7 +5970,7 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
    SECTION 16: REVIEWS (shared by shop + product screens)
 ============================================================================ */
 function ReviewSection({ entityType, entityId, ownerId, shopId }) {
-  const { me, updateShop, updateProduct, shopsById, showToast, helpfulMarks, toggleHelpfulMark } = useApp();
+  const { me, updateShop, updateProduct, shopsById, showToast, helpfulMarks, toggleHelpfulMark, openProfileCard } = useApp();
   const handleStats = useCallback(
     (avg, cnt) => {
       if (entityType === "shop") updateShop(entityId, { avgRating: avg, reviewCount: cnt });
@@ -5933,7 +6144,13 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
         <div className="flex flex-col gap-4">
           {reviews.map((r) => (
             <div key={r.id} className="flex gap-3">
-              <Avatar emoji={r.authorAvatar} name={r.authorName} size="sm" />
+              <button
+                onClick={() => openProfileCard({ id: r.authorId, name: r.authorName, avatar: r.authorAvatar })}
+                aria-label={`View ${r.authorName}'s profile`}
+                className="shrink-0"
+              >
+                <Avatar emoji={r.authorAvatar} name={r.authorName} size="sm" />
+              </button>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-semibold text-stone-800">{r.authorName}</span>
@@ -6346,6 +6563,11 @@ function ShopProfileView({ shopId, navigate }) {
           {isOwner && (
             <button onClick={() => navigate({ screen: "dashboard" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
               <TrendingUp size={15} /> Dashboard
+            </button>
+          )}
+          {isOwner && (
+            <button onClick={() => navigate({ screen: "plans" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+              <Sparkles size={15} /> My Plan
             </button>
           )}
         </div>
@@ -7857,7 +8079,7 @@ function FavoritesView() {
    SECTION 21: MESSAGES VIEW
 ============================================================================ */
 function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserAvatar, initialCid }) {
-  const { me, conversations, ensureConversation, updateMe, showToast } = useApp();
+  const { me, conversations, ensureConversation, updateMe, showToast, openProfileCard } = useApp();
   const [selectedCid, setSelectedCid] = useState(initialCid || null);
   const [activeOther, setActiveOther] = useState(initialWithUserId ? { id: initialWithUserId, name: initialWithUserName, avatar: initialWithUserAvatar } : null);
   const [text, setText] = useState("");
@@ -7931,14 +8153,27 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
           <EmptyState icon={MessageCircle} title="No conversations yet" body="Message a vendor from any shop or listing page." />
         ) : (
           conversations.map((c) => (
-            <button key={c.id} onClick={() => openConvo(c)} className={`flex items-center gap-3 px-4 py-3 text-left hover:bg-stone-50 transition ${selectedCid === c.id ? "bg-stone-50" : ""}`}>
-              <Avatar emoji={c.otherUserAvatar} name={c.otherUserName} />
+            <div
+              key={c.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => openConvo(c)}
+              onKeyDown={(e) => { if (e.key === "Enter") openConvo(c); }}
+              className={`flex items-center gap-3 px-4 py-3 text-left hover:bg-stone-50 transition cursor-pointer ${selectedCid === c.id ? "bg-stone-50" : ""}`}
+            >
+              <button
+                onClick={(e) => { e.stopPropagation(); openProfileCard({ id: c.otherUserId, name: c.otherUserName, avatar: c.otherUserAvatar }); }}
+                aria-label={`View ${c.otherUserName}'s profile`}
+                className="shrink-0"
+              >
+                <Avatar emoji={c.otherUserAvatar} name={c.otherUserName} />
+              </button>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-sm text-stone-800 truncate">{c.otherUserName}</p>
                 <p className="text-xs text-stone-400 truncate">{c.lastMessage || "Say hello…"}</p>
               </div>
               <span className="cs-t10 text-stone-400 shrink-0">{timeAgo(c.lastAt)}</span>
-            </button>
+            </div>
           ))
         )}
       </div>
@@ -7947,7 +8182,9 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
         <div className="flex-1 flex flex-col">
           <div className="px-4 py-3 border-b border-stone-200 flex items-center gap-2">
             <button onClick={() => setSelectedCid(null)} className="md:hidden" aria-label="Back to list"><ArrowLeft size={18} /></button>
-            <Avatar emoji={activeOther?.avatar} name={activeOther?.name} size="sm" />
+            <button onClick={() => activeOther && openProfileCard(activeOther)} aria-label={`View ${activeOther?.name}'s profile`}>
+              <Avatar emoji={activeOther?.avatar} name={activeOther?.name} size="sm" />
+            </button>
             <p className="font-semibold text-sm text-stone-800 flex-1">{activeOther?.name}</p>
             {isBlocked ? (
               <button onClick={() => updateMe({ blockedUserIds: (me.blockedUserIds || []).filter((id) => id !== activeOther.id) })} className="text-xs font-semibold text-emerald-700">Unblock</button>
@@ -8131,9 +8368,37 @@ function UpgradeHint({ text = "Premium feature", navigate }) {
    No payment processor yet: "purchasing" is an explicit test-mode action so
    the whole tiered product can be built and demoed honestly today.
 ============================================================================ */
+// The Monthly/Annual switch that sits on each paid plan card. A dark track
+// (not the barely-there tint a plain segmented control would have) makes it
+// read as draggable/switchable at a glance rather than as two plain buttons.
+function BillingSlider({ value, onChange }) {
+  return (
+    <div className="relative flex bg-stone-700 rounded-full p-1 mb-3 text-xs font-semibold">
+      <div
+        className="absolute top-1 bottom-1 rounded-full bg-white shadow transition-all duration-200"
+        style={{ width: "calc(50% - 4px)", left: value === "annual" ? "calc(50% + 2px)" : "4px" }}
+      />
+      <button
+        type="button"
+        onClick={() => onChange("monthly")}
+        className={`relative z-10 flex-1 py-1.5 rounded-full transition ${value === "monthly" ? "text-stone-900" : "text-stone-300"}`}
+      >
+        Monthly
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("annual")}
+        className={`relative z-10 flex-1 py-1.5 rounded-full transition ${value === "annual" ? "text-stone-900" : "text-stone-300"}`}
+      >
+        Annual · save ~40%
+      </button>
+    </div>
+  );
+}
+
 function PlansScreen({ navigate }) {
   const { me, cancelPlan, showToast } = useApp();
-  const [billing, setBilling] = useState("monthly");
+  const [billingByPlan, setBillingByPlan] = useState({ basic: "monthly", premium: "monthly" });
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const currentTier = planTier(me);
@@ -8195,20 +8460,11 @@ function PlansScreen({ navigate }) {
           </div>
         )}
 
-        <div className="flex justify-center mb-8">
-          <div className="flex gap-1 bg-stone-100 rounded-full p-1">
-            {[{ id: "monthly", label: "Monthly" }, { id: "annual", label: "Annual · save ~40%" }].map((b) => (
-              <button key={b.id} onClick={() => setBilling(b.id)} className={`px-4 py-1.5 rounded-full text-xs font-semibold transition ${billing === b.id ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>
-                {b.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         <div className="grid md:grid-cols-3 gap-4">
           {Object.values(PLAN_CATALOG).map((p) => {
             const isCurrent = currentTier === p.id;
-            const price = billing === "annual" ? p.annual : p.monthly;
+            const billing = billingByPlan[p.id] || "monthly";
+            const price = p.id === "free" ? p.monthly : billing === "annual" ? p.annual : p.monthly;
             const isPremiumCard = p.id === "premium";
             return (
               <div
@@ -8223,6 +8479,9 @@ function PlansScreen({ navigate }) {
                   {isCurrent && <span className="ml-auto text-[10px] font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">Current</span>}
                 </div>
                 <p className="text-sm text-stone-500 mb-3">{p.tagline}</p>
+                {p.id !== "free" && (
+                  <BillingSlider value={billing} onChange={(v) => setBillingByPlan((prev) => ({ ...prev, [p.id]: v }))} />
+                )}
                 <p className="text-3xl font-bold text-stone-900 mb-1" style={displayFont}>
                   {formatMoney(price)}
                   {price > 0 && <span className="text-sm font-medium text-stone-400">{planPeriodLabel(billing)}</span>}
@@ -8355,8 +8614,156 @@ function PlacesScreen({ navigate }) {
   );
 }
 
+// The small card every clickable avatar in the app opens — call
+// useApp().openProfileCard({ id, name, avatar }) from anywhere. Shows just
+// enough to place the person (name, photo, member-since once it loads) with
+// a button to their full profile and one to close. Fetches the live
+// "users:{id}" record itself so it's never stuck showing a stale avatar
+// even when the caller only had an old emoji/name to hand it.
+function ProfileCardModal({ target, onClose }) {
+  const { me, navigate } = useApp();
+  const [user, setUser] = useState(undefined);
+
+  useEffect(() => {
+    if (!target?.id) return;
+    let cancelled = false;
+    setUser(undefined);
+    getJSON(`users:${target.id}`, true, null).then((u) => {
+      if (!cancelled) setUser(u);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [target?.id]);
+
+  if (!target) return null;
+  const shown = user || { id: target.id, name: target.name, avatar: target.avatar, avatarPhotoId: target.avatarPhotoId };
+  const isSelf = me?.id === target.id;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 cs-z-pop flex items-center justify-center p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="cs-modal-anim bg-white rounded-2xl w-full max-w-xs p-5 relative">
+        <button onClick={onClose} aria-label="Close" className="absolute top-3 right-3 text-stone-400 hover:text-stone-600">
+          <X size={18} />
+        </button>
+        <div className="flex flex-col items-center text-center pt-1">
+          <Avatar emoji={shown.avatar} name={shown.name} size="lg" photoId={shown.avatarPhotoId} />
+          <p className="font-bold text-stone-900 mt-2.5" style={displayFont}>{shown.name || "…"}</p>
+          {user?.createdAt && (
+            <p className="cs-t11 text-stone-400 mt-0.5">
+              Member since {new Date(user.createdAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col gap-2 mt-5">
+          <button
+            onClick={() => {
+              onClose();
+              navigate({ screen: "profile", userId: target.id });
+            }}
+            className="w-full flex items-center justify-center gap-1.5 bg-emerald-800 text-white rounded-xl px-4 py-2.5 font-semibold text-sm"
+          >
+            <User size={15} /> View profile
+          </button>
+          {!isSelf && me && (
+            <button
+              onClick={() => {
+                onClose();
+                navigate({ screen: "messages", withUserId: target.id, withUserName: shown.name, withUserAvatar: shown.avatar });
+              }}
+              className="w-full flex items-center justify-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700"
+            >
+              <MessageCircle size={15} /> Message
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// A lightweight public profile for anyone who isn't you — reached today from
+// the small avatar on a favorite notification. Looks up the same public
+// "users:{id}" record the app already keeps for messaging and the blocked-
+// users list, rather than adding a new data source.
+function PublicProfileView({ userId, navigate }) {
+  const { me } = useApp();
+  const [user, setUser] = useState(undefined); // undefined = loading, null = not found
+
+  useEffect(() => {
+    let cancelled = false;
+    setUser(undefined);
+    getJSON(`users:${userId}`, true, null).then((u) => {
+      if (!cancelled) setUser(u);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  if (user === undefined) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 size={22} className="animate-spin text-stone-400" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+        <div className="max-w-md mx-auto px-4 pt-4">
+          <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+            <ArrowLeft size={15} /> Back
+          </button>
+          <EmptyState icon={User} title="Profile not found" body="This person's profile isn't available anymore." />
+        </div>
+      </div>
+    );
+  }
+
+  const isSelf = me?.id === user.id;
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-md mx-auto px-4 pt-4">
+        <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-5">
+          <ArrowLeft size={15} /> Back
+        </button>
+        <div className="flex flex-col items-center text-center">
+          <Avatar emoji={user.avatar} name={user.name} size="lg" photoId={user.avatarPhotoId} />
+          <h1 className="text-xl font-bold text-stone-900 mt-3" style={displayFont}>{user.name}</h1>
+          {user.createdAt && (
+            <p className="cs-t11 text-stone-400 mt-1">
+              Member since {new Date(user.createdAt).toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col gap-2 mt-6">
+          {user.isVendor && user.shopId && (
+            <button
+              onClick={() => navigate({ screen: "shop", shopId: user.shopId })}
+              className="w-full flex items-center justify-center gap-1.5 bg-emerald-800 text-white rounded-xl px-4 py-2.5 font-semibold text-sm"
+            >
+              <Store size={15} /> Visit their shop
+            </button>
+          )}
+          {!isSelf && me && (
+            <button
+              onClick={() => navigate({ screen: "messages", withUserId: user.id, withUserName: user.name, withUserAvatar: user.avatar })}
+              className="w-full flex items-center justify-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700"
+            >
+              <MessageCircle size={15} /> Message
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AccountModal({ open, onClose }) {
-  const { me, updateMe, signOut, navigate, userLoc, setUserLoc, showToast } = useApp();
+  const { me, updateMe, signOut, navigate, userLoc, setUserLoc, showToast, openProfileCard } = useApp();
   const [tab, setTab] = useState("profile");
   const [name, setName] = useState(me?.name || "");
   const [blockedUsers, setBlockedUsers] = useState([]);
@@ -8479,7 +8886,7 @@ function AccountModal({ open, onClose }) {
   const tabs = [
     { id: "profile", label: "Profile", icon: User },
     { id: "vendor", label: "My Store", icon: Store, link: true, linkScreen: "store" },
-    { id: "subscription", label: "Plan", icon: Sparkles, link: true, linkScreen: "plans" },
+    { id: "subscription", label: "My Plan", icon: Sparkles, link: true, linkScreen: "plans" },
     { id: "notifications", label: "Alerts", icon: Bell },
     { id: "dashboard", label: "Dashboard", icon: TrendingUp, link: true },
     { id: "places", label: "Places", icon: MapPin },
@@ -8646,7 +9053,9 @@ function AccountModal({ open, onClose }) {
             <div className="flex flex-col gap-2">
               {blockedUsers.map((u) => (
                 <div key={u.id} className="flex items-center gap-3">
-                  <Avatar emoji={u.avatar} name={u.name} size="sm" />
+                  <button onClick={() => openProfileCard({ id: u.id, name: u.name, avatar: u.avatar, avatarPhotoId: u.avatarPhotoId })} aria-label={`View ${u.name}'s profile`}>
+                    <Avatar emoji={u.avatar} name={u.name} size="sm" />
+                  </button>
                   <span className="flex-1 text-sm font-medium text-stone-700">{u.name}</span>
                   <button onClick={() => updateMe({ blockedUserIds: (me.blockedUserIds || []).filter((id) => id !== u.id) })} className="text-xs font-semibold text-emerald-700">Unblock</button>
                 </div>
@@ -8691,7 +9100,7 @@ function AccountModal({ open, onClose }) {
 ============================================================================ */
 const NOTIF_ICON = { message: MessageCircle, review: Star, favorite: Heart };
 function NotificationsModal({ open, onClose, navigate, onOpenProduct }) {
-  const { notifications, markAllRead, unreadCount, removeNotification, clearNotifications } = useApp();
+  const { notifications, markAllRead, unreadCount, removeNotification, clearNotifications, openProfileCard } = useApp();
   const [confirmClear, setConfirmClear] = useState(false);
   const handleClick = (n) => {
     markAllRead();
@@ -8748,6 +9157,18 @@ function NotificationsModal({ open, onClose, navigate, onOpenProduct }) {
                       <p className="cs-t10 text-stone-400 mt-0.5">{timeAgo(n.createdAt)}</p>
                     </div>
                   </button>
+                  {n.type === "favorite" && n.fromUserId && (
+                    <button
+                      onClick={() =>
+                        openProfileCard({ id: n.fromUserId, name: n.fromUserName, avatar: n.fromUserAvatar, avatarPhotoId: n.fromUserAvatarPhotoId })
+                      }
+                      className="shrink-0 self-center"
+                      aria-label={`View ${n.fromUserName || "their"} profile`}
+                      title={`View ${n.fromUserName || "their"} profile`}
+                    >
+                      <Avatar emoji={n.fromUserAvatar} name={n.fromUserName} size="sm" photoId={n.fromUserAvatarPhotoId} />
+                    </button>
+                  )}
                   <button
                     onClick={() => removeNotification(n.id)}
                     className="shrink-0 self-center p-2 mr-1 text-stone-300 hover:text-rose-600 transition"
@@ -9861,6 +10282,59 @@ function LearnHero({ src, alt }) {
   );
 }
 
+// A single accordion-style item photo: fades in on mount, falls back to a
+// themed gradient tile (matching LearnHero's own fallback) if the photo
+// fails to load rather than leaving a broken image.
+function ItemPhoto({ src, alt, icon: Icon }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  if (!src || failed) {
+    return (
+      <div className="w-full h-36 bg-gradient-to-br from-emerald-100 via-amber-50 to-emerald-50 flex items-center justify-center">
+        <Icon size={26} className="text-emerald-700/50" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt || ""}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+      className="w-full h-36 object-cover cs-fade-anim"
+    />
+  );
+}
+
+// The accordion behind "what animals/crops do well here": one line is open
+// at a time, showing a picture of that specific item right underneath it.
+// Clicking another line closes the current picture and opens the new one.
+function ItemPickList({ items, icon, defaultOpen = 0 }) {
+  const [openIdx, setOpenIdx] = useState(defaultOpen);
+  return (
+    <div className="flex flex-col gap-2">
+      {items.map((label, i) => {
+        const open = openIdx === i;
+        return (
+          <div key={i} className="border border-stone-200 rounded-xl overflow-hidden bg-white">
+            <button
+              onClick={() => setOpenIdx(open ? -1 : i)}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
+            >
+              {React.createElement(icon, { size: 14, className: "text-emerald-700 shrink-0" })}
+              <span className="text-sm text-stone-700 flex-1">{label}</span>
+              <ChevronDown size={14} className={`text-stone-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+            </button>
+            {open && <ItemPhoto src={itemPhotoFor(label)} alt={label} icon={icon} />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function LearnLocationPanel({ topic }) {
   const { me } = useApp();
   const homeLoc = splitCityState(me?.homeLocation?.label);
@@ -9900,39 +10374,29 @@ function LearnLocationPanel({ topic }) {
               <div><span className="cs-t10 font-bold text-stone-400 uppercase block mb-0.5">Growing season</span>{zone.season}</div>
             </div>
           </div>
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4">
             {zone.plantingGuide.map((g, i) => (
-              <div key={i} className="border border-stone-200 rounded-xl p-3.5">
-                <p className="text-sm font-semibold text-emerald-800 mb-1">{g.window}</p>
-                <p className="text-sm text-stone-600">{g.crops}</p>
+              <div key={i} className="border border-stone-200 rounded-xl p-3.5 bg-white">
+                <p className="text-sm font-semibold text-emerald-800 mb-2.5">{g.window}</p>
+                <ItemPickList
+                  items={g.crops.split(",").map((s) => s.trim()).filter(Boolean)}
+                  icon={Sprout}
+                  defaultOpen={-1}
+                />
               </div>
             ))}
           </div>
-          <p className="cs-t11 text-stone-400 mt-4">Rough guidance for the area, not a guarantee — always weigh it against your own local frost history.</p>
+          <p className="cs-t11 text-stone-400 mt-4">Rough guidance for the area, not a guarantee — always weigh it against your own local frost history. Tap any crop for a picture.</p>
         </div>
       ) : topic === "crops" ? (
         <div>
           <p className="text-sm text-stone-500 mb-4">{zone.blurb}</p>
-          <div className="grid grid-cols-2 gap-2">
-            {zone.bestCrops.map((c, i) => (
-              <div key={i} className="flex items-center gap-2 border border-stone-200 rounded-xl px-3 py-2.5">
-                <Sprout size={14} className="text-emerald-700 shrink-0" />
-                <span className="text-sm text-stone-700">{c}</span>
-              </div>
-            ))}
-          </div>
+          <ItemPickList items={zone.bestCrops} icon={Sprout} />
         </div>
       ) : (
         <div>
           <p className="text-sm text-stone-500 mb-4">{zone.blurb}</p>
-          <div className="flex flex-col gap-2">
-            {zone.bestAnimals.map((a, i) => (
-              <div key={i} className="flex items-center gap-2 border border-stone-200 rounded-xl px-3 py-2.5">
-                <PawPrint size={14} className="text-emerald-700 shrink-0" />
-                <span className="text-sm text-stone-700">{a}</span>
-              </div>
-            ))}
-          </div>
+          <ItemPickList items={zone.bestAnimals} icon={PawPrint} />
         </div>
       )}
     </div>
@@ -10281,6 +10745,10 @@ function RootShell() {
   const [locPickerOpen, setLocPickerOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  // Every avatar in the app that represents someone else opens this same
+  // small card — pass just {id, name, avatar} and it looks the rest up.
+  const [profileCardTarget, setProfileCardTarget] = useState(null);
+  const openProfileCard = useCallback((target) => setProfileCardTarget(target), []);
   const [openProductId, setOpenProductId] = useState(null);
   const [toast, setToast] = useState("");
 
@@ -10346,17 +10814,21 @@ function RootShell() {
       if (type === "shop") {
         market.updateShop(entity.id, { favoriteCount: newCount });
         if (added && entity.ownerId && entity.ownerId !== me.id) {
-          notifyShopOwner(entity, "favorite", `${me.name} favorited your shop`, entity.name);
+          notifyShopOwner(entity, "favorite", `${me.name} favorited your shop`, entity.name, undefined, me);
           logAnalyticsEvent("favorite", { entityId: entity.id, entityName: entity.name, shopId: entity.id, meta: { kind: "shop" } });
         }
       } else {
         market.updateProduct(entity.shopId, entity.id, { favoriteCount: newCount });
         const shop = market.shopsById[entity.shopId];
         if (added && shop?.ownerId && shop.ownerId !== me.id) {
-          notifyShopOwner(shop, "favorite", `${me.name} favorited ${entity.name}`, entity.name, {
-            screen: "product",
-            productId: entity.id,
-          });
+          notifyShopOwner(
+            shop,
+            "favorite",
+            `${me.name} favorited ${entity.name}`,
+            entity.name,
+            { screen: "product", productId: entity.id },
+            me
+          );
           logAnalyticsEvent("favorite", { entityId: entity.id, entityName: entity.name, shopId: entity.shopId, meta: { kind: "product" } });
         }
       }
@@ -10473,6 +10945,7 @@ function RootShell() {
     registerSaveSearch,
     openTextSheet: (cfg) => setTextSheet({ ...cfg, sessionKey: uid("ts") }),
     openLocationPicker: () => setLocPickerOpen(true),
+    openProfileCard,
     openProduct: setOpenProductId,
     showToast,
     conversations: convo.conversations,
@@ -10543,6 +11016,7 @@ function RootShell() {
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "learn" && <LearnScreen navigate={navigate} topic={route.topic} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
+            {route.screen === "profile" && <PublicProfileView userId={route.userId} navigate={navigate} />}
           </main>
         </div>
         <BottomNav route={route} navigate={navigate} />
@@ -10561,6 +11035,7 @@ function RootShell() {
       <LocationPickerModal open={locPickerOpen} onClose={() => setLocPickerOpen(false)} onPick={setUserLoc} />
       <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} />
       <NotificationsModal open={notifOpen} onClose={() => setNotifOpen(false)} navigate={navigate} onOpenProduct={setOpenProductId} />
+      <ProfileCardModal target={profileCardTarget} onClose={() => setProfileCardTarget(null)} />
 
       {toast && (
         <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 bg-stone-900 text-white text-sm font-medium px-4 py-2.5 rounded-full shadow-lg cs-z-sheet cs-toast-anim">
