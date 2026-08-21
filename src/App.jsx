@@ -6,7 +6,7 @@ import {
   Home, Package, Filter, GripVertical, BadgeCheck, AlertCircle,
   LayoutGrid, UserPlus, ShoppingBag, Sparkles, ShieldAlert, Bookmark,
   Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
-  Sprout, PawPrint, BookOpen, Link2, DollarSign, Archive,
+  Sprout, PawPrint, BookOpen, Link2, DollarSign, Archive, Bug, Recycle,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -1602,8 +1602,14 @@ function zoneInfoFor(stateCode) {
 
 // The three non-location topics in the Learn tab — general enough to hold
 // true anywhere, so they don't need a state picker.
+// Small helper just for the Learn library's photography — a bit wider than
+// the general-purpose PEXELS() thumbnail helper above, since these run as
+// full-width hero banners rather than small product tiles.
+const LEARN_PHOTO = (id, w = 800) => `https://images.pexels.com/photos/${id}/pexels-photo-${id}.jpeg?auto=compress&cs=tinysrgb&w=${w}`;
+
 const LEARN_STATIC = {
   companions: {
+    hero: { url: LEARN_PHOTO("4207910"), alt: "Hands planting a seedling into garden soil" },
     intro: "Some crops genuinely help their neighbors — trading shade, structure, or pest confusion — and some just compete for the same nutrients or trade the same diseases back and forth. None of this is exact science, but it's old, widely-repeated market-garden wisdom worth planning around.",
     good: [
       { a: "Tomatoes", b: "Basil", why: "Grown side by side for generations — similar sun and water needs, and basil is widely believed to help keep some pests off tomatoes." },
@@ -1611,25 +1617,31 @@ const LEARN_STATIC = {
       { a: "Carrots", b: "Onions", why: "Onions' strong scent is thought to help confuse the carrot rust fly, and carrots return the favor for onion pests." },
       { a: "Cucumbers", b: "Sunflowers", why: "A sturdy sunflower stalk gives cucumber vines something to climb, plus a little welcome afternoon shade." },
       { a: "Cabbage family", b: "Dill or nasturtiums", why: "Nasturtiums lure aphids away as a \"trap crop\"; dill attracts the predatory insects that eat cabbage pests." },
+      { a: "Peppers", b: "Basil or marigolds", why: "Basil is thought to sharpen pepper flavor and repel aphids and spider mites; marigold roots release compounds that deter root-knot nematodes." },
+      { a: "Lettuce", b: "Tall crops like corn or trellised beans", why: "Lettuce bolts and turns bitter in hot sun, so the light afternoon shade from a taller neighbor buys it a few extra weeks." },
     ],
     avoid: [
       { a: "Tomatoes", b: "Corn", why: "Both are magnets for the same pest (corn earworm, which is the same insect as the tomato fruitworm) — planting together concentrates the problem." },
       { a: "Beans", b: "Onions or garlic", why: "Alliums release compounds that can stunt nearby bean growth." },
       { a: "Potatoes", b: "Tomatoes", why: "Both nightshades that share the same diseases, blight included — grouping them raises the odds of one outbreak taking both." },
       { a: "Carrots", b: "Dill", why: "Fine as seedlings, but mature dill can slow young carrots down if planted too close together." },
+      { a: "Sunflowers", b: "Potatoes", why: "Sunflowers release growth-inhibiting compounds through their roots that can stunt nearby potatoes." },
     ],
   },
   pricing: {
+    hero: { url: LEARN_PHOTO("31930012"), alt: "Colorful farmers market vegetable display" },
     intro: "There's no single formula, but a few habits keep a price fair to the shopper without quietly shorting yourself.",
     sections: [
       { title: "Start from your real costs", body: "Seed or starts, water, soil amendments, packaging, and your own time — growing it and hauling it to market — all belong in the number before you land on a price. A price that doesn't cover labor isn't sustainable no matter how fair it looks on the sign." },
       { title: "Check the going rate around you", body: "Other vendors at the same market, plus nearby grocery or co-op prices for comparable quality, give you a realistic ceiling and floor to work inside rather than guessing." },
       { title: "Let the season move the price", body: "The first tomatoes of summer or the last squash before frost are scarce and usually priced higher; peak-season abundance is when shoppers expect — and vendors can afford — a lower price." },
-      { title: "Price in bundles shoppers can picture", body: "A bunch, a pint, or a quart is often easier for someone to reason about at a glance than pure per-pound math, and a small discount for a bigger bundle encourages a fuller basket." },
+      { title: "Price in bundles shoppers can picture", body: "A bunch, a pint, or a quart is often easier for someone to reason about at a glance than pure per-pound math, and a small discount for a bigger bundle encourages a fuller basket. This is exactly what the \"priced per\" unit picker on your listings is for." },
+      { title: "Use specials with intention", body: "A buy-one-get-one or bundle deal near the end of a picking window can move product that's about to turn, without quietly lowering your everyday price — think of it as a tool for specific moments, not a default setting." },
       { title: "Don't race to the bottom", body: "Undercutting every other stand chips away at the whole market's prices, yours included. Freshness, variety, and how something was grown usually earn loyalty — and a fair price — better than simply being the cheapest table." },
     ],
   },
   preserving: {
+    hero: { url: LEARN_PHOTO("8896839"), alt: "A jar of homemade preserves" },
     intro: "A big harvest doesn't have to be sold or eaten all at once — these are the standard ways small growers stretch it out.",
     methods: [
       { name: "Water-bath canning", body: "The go-to for high-acid foods — jams, pickles, tomatoes with a little added acid. Basic equipment, shelf-stable for a year or more." },
@@ -1637,9 +1649,144 @@ const LEARN_STATIC = {
       { name: "Freezing", body: "Usually the fastest way to preserve with the least prep. Blanching most vegetables first — a quick dunk in boiling water, then ice water — helps hold onto color, texture, and nutrients." },
       { name: "Drying / dehydrating", body: "Well suited to herbs, fruit, and some vegetables. Concentrates flavor and takes up almost no storage space once finished." },
       { name: "Fermenting", body: "Sauerkraut, kimchi, traditional pickles — needs no canning equipment at all, just salt, time, and a container, and adds beneficial bacteria along the way." },
+      { name: "Root cellaring / cold storage", body: "Potatoes, winter squash, onions, apples, and root vegetables often keep for months with no processing at all — just a cool, dark, humidity-controlled space like a basement corner or an insulated bin." },
+    ],
+  },
+  soil: {
+    hero: { url: LEARN_PHOTO("12644988"), alt: "Healthy soil with a young plant in cupped hands" },
+    intro: "Healthy soil is the foundation everything else on this list depends on — get it right and pests, disease, and watering problems all get easier to manage.",
+    sections: [
+      { title: "What makes soil \"healthy\"", body: "Healthy soil is full of life — bacteria, fungi, earthworms, and insects that break down organic matter into nutrients plants can use. It holds water without staying soggy, and it's loose enough for roots to spread easily. You can't fake that with fertilizer alone; it has to be built up over time." },
+      { title: "Building a compost pile", body: "Layer roughly equal parts \"browns\" (dry leaves, cardboard, straw) and \"greens\" (vegetable scraps, grass clippings, coffee grounds), keep the pile about as damp as a wrung-out sponge, and turn it every couple of weeks to add oxygen. A well-managed pile can finish in 2–3 months; one you never turn can take a year or more." },
+      { title: "Browns vs. greens", body: "Browns are carbon-rich and greens are nitrogen-rich — too many greens and a pile turns slimy and starts to smell; too many browns and it barely breaks down at all. A rough ratio of 3 parts browns to 1 part greens by volume is a solid starting point." },
+      { title: "Cover crops", body: "Planting something like clover, winter rye, or buckwheat in beds that would otherwise sit bare over winter protects soil from erosion, smothers weeds, and adds organic matter and nitrogen back in when you till it under in spring." },
+      { title: "Mulch does double duty", body: "A few inches of straw, wood chips, or shredded leaves over open soil suppresses weeds, holds in moisture, moderates soil temperature, and slowly breaks down into more organic matter — one of the highest-value, lowest-effort habits in gardening." },
+      { title: "Signs of unhealthy soil", body: "Water that pools instead of soaking in, soil that's hard and cracked when dry, few or no earthworms when you dig a shovelful, and plants that consistently look pale or stunted despite regular watering are all signs it's time to add compost and cut back on tilling." },
+    ],
+  },
+  marketing: {
+    hero: { url: LEARN_PHOTO("1187300"), alt: "A vendor standing beside a fresh produce stand" },
+    intro: "Great produce doesn't sell itself — a little presentation and follow-through goes a long way at a farmers market or an online storefront like this one.",
+    sections: [
+      { title: "First impressions at the stand", body: "Shoppers decide whether to stop within a few seconds, so lead with color and abundance — tall items in back, colorful items at eye level, and never let a display look picked-over. A stand that looks half-empty reads as \"nothing good left,\" even when the quality is fine." },
+      { title: "Tell the story, not just the price", body: "\"Heirloom tomatoes, picked this morning\" sells better than \"tomatoes, $4/lb.\" Mention the variety, how it was grown, or what makes it different — people pay more for produce they feel a connection to." },
+      { title: "Photos that actually sell", body: "Natural light beats flash every time — shoot in the morning or late afternoon, fill the frame with the product, and show real texture and color. A slightly imperfect photo of the actual item builds more trust than an overly polished stock photo." },
+      { title: "Build repeat customers", body: "Remembering a regular's name or usual order costs nothing and keeps them coming back. On CropSwap specifically, replying quickly to messages and keeping your listings current are the two biggest things shoppers notice." },
+      { title: "Timing your restocks", body: "Posting new listings or updates right before your usual selling window — the evening before a Saturday market, for example — puts your shop at the top of a shopper's mind right when they're deciding where to go." },
     ],
   },
 };
+
+// "Good bugs" library — a garden's natural pest control crew. Purely factual,
+// upbeat nature content: no skulls, gore, or anything sinister, matching how
+// every other section in this app is meant to feel.
+const GOOD_BUGS = [
+  {
+    id: "ladybug",
+    name: "Ladybug (Lady Beetle)",
+    tagline: "Aphid patrol, 24/7",
+    photo: { url: LEARN_PHOTO("121472"), alt: "A ladybug resting on a green leaf" },
+    facts: [
+      "A single ladybug can eat 50 or more aphids a day, and thousands over its lifetime.",
+      "Both the adult beetle and its spiky, alligator-shaped larva are predators — don't mistake the larva for a pest and squash it.",
+      "They also eat mites, scale insects, and mealybugs.",
+      "Most native ladybugs overwinter in leaf litter or under loose bark, emerging again in spring.",
+    ],
+    whyGood: "Ladybugs are one of the fastest, cheapest ways to knock back an aphid outbreak without spraying anything.",
+    keepAlive: "Leave some leaf litter and undisturbed mulch over winter for them to shelter in, and plant dill, fennel, yarrow, or alyssum — their preferred nectar sources when aphids are scarce. Avoid broad-spectrum insecticides, which kill ladybugs right along with the pests you're targeting.",
+    predators: "Birds, spiders, and assassin bugs will all eat ladybugs; some toads and frogs will too if your garden has damp cover nearby.",
+  },
+  {
+    id: "honeybee",
+    name: "Honeybee & Bumblebee",
+    tagline: "Your fruit set depends on them",
+    photo: { url: LEARN_PHOTO("1029567"), alt: "A honeybee gathering pollen on a flower" },
+    facts: [
+      "Roughly a third of the food humans eat depends on pollination by bees.",
+      "A single hive can visit millions of flowers in a single day.",
+      "Bumblebees can fly and pollinate in cooler, cloudier weather than honeybees can.",
+      "Bees communicate the location of good flowers to each other through a \"waggle dance.\"",
+    ],
+    whyGood: "No pollinators, no fruit — squash, cucumbers, melons, berries, and tree fruit all set poorly without bees moving pollen between flowers.",
+    keepAlive: "Plant a range of flowers that bloom from early spring through fall so there's always something for them, leave a patch of bare or sandy ground undisturbed for ground-nesting native bees, set out a shallow water dish with pebbles to land on, and skip spraying anything while it's in bloom.",
+    predators: "Praying mantises, robber flies, and birds pick off individual bees; skunks, bears, and wasps can raid whole hives.",
+  },
+  {
+    id: "mantis",
+    name: "Praying Mantis",
+    tagline: "The ambush hunter",
+    photo: { url: LEARN_PHOTO("1085542"), alt: "A brown praying mantis in close-up" },
+    facts: [
+      "A mantis can rotate its head nearly 180 degrees to track prey.",
+      "They'll eat almost anything they can catch, including beetles, moths, crickets, and flies.",
+      "One egg case (called an ootheca) can hold anywhere from 100 to 400 baby mantises.",
+      "Mantises are patient hunters, often sitting motionless for long stretches waiting to strike.",
+    ],
+    whyGood: "They're a generalist predator that helps keep overall pest numbers down, especially larger, faster-moving insects that other predators tend to miss. One caveat: mantises aren't picky — they'll eat bees and other beneficial bugs too, so think of them as a mixed blessing rather than a silver bullet.",
+    keepAlive: "Leave shrubby, undisturbed corners of the garden for egg cases to overwinter, and if you spot a tan, papery egg case on a stem, leave it alone — that's next year's mantis population.",
+    predators: "Birds, frogs, and spiders will eat mantises, and larger mantises will occasionally eat smaller ones.",
+  },
+  {
+    id: "dragonfly",
+    name: "Dragonfly",
+    tagline: "A flying mosquito net",
+    photo: { url: LEARN_PHOTO("762941"), alt: "A dragonfly perched, wings spread" },
+    facts: [
+      "A dragonfly can eat hundreds of mosquitoes in a single day.",
+      "They're among the fastest insects alive, with some species topping 30 mph.",
+      "Dragonfly nymphs live underwater for months or even years before emerging as adults, and they're voracious predators of mosquito larvae the whole time.",
+      "Their compound eyes have up to 30,000 lenses, giving them nearly 360-degree vision.",
+    ],
+    whyGood: "If you're anywhere near standing water, dragonflies are one of the best natural checks on mosquito populations you can have.",
+    keepAlive: "Keep a small pond, rain barrel, or water feature with some vegetation nearby for the nymphs, and skip mosquito foggers and sprays — they kill dragonflies right along with the mosquitoes.",
+    predators: "Birds, frogs, fish, and spiders all eat dragonflies, especially right after they molt into an adult while their wings are still soft.",
+  },
+  {
+    id: "spider",
+    name: "Garden (Orb-Weaver) Spider",
+    tagline: "A pest net you don't have to build",
+    photo: { url: LEARN_PHOTO("51394"), alt: "An orb-weaver spider on its web" },
+    facts: [
+      "A single orb-weaver can catch and eat dozens of flying insects overnight.",
+      "They often rebuild their web daily, eating the old silk to recycle the protein in it.",
+      "Most garden spiders are harmless to people — bites are rare and usually no worse than a bee sting.",
+      "Their webs also make a decent gauge of how many flying pests are actually active in your garden.",
+    ],
+    whyGood: "Spiders are one of the highest-volume pest controllers in any garden — they don't discriminate, taking moths, flies, aphids, and beetles alike.",
+    keepAlive: "Leave webs in place where you can, especially around dusk when they're most active, avoid broad pesticide use, and keep some undisturbed shrubs or tall grass nearby for shelter.",
+    predators: "Birds, spider wasps, and larger spiders are the main threats — chickens will happily eat them too.",
+  },
+  {
+    id: "butterfly",
+    name: "Monarch & Pollinator Butterflies",
+    tagline: "Pollination with a light touch",
+    photo: { url: LEARN_PHOTO("17993986"), alt: "A butterfly resting on a daisy flower" },
+    facts: [
+      "Butterflies pollinate while feeding on nectar, though less efficiently than bees since they carry less pollen per visit.",
+      "Monarch caterpillars eat only milkweed — without it, they can't complete their life cycle at all.",
+      "Butterflies taste with their feet, which is how they find the right host plant to lay eggs on.",
+      "Many butterfly species, monarchs especially, migrate hundreds or thousands of miles each year.",
+    ],
+    whyGood: "They add pollination coverage alongside bees, especially for flowers bees visit less often, and a garden full of butterflies is usually a sign it's pesticide-light and healthy.",
+    keepAlive: "Plant native milkweed for monarchs specifically, add a range of nectar flowers that bloom across the season, leave a shallow muddy patch (butterflies \"puddle\" there for minerals), and never spray host plants while caterpillars are feeding on them.",
+    predators: "Birds, wasps, and spiders eat adult butterflies; caterpillars are eaten by birds, wasps, and stink bugs.",
+  },
+  {
+    id: "earthworm",
+    name: "Earthworm",
+    tagline: "The original soil engineer",
+    photo: { url: LEARN_PHOTO("4386496"), alt: "An earthworm on green grass" },
+    facts: [
+      "Earthworms can process roughly their own body weight in soil every day.",
+      "Their tunnels aerate compacted soil and improve drainage.",
+      "Worm castings — their droppings — are a nutrient-rich natural fertilizer.",
+      "A healthy garden bed can hold hundreds of thousands of earthworms per acre.",
+    ],
+    whyGood: "They're not technically an insect, but no list of good garden creatures is complete without them — they build the healthy, well-drained soil every other plant and bug on this list depends on.",
+    keepAlive: "Keep soil covered with mulch or compost so it doesn't dry out or overheat, minimize tilling (which shreds worms and their tunnels), and skip synthetic fertilizers and pesticides that can harm them.",
+    predators: "Birds — robins especially — along with moles, toads, and ground beetles are major earthworm predators.",
+  },
+];
 
 /* ============================================================================
    SECTION 4: UTILITIES — pure functions (unit-testable outside React)
@@ -7865,9 +8012,12 @@ function UpgradeHint({ text = "Premium feature", navigate }) {
    the whole tiered product can be built and demoed honestly today.
 ============================================================================ */
 function PlansScreen({ navigate }) {
-  const { me } = useApp();
+  const { me, cancelPlan, showToast } = useApp();
   const [billing, setBilling] = useState("monthly");
+  const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const currentTier = planTier(me);
+  const isPaid = currentTier !== "free";
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
@@ -7879,6 +8029,51 @@ function PlansScreen({ navigate }) {
           <h1 className="text-3xl font-bold text-stone-900 mb-1" style={displayFont}>Choose your plan</h1>
           <p className="text-stone-500 text-sm">No payment is collected yet — this is a fully working test-mode preview.</p>
         </div>
+
+        {isPaid && (
+          <div className={`max-w-md mx-auto mb-8 rounded-xl p-4 border-2 ${currentTier === "premium" ? "border-amber-300 bg-gradient-to-b from-amber-50 to-white" : "border-emerald-700 bg-emerald-50"}`}>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <p className="font-bold text-stone-900 flex items-center gap-1.5">
+                {currentTier === "premium" && <Crown size={15} className="text-amber-500" />}
+                You're on {PLAN_CATALOG[currentTier].name}
+              </p>
+              {!cancelConfirm && (
+                <button onClick={() => setCancelConfirm(true)} className="text-xs font-semibold text-rose-600 shrink-0">Cancel plan</button>
+              )}
+            </div>
+            <p className="text-xs text-stone-500 mb-1">
+              {formatMoney(planPrice(currentTier, me.plan?.billing))}
+              {planPeriodLabel(me.plan?.billing)} · billed {me.plan?.billing === "annual" ? "yearly" : "monthly"}
+            </p>
+            {me.plan?.periodEnd && <p className="cs-t11 text-stone-400">Renews {new Date(me.plan.periodEnd).toLocaleDateString()}</p>}
+            {cancelConfirm && (
+              <div className="mt-3 pt-3 border-t border-stone-200">
+                <p className="text-xs text-stone-600 mb-2">
+                  {daysBetween(me.plan?.startedAt || Date.now(), Date.now()) <= REFUND_WINDOW_DAYS
+                    ? `You're within the ${REFUND_WINDOW_DAYS}-day window — cancelling now refunds 50% (test mode).`
+                    : `It's past day ${REFUND_WINDOW_DAYS} of this term, so no refund applies — access is removed immediately.`}
+                  {" "}Your storefront stays on the platform, inactive, for {ABANDON_DAYS} days in case you come back.
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={() => setCancelConfirm(false)} className="flex-1 text-xs font-semibold py-2 rounded-lg border border-stone-200">Keep plan</button>
+                  <button
+                    onClick={async () => {
+                      setCancelling(true);
+                      const { refundPct } = await cancelPlan();
+                      setCancelling(false);
+                      setCancelConfirm(false);
+                      showToast(refundPct > 0 ? `Cancelled — ${refundPct}% refunded (test mode)` : "Cancelled — no refund available");
+                    }}
+                    disabled={cancelling}
+                    className="flex-1 text-xs font-semibold py-2 rounded-lg bg-rose-600 text-white disabled:opacity-50"
+                  >
+                    {cancelling ? "Cancelling…" : "Confirm cancel"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex justify-center mb-8">
           <div className="flex gap-1 bg-stone-100 rounded-full p-1">
@@ -8000,15 +8195,13 @@ function CheckoutScreen({ navigate, tier, billing }) {
 }
 
 function AccountModal({ open, onClose }) {
-  const { me, updateMe, signOut, navigate, userLoc, setUserLoc, showToast, cancelPlan } = useApp();
+  const { me, updateMe, signOut, navigate, userLoc, setUserLoc, showToast } = useApp();
   const [tab, setTab] = useState("profile");
   const [name, setName] = useState(me?.name || "");
   const [blockedUsers, setBlockedUsers] = useState([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [storageReport, setStorageReport] = useState(null);
   const [checking, setChecking] = useState(false);
-  const [cancelConfirm, setCancelConfirm] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
 
   // Writes a probe, reads it back, and counts what is actually stored, so a
   // persistence problem can be identified instead of guessed at.
@@ -8118,7 +8311,7 @@ function AccountModal({ open, onClose }) {
   const tabs = [
     { id: "profile", label: "Profile", icon: User },
     { id: "vendor", label: "Selling", icon: Store },
-    { id: "subscription", label: "Plan", icon: Sparkles },
+    { id: "subscription", label: "Plan", icon: Sparkles, link: true, linkScreen: "plans" },
     { id: "notifications", label: "Alerts", icon: Bell },
     { id: "dashboard", label: "Dashboard", icon: TrendingUp, link: true },
     { id: "places", label: "Places", icon: MapPin },
@@ -8139,7 +8332,7 @@ function AccountModal({ open, onClose }) {
           {tabs.map((t) => (
             <button
               key={t.id}
-              onClick={() => (t.link ? (onClose(), navigate({ screen: t.id })) : setTab(t.id))}
+              onClick={() => (t.link ? (onClose(), navigate({ screen: t.linkScreen || t.id })) : setTab(t.id))}
               className={`flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-full text-[11px] font-semibold whitespace-nowrap transition ${tab === t.id ? "bg-emerald-800 text-white" : "bg-stone-100 text-stone-500"}`}
             >
               <t.icon size={12} /> {t.label}
@@ -8207,85 +8400,6 @@ function AccountModal({ open, onClose }) {
               <LockedFeatureButton label="Build your storefront" sub="Basic Plan feature only" navigate={(r) => { onClose(); navigate(r); }} icon={Store} />
             </div>
           ))}
-
-        {tab === "subscription" && (
-          <div className="flex flex-col gap-3">
-            {(() => {
-              const tier = planTier(me);
-              const catalog = PLAN_CATALOG[tier];
-              const isPaid = tier !== "free";
-              return (
-                <div className={`rounded-xl p-4 border-2 ${tier === "premium" ? "border-amber-300 bg-gradient-to-b from-amber-50 to-white" : tier === "basic" ? "border-emerald-700 bg-emerald-50" : "border-stone-200"}`}>
-                  <div className="flex items-center gap-1.5 mb-1">
-                    {tier === "premium" && <Crown size={15} className="text-amber-500" />}
-                    <p className="font-bold text-stone-900">{catalog.name} plan</p>
-                  </div>
-                  {isPaid ? (
-                    <>
-                      <p className="text-xs text-stone-500 mb-1">
-                        {formatMoney(planPrice(tier, me.plan.billing))}
-                        {planPeriodLabel(me.plan.billing)} · billed {me.plan.billing === "annual" ? "yearly" : "monthly"}
-                      </p>
-                      {me.plan.periodEnd && <p className="cs-t11 text-stone-400 mb-3">Renews {new Date(me.plan.periodEnd).toLocaleDateString()}</p>}
-                    </>
-                  ) : (
-                    <p className="text-xs text-stone-500 mb-3">Browsing, favoriting, and messaging — no storefront.</p>
-                  )}
-                  <div className="flex gap-2">
-                    <button onClick={() => navigate({ screen: "plans" })} className="flex-1 text-xs font-semibold py-2 rounded-lg bg-white border border-stone-300">
-                      {isPaid ? "Change plan" : "See Basic & Premium"}
-                    </button>
-                    {isPaid && (
-                      <button onClick={() => setCancelConfirm(true)} className="flex-1 text-xs font-semibold py-2 rounded-lg bg-white border border-rose-200 text-rose-600">
-                        Cancel plan
-                      </button>
-                    )}
-                  </div>
-                  {isPaid && cancelConfirm && (
-                    <div className="mt-3 pt-3 border-t border-stone-200">
-                      <p className="text-xs text-stone-600 mb-2">
-                        {daysBetween(me.plan.startedAt || Date.now(), Date.now()) <= REFUND_WINDOW_DAYS
-                          ? `You're within the ${REFUND_WINDOW_DAYS}-day window — cancelling now refunds 50% (test mode).`
-                          : `It's past day ${REFUND_WINDOW_DAYS} of this term, so no refund applies — access is removed immediately.`}
-                        {" "}Your storefront stays on the platform, inactive, for {ABANDON_DAYS} days in case you come back.
-                      </p>
-                      <div className="flex gap-2">
-                        <button onClick={() => setCancelConfirm(false)} className="flex-1 text-xs font-semibold py-2 rounded-lg border border-stone-200">Keep plan</button>
-                        <button
-                          onClick={async () => {
-                            setCancelling(true);
-                            const { refundPct } = await cancelPlan();
-                            setCancelling(false);
-                            setCancelConfirm(false);
-                            showToast(refundPct > 0 ? `Cancelled — ${refundPct}% refunded (test mode)` : "Cancelled — no refund available");
-                          }}
-                          disabled={cancelling}
-                          className="flex-1 text-xs font-semibold py-2 rounded-lg bg-rose-600 text-white disabled:opacity-50"
-                        >
-                          {cancelling ? "Cancelling…" : "Confirm cancel"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-
-            <div className="grid grid-cols-1 gap-2 mt-1">
-              {Object.values(PLAN_CATALOG)
-                .filter((p) => p.id !== "free")
-                .map((p) => (
-                  <div key={p.id} className="border border-stone-200 rounded-xl p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-bold text-stone-900 flex items-center gap-1">{p.id === "premium" && <Crown size={12} className="text-amber-500" />} {p.name}</span>
-                      <span className="text-xs font-semibold text-stone-600">{formatMoney(p.monthly)}/mo · {formatMoney(p.annual)}/yr</span>
-                    </div>
-                    <p className="cs-t11 text-stone-500">{p.tagline}</p>
-                  </div>
-                ))}
-            </div>
-          </div>
-        )}
 
         {tab === "notifications" && (
           <div>
@@ -8573,31 +8687,102 @@ async function fetchAnalyticsEvents({ types, shopId, sinceMs, limit = 4000 }) {
   }
 }
 
-function DashStat({ icon: Icon, label, value, sub, delta }) {
+// Small round "i" button used all over the dashboard. Hover shows the bubble
+// and it disappears the moment the page scrolls (any scroll container, via a
+// capture-phase listener); tapping pins it open until the X is tapped.
+function InfoTip({ text, align = "center" }) {
+  const [pinned, setPinned] = useState(false);
+  const [hovering, setHovering] = useState(false);
+
+  useEffect(() => {
+    if (!hovering) return;
+    const onScroll = () => setHovering(false);
+    window.addEventListener("scroll", onScroll, true);
+    return () => window.removeEventListener("scroll", onScroll, true);
+  }, [hovering]);
+
+  const visible = pinned || hovering;
+  const alignClass = align === "left" ? "left-0" : align === "right" ? "right-0" : "left-1/2 -translate-x-1/2";
+
   return (
-    <div className="bg-white border border-stone-200 rounded-xl p-3.5">
+    <span className="relative inline-flex shrink-0">
+      <button
+        type="button"
+        onMouseEnter={() => setHovering(true)}
+        onMouseLeave={() => setHovering(false)}
+        onFocus={() => setHovering(true)}
+        onBlur={() => setHovering(false)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setPinned((v) => !v);
+        }}
+        aria-label="What is this?"
+        className="w-4 h-4 rounded-full bg-stone-200 text-stone-500 text-[9px] font-bold flex items-center justify-center hover:bg-stone-300 hover:text-stone-700 transition"
+      >
+        i
+      </button>
+      {visible && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className={`absolute z-40 top-6 ${alignClass} w-52 bg-stone-900 text-white text-[11px] leading-snug rounded-lg p-2.5 shadow-xl`}
+        >
+          {pinned && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setPinned(false);
+                setHovering(false);
+              }}
+              aria-label="Close"
+              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white text-stone-700 flex items-center justify-center shadow"
+            >
+              <X size={10} />
+            </button>
+          )}
+          {text}
+        </div>
+      )}
+    </span>
+  );
+}
+function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate }) {
+  return (
+    <div className="bg-white border border-stone-200 rounded-xl p-3.5 relative">
       <div className="flex items-center justify-between mb-1.5">
         <span className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-700">
           <Icon size={14} />
         </span>
-        {delta != null && (
-          <span className={`inline-flex items-center gap-0.5 text-[11px] font-bold ${delta >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
-            {delta >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />} {Math.abs(delta)}%
-          </span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {delta != null && !locked && (
+            <span className={`inline-flex items-center gap-0.5 text-[11px] font-bold ${delta >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+              {delta >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />} {Math.abs(delta)}%
+            </span>
+          )}
+          {info && <InfoTip text={info} align="right" />}
+        </div>
       </div>
-      <p className="text-xl font-bold text-stone-900 font-mono tabular-nums">{value}</p>
+      {locked ? (
+        <button onClick={() => navigate({ screen: "plans" })} className="block text-left" title="Premium — tap to unlock the exact number">
+          <span className="inline-flex items-center gap-1 text-xl font-bold text-stone-900 font-mono tabular-nums select-none" style={{ filter: "blur(4px)" }}>
+            {value}
+          </span>
+          <Lock size={10} className="inline-block ml-1 text-amber-600 align-middle" />
+        </button>
+      ) : (
+        <p className="text-xl font-bold text-stone-900 font-mono tabular-nums">{value}</p>
+      )}
       <p className="cs-t11 text-stone-500">{label}</p>
       {sub && <p className="cs-t10 text-stone-400 mt-0.5">{sub}</p>}
     </div>
   );
 }
-function DashPanel({ title, icon: Icon, right, children, className = "" }) {
+function DashPanel({ title, icon: Icon, right, children, className = "", info }) {
   return (
     <div className={`bg-white border border-stone-200 rounded-xl p-4 ${className}`}>
       <div className="flex items-center justify-between mb-3 gap-2">
         <p className="text-xs font-bold text-stone-400 uppercase flex items-center gap-1.5 shrink-0">
           {Icon && <Icon size={13} />} {title}
+          {info && <InfoTip text={info} />}
         </p>
         {right}
       </div>
@@ -8605,25 +8790,25 @@ function DashPanel({ title, icon: Icon, right, children, className = "" }) {
     </div>
   );
 }
-// "Most of the chart/numbers/data blurred out" with a crown to unlock — the
-// header and range controls above this stay sharp so a free/basic vendor can
-// still see the shape of the tool, just not the real numbers inside it.
-function PremiumGate({ unlocked, navigate, children }) {
-  if (unlocked) return <>{children}</>;
+// Dims and disables an interactive tool (rather than blurring it) so a
+// free/basic vendor can see exactly what the tool looks like without being
+// able to actually operate it — used for the handful of dashboard widgets
+// that are genuinely an action (send a broadcast, set a goal) rather than
+// just a number on display.
+function ToolLock({ locked, navigate, label = "Premium tool", children }) {
+  if (!locked) return <>{children}</>;
   return (
     <div className="relative">
-      <div className="pointer-events-none select-none" style={{ filter: "blur(5px)" }}>
-        {children}
-      </div>
-      <div className="absolute inset-0 flex items-start justify-center pt-16 px-4">
+      <div className="opacity-40 pointer-events-none select-none">{children}</div>
+      <div className="absolute inset-0 flex items-center justify-center px-4">
         <button
           onClick={() => navigate({ screen: "plans" })}
-          className="sticky top-24 flex items-center gap-2 bg-white shadow-xl border border-amber-300 rounded-full pl-2.5 pr-4 py-2 hover:shadow-2xl transition"
+          className="flex items-center gap-1.5 bg-white shadow-lg border border-amber-300 rounded-full pl-2 pr-3.5 py-1.5 hover:shadow-xl transition"
         >
-          <span className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0">
-            <Crown size={14} />
+          <span className="w-5 h-5 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0">
+            <Crown size={11} />
           </span>
-          <span className="text-xs font-bold text-stone-900 whitespace-nowrap">Unlock Premium Analytics</span>
+          <span className="text-[11px] font-bold text-stone-900 whitespace-nowrap">{label}</span>
         </button>
       </div>
     </div>
@@ -9013,225 +9198,276 @@ function VendorDashboard({ navigate }) {
           )}
         </div>
 
-        <PremiumGate unlocked={premium} navigate={navigate}>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-            <DashStat icon={Eye} label="Views" value={viewEvents.length.toLocaleString()} delta={pctChange(viewEvents)} />
-            <DashStat icon={Heart} label="New favorites" value={favoriteEvents.length} delta={pctChange(favoriteEvents)} />
-            <DashStat icon={MessageCircle} label="Messages" value={messageEvents.length} delta={pctChange(messageEvents)} />
-            <DashStat icon={Share2} label="Shares" value={shareEvents.length} delta={pctChange(shareEvents)} />
-            <DashStat icon={Star} label="Avg rating" value={count > 0 ? avgRating.toFixed(1) : "—"} sub={`${count} review${count === 1 ? "" : "s"}`} />
-            <DashStat icon={Users} label="Repeat visitors" value={`${repeatStats.pct}%`} sub={`${repeatStats.repeat} of ${repeatStats.total} viewers`} />
+        {!premium && (
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4">
+            <Crown size={14} className="text-amber-600 shrink-0" />
+            <p className="text-xs text-amber-900">
+              You're seeing a preview — a couple of numbers below are blurred and the goal/broadcast tools are locked.{" "}
+              <button onClick={() => navigate({ screen: "plans" })} className="font-bold underline underline-offset-2">Go Premium</button> to unlock everything.
+            </p>
           </div>
+        )}
 
-          <DashPanel title="Views over time" icon={TrendingUp} className="mb-4">
-            <div style={{ width: "100%", height: 190 }}>
-              <ResponsiveContainer>
-                <AreaChart data={viewSeries}>
-                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(viewSeries.length / 8))} />
-                  <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={32} />
-                  <Tooltip />
-                  <Area type="monotone" dataKey="count" stroke="#065f46" fill="#a7f3d0" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+          <DashStat
+            icon={Eye}
+            label="Views"
+            value={viewEvents.length.toLocaleString()}
+            delta={pctChange(viewEvents)}
+            locked={!premium}
+            navigate={navigate}
+            info="How many times shoppers opened your storefront or one of your listings in the selected date range."
+          />
+          <DashStat
+            icon={Heart}
+            label="New favorites"
+            value={favoriteEvents.length}
+            delta={pctChange(favoriteEvents)}
+            info="Shoppers who tapped the heart on your shop or a listing — a strong signal they want to come back."
+          />
+          <DashStat
+            icon={MessageCircle}
+            label="Messages"
+            value={messageEvents.length}
+            delta={pctChange(messageEvents)}
+            locked={!premium}
+            navigate={navigate}
+            info="New conversations shoppers started with you in this range — usually your best sign of real buying intent."
+          />
+          <DashStat
+            icon={Share2}
+            label="Shares"
+            value={shareEvents.length}
+            delta={pctChange(shareEvents)}
+            info="Times someone used the share button on your shop or listings — a rough read on word-of-mouth reach."
+          />
+          <DashStat
+            icon={Star}
+            label="Avg rating"
+            value={count > 0 ? avgRating.toFixed(1) : "—"}
+            sub={`${count} review${count === 1 ? "" : "s"}`}
+            info="Your average star rating across every published review, all-time (not limited to the date range above)."
+          />
+          <DashStat
+            icon={Users}
+            label="Repeat visitors"
+            value={`${repeatStats.pct}%`}
+            sub={`${repeatStats.repeat} of ${repeatStats.total} viewers`}
+            info="The share of your viewers this range who came back and viewed you again on a different day — a loyalty signal."
+          />
+        </div>
+
+        <DashPanel title="Views over time" icon={TrendingUp} className="mb-4" info="Every view of your storefront or a listing, plotted across the date range you picked above. Look for spikes after you post something new.">
+          <div style={{ width: "100%", height: 190 }}>
+            <ResponsiveContainer>
+              <AreaChart data={viewSeries}>
+                <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(viewSeries.length / 8))} />
+                <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={32} />
+                <Tooltip />
+                <Area type="monotone" dataKey="count" stroke="#065f46" fill="#a7f3d0" strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </DashPanel>
+
+        <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <DashPanel title="Keyword search intelligence" icon={Search} info="The top search terms shoppers are typing platform-wide right now — use it to see what's in demand and name your listings to match.">
+            <p className="cs-t11 text-stone-500 mb-2">Platform-wide, this range</p>
+            {trendingSearches.length === 0 ? (
+              <p className="text-sm text-stone-400 py-4 text-center">No searches logged yet in this range.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {trendingSearches.map((t, i) => (
+                  <div key={t.term} className="flex items-center gap-2">
+                    <span className="cs-t11 text-stone-400 w-4">{i + 1}</span>
+                    <span className="text-sm font-semibold text-stone-800 flex-1 truncate">{t.term}</span>
+                    <span className="text-xs font-mono font-bold text-emerald-700">{t.n}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </DashPanel>
 
-          <div className="grid md:grid-cols-2 gap-4 mb-4">
-            <DashPanel title="Keyword search intelligence" icon={Search}>
-              <p className="cs-t11 text-stone-500 mb-2">Platform-wide, this range</p>
-              {trendingSearches.length === 0 ? (
-                <p className="text-sm text-stone-400 py-4 text-center">No searches logged yet in this range.</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {trendingSearches.map((t, i) => (
-                    <div key={t.term} className="flex items-center gap-2">
-                      <span className="cs-t11 text-stone-400 w-4">{i + 1}</span>
-                      <span className="text-sm font-semibold text-stone-800 flex-1 truncate">{t.term}</span>
-                      <span className="text-xs font-mono font-bold text-emerald-700">{t.n}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </DashPanel>
+          <DashPanel title="Favorites over time" icon={Heart} info="How your favorite count has moved over the date range, plus which of your listings are pulling in the most hearts and shares right now.">
+            <div style={{ width: "100%", height: 150 }}>
+              <ResponsiveContainer>
+                <LineChart data={favoriteSeries}>
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(favoriteSeries.length / 6))} />
+                  <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="count" stroke="#b45309" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="cs-t11 text-stone-400 mt-2">Top listings: {leaderboard.top.slice(0, 3).map((p) => p.name).join(", ") || "—"}</p>
+          </DashPanel>
+        </div>
 
-            <DashPanel title="Favorites over time" icon={Heart}>
-              <div style={{ width: "100%", height: 150 }}>
+        <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <DashPanel title="New users by state" icon={UserPlus} info="Where brand-new CropSwap shoppers signed up from during this range — a sense of where the platform is growing.">
+            {usersByState.length === 0 ? (
+              <p className="text-sm text-stone-400 py-4 text-center">No signups in this range.</p>
+            ) : (
+              <div style={{ width: "100%", height: 160 }}>
                 <ResponsiveContainer>
-                  <LineChart data={favoriteSeries}>
-                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(favoriteSeries.length / 6))} />
+                  <BarChart data={usersByState.map((x) => ({ name: x.state, n: x.n }))}>
+                    <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
                     <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
                     <Tooltip />
-                    <Line type="monotone" dataKey="count" stroke="#b45309" strokeWidth={2} dot={false} />
+                    <Bar dataKey="n" fill="#0d9488" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </DashPanel>
+          <DashPanel title="New storefronts by state" icon={Store} info="Where other vendors are opening new storefronts — handy for spotting which states are becoming more competitive.">
+            {newShopsByState.length === 0 ? (
+              <p className="text-sm text-stone-400 py-4 text-center">No new storefronts in this range.</p>
+            ) : (
+              <div style={{ width: "100%", height: 160 }}>
+                <ResponsiveContainer>
+                  <BarChart data={newShopsByState.map((x) => ({ name: x.state, n: x.n }))}>
+                    <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
+                    <Tooltip />
+                    <Bar dataKey="n" fill="#7c3aed" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </DashPanel>
+        </div>
+
+        <DashPanel title="Conversion funnel" icon={Target} className="mb-4" info="How viewers move down the funnel from viewing, to favoriting, to messaging you — each bar shows what percent of viewers made it that far.">
+          <div className="space-y-2">
+            {funnel.map((f) => (
+              <div key={f.label}>
+                <div className="flex items-center justify-between text-xs mb-0.5">
+                  <span className="font-semibold text-stone-700">{f.label}</span>
+                  <span className="font-mono text-stone-500">{f.value} · {f.pct}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
+                  <div className="h-full bg-emerald-700 rounded-full" style={{ width: `${f.pct}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </DashPanel>
+
+        <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4" info="A heatmap of exactly when shoppers view you, broken out by day of week and hour of day — darker squares are busier. Great for timing new posts.">
+          <div className="overflow-x-auto">
+            <div className="inline-grid gap-[2px]" style={{ gridTemplateColumns: "repeat(24, 8px)" }}>
+              {heatmap.map((row, d) =>
+                row.map((v, h) => (
+                  <div
+                    key={`${d}-${h}`}
+                    title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
+                    className="w-2 h-2 rounded-sm"
+                    style={{ backgroundColor: `rgba(6,95,70,${0.08 + 0.85 * (v / heatmapMax)})` }}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+          <p className="cs-t11 text-stone-400 mt-2">Darker = busier. Rows are Sun–Sat, columns are hour of day.</p>
+        </DashPanel>
+
+        <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <DashPanel title="Category benchmarking" icon={Award} info="How your average rating and response time stack up against the platform average from other shops — a quick gut check on where you stand.">
+            <p className="text-sm text-stone-600 mb-1">Your avg rating: <span className="font-bold text-stone-900">{count > 0 ? avgRating.toFixed(2) : "—"}</span></p>
+            <p className="text-sm text-stone-600 mb-1">Platform avg: <span className="font-bold text-stone-900">{platformAvgRating != null ? platformAvgRating.toFixed(2) : "—"}</span></p>
+            {platformAvgRating != null && count > 0 && (
+              <p className={`text-xs font-semibold ${avgRating >= platformAvgRating ? "text-emerald-700" : "text-rose-600"}`}>
+                {avgRating >= platformAvgRating ? "Above" : "Below"} the platform average
+              </p>
+            )}
+            <p className="text-sm text-stone-600 mt-2">
+              Response time:{" "}
+              <span className="font-bold text-stone-900">
+                {respLoading ? "…" : avgResponseMin != null ? (avgResponseMin < 60 ? `${avgResponseMin}m` : `${(avgResponseMin / 60).toFixed(1)}h`) : "No data yet"}
+              </span>
+            </p>
+          </DashPanel>
+          <DashPanel title="Listing leaderboard" icon={Zap} info="Your own listings, ranked by a score of favorites and shares — the top 5 here are your best performers to feature or restock.">
+            <p className="cs-t11 text-stone-400 mb-1">Top performers</p>
+            {leaderboard.top.length === 0 ? (
+              <p className="text-sm text-stone-400 py-2">No listings yet.</p>
+            ) : (
+              leaderboard.top.map((p) => (
+                <div key={p.id} className="flex items-center justify-between text-sm py-0.5">
+                  <span className="truncate flex-1">{p.name}</span>
+                  <span className="cs-t11 font-mono text-emerald-700">♥{p.favoriteCount || 0} · ↗{p.shareCount || 0}</span>
+                </div>
+              ))
+            )}
+          </DashPanel>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <DashPanel title="Review sentiment trend" icon={Star} info="Your running average star rating over time, plus the words that show up most often in reviews shoppers have left you.">
+            {sentimentSeries.length < 2 ? (
+              <p className="text-sm text-stone-400 py-4 text-center">Need a couple more reviews for a trend line.</p>
+            ) : (
+              <div style={{ width: "100%", height: 130 }}>
+                <ResponsiveContainer>
+                  <LineChart data={sentimentSeries}>
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" />
+                    <YAxis domain={[1, 5]} tick={{ fontSize: 10 }} stroke="#a8a29e" width={24} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="rolling" stroke="#b45309" strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-              <p className="cs-t11 text-stone-400 mt-2">Top listings: {leaderboard.top.slice(0, 3).map((p) => p.name).join(", ") || "—"}</p>
-            </DashPanel>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-4 mb-4">
-            <DashPanel title="New users by state" icon={UserPlus}>
-              {usersByState.length === 0 ? (
-                <p className="text-sm text-stone-400 py-4 text-center">No signups in this range.</p>
-              ) : (
-                <div style={{ width: "100%", height: 160 }}>
-                  <ResponsiveContainer>
-                    <BarChart data={usersByState.map((x) => ({ name: x.state, n: x.n }))}>
-                      <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                      <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
-                      <Tooltip />
-                      <Bar dataKey="n" fill="#0d9488" radius={[3, 3, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </DashPanel>
-            <DashPanel title="New storefronts by state" icon={Store}>
-              {newShopsByState.length === 0 ? (
-                <p className="text-sm text-stone-400 py-4 text-center">No new storefronts in this range.</p>
-              ) : (
-                <div style={{ width: "100%", height: 160 }}>
-                  <ResponsiveContainer>
-                    <BarChart data={newShopsByState.map((x) => ({ name: x.state, n: x.n }))}>
-                      <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                      <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
-                      <Tooltip />
-                      <Bar dataKey="n" fill="#7c3aed" radius={[3, 3, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </DashPanel>
-          </div>
-
-          <DashPanel title="Conversion funnel" icon={Target} className="mb-4">
-            <div className="space-y-2">
-              {funnel.map((f) => (
-                <div key={f.label}>
-                  <div className="flex items-center justify-between text-xs mb-0.5">
-                    <span className="font-semibold text-stone-700">{f.label}</span>
-                    <span className="font-mono text-stone-500">{f.value} · {f.pct}%</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
-                    <div className="h-full bg-emerald-700 rounded-full" style={{ width: `${f.pct}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </DashPanel>
-
-          <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4">
-            <div className="overflow-x-auto">
-              <div className="inline-grid gap-[2px]" style={{ gridTemplateColumns: "repeat(24, 8px)" }}>
-                {heatmap.map((row, d) =>
-                  row.map((v, h) => (
-                    <div
-                      key={`${d}-${h}`}
-                      title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
-                      className="w-2 h-2 rounded-sm"
-                      style={{ backgroundColor: `rgba(6,95,70,${0.08 + 0.85 * (v / heatmapMax)})` }}
-                    />
-                  ))
-                )}
+            )}
+            {reviewWordCloud.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {reviewWordCloud.map(([w, n]) => (
+                  <span key={w} className="text-[11px] font-semibold bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">
+                    {w} · {n}
+                  </span>
+                ))}
               </div>
-            </div>
-            <p className="cs-t11 text-stone-400 mt-2">Darker = busier. Rows are Sun–Sat, columns are hour of day.</p>
+            )}
           </DashPanel>
-
-          <div className="grid md:grid-cols-2 gap-4 mb-4">
-            <DashPanel title="Category benchmarking" icon={Award}>
-              <p className="text-sm text-stone-600 mb-1">Your avg rating: <span className="font-bold text-stone-900">{count > 0 ? avgRating.toFixed(2) : "—"}</span></p>
-              <p className="text-sm text-stone-600 mb-1">Platform avg: <span className="font-bold text-stone-900">{platformAvgRating != null ? platformAvgRating.toFixed(2) : "—"}</span></p>
-              {platformAvgRating != null && count > 0 && (
-                <p className={`text-xs font-semibold ${avgRating >= platformAvgRating ? "text-emerald-700" : "text-rose-600"}`}>
-                  {avgRating >= platformAvgRating ? "Above" : "Below"} the platform average
-                </p>
-              )}
-              <p className="text-sm text-stone-600 mt-2">
-                Response time:{" "}
-                <span className="font-bold text-stone-900">
-                  {respLoading ? "…" : avgResponseMin != null ? (avgResponseMin < 60 ? `${avgResponseMin}m` : `${(avgResponseMin / 60).toFixed(1)}h`) : "No data yet"}
-                </span>
-              </p>
-            </DashPanel>
-            <DashPanel title="Listing leaderboard" icon={Zap}>
-              <p className="cs-t11 text-stone-400 mb-1">Top performers</p>
-              {leaderboard.top.length === 0 ? (
-                <p className="text-sm text-stone-400 py-2">No listings yet.</p>
-              ) : (
-                leaderboard.top.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between text-sm py-0.5">
-                    <span className="truncate flex-1">{p.name}</span>
-                    <span className="cs-t11 font-mono text-emerald-700">♥{p.favoriteCount || 0} · ↗{p.shareCount || 0}</span>
-                  </div>
-                ))
-              )}
-            </DashPanel>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-4 mb-4">
-            <DashPanel title="Review sentiment trend" icon={Star}>
-              {sentimentSeries.length < 2 ? (
-                <p className="text-sm text-stone-400 py-4 text-center">Need a couple more reviews for a trend line.</p>
-              ) : (
-                <div style={{ width: "100%", height: 130 }}>
-                  <ResponsiveContainer>
-                    <LineChart data={sentimentSeries}>
-                      <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                      <YAxis domain={[1, 5]} tick={{ fontSize: 10 }} stroke="#a8a29e" width={24} />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="rolling" stroke="#b45309" strokeWidth={2} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
+          <DashPanel title="Where your engagement comes from" icon={MapPin} info="The cities generating the most views and favorites for you this range — useful for knowing where your customer base is actually coming from.">
+            {topCities.length === 0 ? (
+              <p className="text-sm text-stone-400 py-4 text-center">Not enough location data yet.</p>
+            ) : (
+              topCities.map((c) => (
+                <div key={c.place} className="flex items-center justify-between text-sm py-0.5">
+                  <span className="truncate flex-1">{c.place}</span>
+                  <span className="cs-t11 font-mono text-stone-500">{c.n}</span>
                 </div>
-              )}
-              {reviewWordCloud.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {reviewWordCloud.map(([w, n]) => (
-                    <span key={w} className="text-[11px] font-semibold bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">
-                      {w} · {n}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </DashPanel>
-            <DashPanel title="Where your engagement comes from" icon={MapPin}>
-              {topCities.length === 0 ? (
-                <p className="text-sm text-stone-400 py-4 text-center">Not enough location data yet.</p>
-              ) : (
-                topCities.map((c) => (
-                  <div key={c.place} className="flex items-center justify-between text-sm py-0.5">
-                    <span className="truncate flex-1">{c.place}</span>
-                    <span className="cs-t11 font-mono text-stone-500">{c.n}</span>
-                  </div>
-                ))
-              )}
-            </DashPanel>
-          </div>
+              ))
+            )}
+          </DashPanel>
+        </div>
 
-          <div className="grid md:grid-cols-2 gap-4 mb-4">
-            <DashPanel title="This week's digest" icon={Calendar}>
-              <ul className="text-sm text-stone-700 space-y-1">
-                <li>{digest.views} views</li>
-                <li>
-                  {digest.favorites} new favorite{digest.favorites === 1 ? "" : "s"}
-                  {digest.favoritesPrior ? ` (${digest.favorites >= digest.favoritesPrior ? "+" : ""}${digest.favorites - digest.favoritesPrior} vs last week)` : ""}
-                </li>
-                <li>{digest.reviews} new review{digest.reviews === 1 ? "" : "s"}</li>
-                {digest.topSearchThisWeek && <li>Trending search: "{digest.topSearchThisWeek}"</li>}
-              </ul>
-            </DashPanel>
-            <DashPanel
-              title="Monthly goal"
-              icon={Target}
-              right={
-                <select value={goalMetric} onChange={(e) => setGoalMetric(e.target.value)} className="text-[11px] border border-stone-200 rounded px-1 py-0.5">
-                  <option value="favorites">Favorites</option>
-                  <option value="views">Views</option>
-                  <option value="messages">Messages</option>
-                </select>
-              }
-            >
+        <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <DashPanel title="This week's digest" icon={Calendar} info="A quick recap of the last 7 days — views, new favorites (vs. the week before), new reviews, and this week's top search term.">
+            <ul className="text-sm text-stone-700 space-y-1">
+              <li>{digest.views} views</li>
+              <li>
+                {digest.favorites} new favorite{digest.favorites === 1 ? "" : "s"}
+                {digest.favoritesPrior ? ` (${digest.favorites >= digest.favoritesPrior ? "+" : ""}${digest.favorites - digest.favoritesPrior} vs last week)` : ""}
+              </li>
+              <li>{digest.reviews} new review{digest.reviews === 1 ? "" : "s"}</li>
+              {digest.topSearchThisWeek && <li>Trending search: "{digest.topSearchThisWeek}"</li>}
+            </ul>
+          </DashPanel>
+          <DashPanel
+            title="Monthly goal"
+            icon={Target}
+            info="Set a target for favorites, views, or messages this calendar month and track your progress toward it with the bar below."
+            right={
+              <select value={goalMetric} onChange={(e) => setGoalMetric(e.target.value)} disabled={!premium} className="text-[11px] border border-stone-200 rounded px-1 py-0.5 disabled:opacity-40">
+                <option value="favorites">Favorites</option>
+                <option value="views">Views</option>
+                <option value="messages">Messages</option>
+              </select>
+            }
+          >
+            <ToolLock locked={!premium} navigate={navigate} label="Premium — set a monthly goal">
               <div className="flex items-center gap-2 mb-2">
                 <input type="number" value={goalTarget} onChange={(e) => setGoalTarget(e.target.value)} className="w-20 border border-stone-200 rounded-lg px-2 py-1 text-sm" />
                 <button onClick={saveGoal} className="text-xs font-semibold text-emerald-800">Set goal</button>
@@ -9240,13 +9476,15 @@ function VendorDashboard({ navigate }) {
                 <div className="h-full bg-emerald-700 rounded-full" style={{ width: `${Math.min(100, Math.round((goalProgress / Math.max(1, goalTargetSaved)) * 100))}%` }} />
               </div>
               <p className="cs-t11 text-stone-500">{goalProgress} / {goalTargetSaved} this month ({goalMetricSaved})</p>
-            </DashPanel>
-          </div>
+            </ToolLock>
+          </DashPanel>
+        </div>
 
-          <DashPanel title="Mailing list & mass messages" icon={Megaphone} className="mb-4">
-            <p className="cs-t11 text-stone-400 mb-3">
-              {mailing.list.length} subscriber{mailing.list.length === 1 ? "" : "s"} — anyone who messages you gets added automatically. Broadcasts deliver as an in-app message + notification, not an outside email.
-            </p>
+        <DashPanel title="Mailing list & mass messages" icon={Megaphone} className="mb-4" info="Everyone who has ever messaged you first joins your mailing list automatically. Send them all one broadcast message at once — delivered as an in-app message + notification.">
+          <p className="cs-t11 text-stone-400 mb-3">
+            {mailing.list.length} subscriber{mailing.list.length === 1 ? "" : "s"} — anyone who messages you gets added automatically. Broadcasts deliver as an in-app message + notification, not an outside email.
+          </p>
+          <ToolLock locked={!premium} navigate={navigate} label="Premium — send mass messages">
             <MassMessageComposer me={me} shop={shop} subscribers={mailing.list} onSent={mailing.reload} showToast={showToast} />
             {mailing.list.length > 0 && (
               <div className="mt-3 pt-3 border-t border-stone-100 space-y-1 max-h-40 overflow-y-auto">
@@ -9262,8 +9500,8 @@ function VendorDashboard({ navigate }) {
                 ))}
               </div>
             )}
-          </DashPanel>
-        </PremiumGate>
+          </ToolLock>
+        </DashPanel>
       </div>
     </div>
   );
@@ -9400,13 +9638,40 @@ function StoreScreen({ navigate }) {
    well, what animals do well) and three are general market-farming reading.
 ============================================================================ */
 const LEARN_TOPICS = [
-  { id: "planting", label: "Planting times", icon: Calendar, locationAware: true, blurb: "Best planting windows for your state" },
-  { id: "crops", label: "What grows well here", icon: Sprout, locationAware: true, blurb: "Crops suited to your climate" },
-  { id: "animals", label: "Animals that do well here", icon: PawPrint, locationAware: true, blurb: "Livestock and poultry for your area" },
-  { id: "companions", label: "Companion planting pairs", icon: Link2, locationAware: false, blurb: "What to plant together — and what to avoid" },
-  { id: "pricing", label: "Pricing your produce fairly", icon: DollarSign, locationAware: false, blurb: "Simple ways to price your goods" },
-  { id: "preserving", label: "Preserving your harvest", icon: Archive, locationAware: false, blurb: "Canning, drying, and storage basics" },
+  { id: "planting", label: "Planting times", icon: Calendar, locationAware: true, blurb: "Best planting windows for your state", section: "Growing in your area", hero: { url: LEARN_PHOTO("7728082"), alt: "A farmer planting seedlings into soil" } },
+  { id: "crops", label: "What grows well here", icon: Sprout, locationAware: true, blurb: "Crops suited to your climate", section: "Growing in your area", hero: { url: LEARN_PHOTO("2255924"), alt: "A colorful basket of assorted vegetables" } },
+  { id: "animals", label: "Animals that do well here", icon: PawPrint, locationAware: true, blurb: "Livestock and poultry for your area", section: "Growing in your area", hero: { url: LEARN_PHOTO("5210298"), alt: "A herd of goats grazing in a pasture" } },
+  { id: "bugs", label: "Good bugs for your garden", icon: Bug, locationAware: false, blurb: "Meet the field guide of helpful garden insects", section: "Field guide" },
+  { id: "companions", label: "Companion planting pairs", icon: Link2, locationAware: false, blurb: "What to plant together — and what to avoid", section: "Field guide" },
+  { id: "soil", label: "Composting & soil health", icon: Recycle, locationAware: false, blurb: "Build the soil everything else depends on", section: "Field guide" },
+  { id: "pricing", label: "Pricing your produce fairly", icon: DollarSign, locationAware: false, blurb: "Simple ways to price your goods", section: "Running your stand" },
+  { id: "preserving", label: "Preserving your harvest", icon: Archive, locationAware: false, blurb: "Canning, drying, and storage basics", section: "Running your stand" },
+  { id: "marketing", label: "Marketing your stand", icon: Megaphone, locationAware: false, blurb: "How to present, photograph, and sell what you grow", section: "Running your stand" },
 ];
+
+// Small rounded banner photo shared by every Learn panel — a picture up top,
+// a graceful gradient fallback if it fails to load, so the library always
+// feels alive without ever showing a broken image.
+function LearnHero({ src, alt }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  if (!src || failed) {
+    return <div className="w-full h-36 sm:h-44 rounded-xl mb-4 bg-gradient-to-br from-emerald-100 via-amber-50 to-emerald-50" />;
+  }
+  return (
+    <div className="w-full h-36 sm:h-44 rounded-xl mb-4 overflow-hidden bg-stone-100">
+      <img
+        src={src}
+        alt={alt || ""}
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+        className="w-full h-full object-cover"
+      />
+    </div>
+  );
+}
 
 function LearnLocationPanel({ topic }) {
   const { me } = useApp();
@@ -9414,9 +9679,11 @@ function LearnLocationPanel({ topic }) {
   const guess = (homeLoc.state || "").toUpperCase().slice(0, 2);
   const [stateCode, setStateCode] = useState(stateInfo(guess) ? guess : "");
   const zone = zoneInfoFor(stateCode);
+  const topicMeta = LEARN_TOPICS.find((t) => t.id === topic);
 
   return (
     <div>
+      <LearnHero src={topicMeta?.hero?.url} alt={topicMeta?.hero?.alt} />
       <div className="bg-white border border-stone-200 rounded-xl p-4 mb-5">
         <label className="block cs-t11 font-semibold text-stone-500 mb-1.5">Show this for</label>
         <select
@@ -9429,6 +9696,7 @@ function LearnLocationPanel({ topic }) {
             <option key={s.code} value={s.code}>{s.name}</option>
           ))}
         </select>
+        <p className="cs-t10 text-stone-400 mt-1.5">Defaults to your home location — change it any time to see how another state compares.</p>
       </div>
 
       {!zone ? (
@@ -9488,6 +9756,7 @@ function LearnStaticPanel({ topic }) {
     const data = LEARN_STATIC.companions;
     return (
       <div>
+        <LearnHero src={data.hero?.url} alt={data.hero?.alt} />
         <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
         <p className="cs-t11 font-bold text-emerald-800 uppercase mb-2">Good pairings</p>
         <div className="flex flex-col gap-2.5 mb-5">
@@ -9514,6 +9783,7 @@ function LearnStaticPanel({ topic }) {
     const data = LEARN_STATIC.pricing;
     return (
       <div>
+        <LearnHero src={data.hero?.url} alt={data.hero?.alt} />
         <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
         <div className="flex flex-col gap-3">
           {data.sections.map((s, i) => (
@@ -9526,15 +9796,34 @@ function LearnStaticPanel({ topic }) {
       </div>
     );
   }
-  const data = LEARN_STATIC.preserving;
+  if (topic === "preserving") {
+    const data = LEARN_STATIC.preserving;
+    return (
+      <div>
+        <LearnHero src={data.hero?.url} alt={data.hero?.alt} />
+        <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
+        <div className="flex flex-col gap-3">
+          {data.methods.map((m, i) => (
+            <div key={i} className="border border-stone-200 rounded-xl p-3.5">
+              <p className="text-sm font-semibold text-stone-800 mb-1">{m.name}</p>
+              <p className="text-sm text-stone-500">{m.body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  // "soil" and "marketing" share the same simple sections layout.
+  const data = LEARN_STATIC[topic];
   return (
     <div>
+      <LearnHero src={data.hero?.url} alt={data.hero?.alt} />
       <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
       <div className="flex flex-col gap-3">
-        {data.methods.map((m, i) => (
+        {data.sections.map((s, i) => (
           <div key={i} className="border border-stone-200 rounded-xl p-3.5">
-            <p className="text-sm font-semibold text-stone-800 mb-1">{m.name}</p>
-            <p className="text-sm text-stone-500">{m.body}</p>
+            <p className="text-sm font-semibold text-stone-800 mb-1">{s.title}</p>
+            <p className="text-sm text-stone-500">{s.body}</p>
           </div>
         ))}
       </div>
@@ -9542,32 +9831,132 @@ function LearnStaticPanel({ topic }) {
   );
 }
 
+// One "good bug" as a medium-sized popup — a picture, quick facts, why it
+// helps, how to keep it around, and what preys on it. Reuses the app's
+// standard Modal, which renders at a comfortable medium max-width.
+function BugModal({ bug, onClose }) {
+  if (!bug) return null;
+  return (
+    <Modal open={!!bug} onClose={onClose} labelledBy="bug-title">
+      <div className="w-full h-44 sm:h-56 bg-stone-100 overflow-hidden rounded-t-3xl sm:rounded-t-3xl">
+        <img src={bug.photo.url} alt={bug.photo.alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+      </div>
+      <div className="p-5">
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <div>
+            <h2 id="bug-title" className="text-lg font-bold text-stone-900" style={displayFont}>{bug.name}</h2>
+            <p className="text-sm text-emerald-700 font-semibold">{bug.tagline}</p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="shrink-0 text-stone-400 hover:text-stone-600"><X size={20} /></button>
+        </div>
+
+        <p className="text-xs font-bold text-stone-400 uppercase mt-4 mb-2">Facts</p>
+        <ul className="flex flex-col gap-1.5 mb-4">
+          {bug.facts.map((f, i) => (
+            <li key={i} className="text-sm text-stone-600 flex items-start gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
+              {f}
+            </li>
+          ))}
+        </ul>
+
+        <p className="text-xs font-bold text-stone-400 uppercase mb-1">Why it's a good bug</p>
+        <p className="text-sm text-stone-600 mb-4">{bug.whyGood}</p>
+
+        <p className="text-xs font-bold text-emerald-800 uppercase mb-1">How to keep them around</p>
+        <p className="text-sm text-stone-600 mb-4">{bug.keepAlive}</p>
+
+        <p className="text-xs font-bold text-rose-700 uppercase mb-1">Watch out for these predators</p>
+        <p className="text-sm text-stone-600">{bug.predators}</p>
+      </div>
+    </Modal>
+  );
+}
+
+// The "good bugs" field guide — a tappable grid of cards, each opening a
+// medium popup with the full write-up. Purely a benevolent-nature-photos
+// section, on purpose, per the app's standing no-scary-imagery rule.
+function LearnBugsPanel() {
+  const [openBug, setOpenBug] = useState(null);
+  return (
+    <div>
+      <p className="text-sm text-stone-500 mb-4">
+        Every garden has a crew of insects working for you, free of charge. Get to know them so you don't mistake a helper for a pest — tap any card for the full write-up, including how to keep them around and what preys on them.
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        {GOOD_BUGS.map((bug) => (
+          <button
+            key={bug.id}
+            onClick={() => setOpenBug(bug)}
+            className="text-left border border-stone-200 rounded-xl overflow-hidden bg-white hover:shadow-md transition"
+          >
+            <div className="w-full h-24 bg-stone-100 overflow-hidden">
+              <img src={bug.photo.url} alt={bug.photo.alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+            </div>
+            <div className="p-2.5">
+              <p className="text-sm font-bold text-stone-900 leading-tight">{bug.name}</p>
+              <p className="cs-t10 text-emerald-700 font-semibold mt-0.5">{bug.tagline}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+      <BugModal bug={openBug} onClose={() => setOpenBug(null)} />
+    </div>
+  );
+}
+
 function LearnScreen({ navigate, topic }) {
   const current = LEARN_TOPICS.find((t) => t.id === topic) || LEARN_TOPICS[0];
+  const sections = useMemo(() => {
+    const order = [];
+    LEARN_TOPICS.forEach((t) => {
+      let bucket = order.find((s) => s.title === t.section);
+      if (!bucket) {
+        bucket = { title: t.section, items: [] };
+        order.push(bucket);
+      }
+      bucket.items.push(t);
+    });
+    return order;
+  }, []);
+
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
       <div className="max-w-2xl mx-auto p-4">
         <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
           <ArrowLeft size={15} /> Back
         </button>
-        <div className="flex items-center gap-2.5 mb-1">
+        <div className="flex items-center gap-2 mb-1">
+          <BookOpen size={18} className="text-emerald-800" />
+          <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide">The CropSwap Library</p>
+        </div>
+        <div className="flex items-center gap-2.5 mb-4">
           <span className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-800 shrink-0">
             <current.icon size={18} />
           </span>
           <h1 className="text-xl font-bold text-stone-900" style={displayFont}>{current.label}</h1>
         </div>
-        <div className="flex flex-wrap gap-1.5 my-4">
-          {LEARN_TOPICS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => navigate({ screen: "learn", topic: t.id })}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${t.id === current.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-600"}`}
-            >
-              {t.label}
-            </button>
+
+        <div className="flex flex-col gap-3 mb-5">
+          {sections.map((sec) => (
+            <div key={sec.title}>
+              <p className="cs-t10 font-bold text-stone-400 uppercase mb-1.5">{sec.title}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {sec.items.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => navigate({ screen: "learn", topic: t.id })}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${t.id === current.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-600"}`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
-        {current.locationAware ? <LearnLocationPanel topic={current.id} /> : <LearnStaticPanel topic={current.id} />}
+
+        {current.id === "bugs" ? <LearnBugsPanel /> : current.locationAware ? <LearnLocationPanel topic={current.id} /> : <LearnStaticPanel topic={current.id} />}
       </div>
     </div>
   );
