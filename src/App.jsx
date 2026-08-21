@@ -1758,7 +1758,18 @@ const AVATAR_MAX_DIM = 320;       // avatars are shown small
 const PHOTO_TARGET_BYTES = 320000; // stay well inside the per-key ceiling
 
 function isSupportedImage(file) {
-  return !!file && /^image\/(jpeg|jpg|png|webp|gif|heic|heif)$/i.test(file.type || "");
+  if (!file) return false;
+  const type = (file.type || "").toLowerCase();
+  // A photo taken with the device camera (via the capture-attribute file
+  // input) sometimes comes back from the OS with no MIME type set at all —
+  // a known gap in several mobile browsers — which made every fresh camera
+  // shot get silently rejected right here while the exact same photo,
+  // picked from the library instead, arrived with its type set and worked
+  // fine. Anything already labeled image/* is trusted outright; a missing
+  // label falls back to the file extension rather than being turned away.
+  if (type.startsWith("image/")) return true;
+  if (type) return false;
+  return /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(file.name || "");
 }
 
 function dataUrlBytes(dataUrl) {
@@ -4161,6 +4172,9 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
             placeholder="Search"
             className="bg-transparent outline-none text-sm w-full min-w-0 text-stone-800 placeholder-stone-400"
             aria-label="Search listings and shops"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
           />
           {globalSearch && (
             <button onClick={() => setGlobalSearch("")} aria-label="Clear search" className="shrink-0 text-stone-400 hover:text-stone-600">
@@ -4977,15 +4991,103 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
+  // Two-finger pinch and double-tap, layered on top of the single-finger pan
+  // above. Pointer Events don't group multiple fingers into a gesture on
+  // their own, so every active pointer is tracked by id; once a second one
+  // lands, distance between the two fingers drives zoom instead of pan, and
+  // the point the map zooms toward (rather than just its center) is kept
+  // under the fingers/tap the same way scroll-to-zoom-at-cursor works on
+  // desktop maps.
+  const pointersRef = useRef(new Map());
+  const pinchRef = useRef(null);
+  const downPosRef = useRef(null);
+  const tapRef = useRef({ time: 0, x: 0, y: 0 });
+
+  const toLocalPoint = (clientX, clientY) => {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    return rect ? { x: clientX - rect.left, y: clientY - rect.top } : { x: clientX, y: clientY };
+  };
+  const screenToLngLat = (x, y) => ({
+    lng: worldXToLng(originX + x, zoom),
+    lat: worldYToLat(originY + y, zoom),
+  });
+  const zoomTowardScreenPoint = (screenX, screenY, targetZoomRaw) => {
+    const targetZoom = clamp(Math.round(targetZoomRaw), MIN_ZOOM, MAX_ZOOM);
+    const anchor = screenToLngLat(screenX, screenY);
+    const nx = lngToWorldX(anchor.lng, targetZoom) - screenX + size.width / 2;
+    const ny = latToWorldY(anchor.lat, targetZoom) - screenY + size.height / 2;
+    setCenter({ lat: worldYToLat(ny, targetZoom), lng: worldXToLng(nx, targetZoom) });
+    setZoom(targetZoom);
+  };
+
+  const handlePointerDown = (e) => {
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size === 1) {
+      downPosRef.current = { x: e.clientX, y: e.clientY };
+      beginPan(e);
+    } else if (pointersRef.current.size === 2) {
+      dragRef.current = null;
+      downPosRef.current = null;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch (err) {
+        /* pinch still works via mouse events */
+      }
+      const pts = Array.from(pointersRef.current.values());
+      pinchRef.current = { startDist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1, startZoom: zoom };
+    }
+  };
+  const handlePointerMove = (e) => {
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size >= 2 && pinchRef.current) {
+      const pts = Array.from(pointersRef.current.values()).slice(0, 2);
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      const mid = toLocalPoint((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2);
+      zoomTowardScreenPoint(mid.x, mid.y, pinchRef.current.startZoom + Math.log2(dist / pinchRef.current.startDist));
+      return;
+    }
+    pan(e);
+  };
+  const handlePointerUp = (e) => {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size !== 0) return;
+    endPan(e);
+    if (downPosRef.current) {
+      const moved = Math.hypot(e.clientX - downPosRef.current.x, e.clientY - downPosRef.current.y);
+      if (moved < 8) {
+        const now = Date.now();
+        const local = toLocalPoint(e.clientX, e.clientY);
+        const last = tapRef.current;
+        if (now - last.time < 320 && Math.hypot(local.x - last.x, local.y - last.y) < 40) {
+          zoomTowardScreenPoint(local.x, local.y, zoom + 1);
+          tapRef.current = { time: 0, x: 0, y: 0 };
+        } else {
+          tapRef.current = { time: now, x: local.x, y: local.y };
+        }
+      }
+    }
+    downPosRef.current = null;
+  };
+  const handlePointerCancel = (e) => {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size === 0) {
+      endPan(e);
+      downPosRef.current = null;
+    }
+  };
+
   return (
     <div>
       <div className="relative">
       <div
         ref={wrapRef}
-        onPointerDown={beginPan}
-        onPointerMove={pan}
-        onPointerUp={endPan}
-        onPointerCancel={endPan}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
         className="relative w-full cs-map rounded-2xl overflow-hidden border border-stone-200 cs-touch-none select-none cursor-grab active:cursor-grabbing"
       >
         <div className="absolute inset-0 pointer-events-none" style={{ background: "#e8eaf0" }} aria-hidden="true">
@@ -7057,7 +7159,15 @@ function FavoritesView() {
         <div className="flex items-center gap-2 mb-4">
           <div className="flex-1 flex items-center gap-2 bg-stone-100 rounded-full px-3.5 py-2.5">
             <Search size={16} className="text-stone-400" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search your favorites" className="bg-transparent outline-none text-sm w-full" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search your favorites"
+              className="bg-transparent outline-none text-sm w-full"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
           </div>
           <button onClick={() => setFilterOpen(true)}><IconButton icon={Filter} label="Filters" /></button>
         </div>
@@ -8479,7 +8589,15 @@ function VendorDashboard({ navigate }) {
           </div>
           <div className="flex items-center gap-1.5 border border-stone-200 rounded-full px-3 py-1.5 bg-white">
             <Search size={13} className="text-stone-400" />
-            <input value={lookupTerm} onChange={(e) => setLookupTerm(e.target.value)} placeholder="Look up a search term…" className="text-xs outline-none w-40" />
+            <input
+              value={lookupTerm}
+              onChange={(e) => setLookupTerm(e.target.value)}
+              placeholder="Look up a search term…"
+              className="text-xs outline-none w-40"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
           </div>
           {lookupTerm.trim() && (
             <span className="text-xs font-semibold text-stone-600">"{lookupTerm.trim()}" searched {lookupCount ?? 0}× in this range</span>
