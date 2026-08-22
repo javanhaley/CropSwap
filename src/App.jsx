@@ -6,7 +6,7 @@ import {
   Home, Package, Filter, GripVertical, BadgeCheck, AlertCircle,
   LayoutGrid, UserPlus, ShoppingBag, Sparkles, ShieldAlert, Bookmark,
   Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
-  Sprout, PawPrint, BookOpen, Link2, DollarSign, Archive, Bug, Recycle,
+  Bug,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -1431,62 +1431,59 @@ function nearbyShops(shop, allShops, limit = 4) {
    A state picker plus enough of an approximate location per state to place a
    new shop somewhere real on the map immediately, rather than leaving it
    sitting on a placeholder point until someone happens to edit it by hand.
-   "zone" is a coarse climate band, used by the growing-guide content in the
-   Learn tab — nowhere near USDA-precise, just enough to say "your winters are
-   mild" vs "your winters are hard" for a given state.
 ============================================================================ */
 const US_STATES = [
-  { code: "AL", name: "Alabama", lat: 32.8, lng: -86.8, zone: "subtropical" },
-  { code: "AK", name: "Alaska", lat: 64.2, lng: -149.4, zone: "cold" },
-  { code: "AZ", name: "Arizona", lat: 34.2, lng: -111.9, zone: "hot_arid" },
-  { code: "AR", name: "Arkansas", lat: 34.9, lng: -92.4, zone: "warm" },
-  { code: "CA", name: "California", lat: 37.2, lng: -119.4, zone: "pacific" },
-  { code: "CO", name: "Colorado", lat: 39.0, lng: -105.5, zone: "temperate" },
-  { code: "CT", name: "Connecticut", lat: 41.6, lng: -72.7, zone: "temperate" },
-  { code: "DE", name: "Delaware", lat: 39.0, lng: -75.5, zone: "temperate" },
-  { code: "DC", name: "District of Columbia", lat: 38.9, lng: -77.0, zone: "temperate" },
-  { code: "FL", name: "Florida", lat: 28.6, lng: -82.4, zone: "subtropical" },
-  { code: "GA", name: "Georgia", lat: 32.6, lng: -83.4, zone: "subtropical" },
-  { code: "HI", name: "Hawaii", lat: 20.3, lng: -156.3, zone: "subtropical" },
-  { code: "ID", name: "Idaho", lat: 44.4, lng: -114.6, zone: "cold" },
-  { code: "IL", name: "Illinois", lat: 40.0, lng: -89.2, zone: "temperate" },
-  { code: "IN", name: "Indiana", lat: 39.9, lng: -86.3, zone: "temperate" },
-  { code: "IA", name: "Iowa", lat: 42.0, lng: -93.5, zone: "temperate" },
-  { code: "KS", name: "Kansas", lat: 38.5, lng: -98.4, zone: "temperate" },
-  { code: "KY", name: "Kentucky", lat: 37.5, lng: -85.3, zone: "warm" },
-  { code: "LA", name: "Louisiana", lat: 31.0, lng: -92.0, zone: "subtropical" },
-  { code: "ME", name: "Maine", lat: 45.4, lng: -69.2, zone: "cold" },
-  { code: "MD", name: "Maryland", lat: 39.0, lng: -76.7, zone: "temperate" },
-  { code: "MA", name: "Massachusetts", lat: 42.3, lng: -71.8, zone: "temperate" },
-  { code: "MI", name: "Michigan", lat: 44.3, lng: -85.4, zone: "temperate" },
-  { code: "MN", name: "Minnesota", lat: 46.3, lng: -94.3, zone: "cold" },
-  { code: "MS", name: "Mississippi", lat: 32.7, lng: -89.7, zone: "subtropical" },
-  { code: "MO", name: "Missouri", lat: 38.5, lng: -92.5, zone: "temperate" },
-  { code: "MT", name: "Montana", lat: 47.0, lng: -109.6, zone: "cold" },
-  { code: "NE", name: "Nebraska", lat: 41.5, lng: -99.8, zone: "temperate" },
-  { code: "NV", name: "Nevada", lat: 39.3, lng: -116.6, zone: "hot_arid" },
-  { code: "NH", name: "New Hampshire", lat: 43.7, lng: -71.6, zone: "cold" },
-  { code: "NJ", name: "New Jersey", lat: 40.1, lng: -74.7, zone: "temperate" },
-  { code: "NM", name: "New Mexico", lat: 34.4, lng: -106.1, zone: "warm" },
-  { code: "NY", name: "New York", lat: 42.9, lng: -75.5, zone: "temperate" },
-  { code: "NC", name: "North Carolina", lat: 35.6, lng: -79.4, zone: "warm" },
-  { code: "ND", name: "North Dakota", lat: 47.5, lng: -100.5, zone: "cold" },
-  { code: "OH", name: "Ohio", lat: 40.3, lng: -82.8, zone: "temperate" },
-  { code: "OK", name: "Oklahoma", lat: 35.5, lng: -97.5, zone: "warm" },
-  { code: "OR", name: "Oregon", lat: 43.9, lng: -120.6, zone: "pacific" },
-  { code: "PA", name: "Pennsylvania", lat: 40.9, lng: -77.7, zone: "temperate" },
-  { code: "RI", name: "Rhode Island", lat: 41.7, lng: -71.5, zone: "temperate" },
-  { code: "SC", name: "South Carolina", lat: 33.9, lng: -80.9, zone: "subtropical" },
-  { code: "SD", name: "South Dakota", lat: 44.4, lng: -100.2, zone: "cold" },
-  { code: "TN", name: "Tennessee", lat: 35.9, lng: -86.3, zone: "warm" },
-  { code: "TX", name: "Texas", lat: 31.5, lng: -99.3, zone: "subtropical" },
-  { code: "UT", name: "Utah", lat: 39.3, lng: -111.7, zone: "temperate" },
-  { code: "VT", name: "Vermont", lat: 44.0, lng: -72.7, zone: "cold" },
-  { code: "VA", name: "Virginia", lat: 37.5, lng: -78.8, zone: "warm" },
-  { code: "WA", name: "Washington", lat: 47.4, lng: -120.5, zone: "pacific" },
-  { code: "WV", name: "West Virginia", lat: 38.6, lng: -80.6, zone: "temperate" },
-  { code: "WI", name: "Wisconsin", lat: 44.6, lng: -89.9, zone: "cold" },
-  { code: "WY", name: "Wyoming", lat: 43.0, lng: -107.5, zone: "cold" },
+  { code: "AL", name: "Alabama", lat: 32.8, lng: -86.8 },
+  { code: "AK", name: "Alaska", lat: 64.2, lng: -149.4 },
+  { code: "AZ", name: "Arizona", lat: 34.2, lng: -111.9 },
+  { code: "AR", name: "Arkansas", lat: 34.9, lng: -92.4 },
+  { code: "CA", name: "California", lat: 37.2, lng: -119.4 },
+  { code: "CO", name: "Colorado", lat: 39.0, lng: -105.5 },
+  { code: "CT", name: "Connecticut", lat: 41.6, lng: -72.7 },
+  { code: "DE", name: "Delaware", lat: 39.0, lng: -75.5 },
+  { code: "DC", name: "District of Columbia", lat: 38.9, lng: -77.0 },
+  { code: "FL", name: "Florida", lat: 28.6, lng: -82.4 },
+  { code: "GA", name: "Georgia", lat: 32.6, lng: -83.4 },
+  { code: "HI", name: "Hawaii", lat: 20.3, lng: -156.3 },
+  { code: "ID", name: "Idaho", lat: 44.4, lng: -114.6 },
+  { code: "IL", name: "Illinois", lat: 40.0, lng: -89.2 },
+  { code: "IN", name: "Indiana", lat: 39.9, lng: -86.3 },
+  { code: "IA", name: "Iowa", lat: 42.0, lng: -93.5 },
+  { code: "KS", name: "Kansas", lat: 38.5, lng: -98.4 },
+  { code: "KY", name: "Kentucky", lat: 37.5, lng: -85.3 },
+  { code: "LA", name: "Louisiana", lat: 31.0, lng: -92.0 },
+  { code: "ME", name: "Maine", lat: 45.4, lng: -69.2 },
+  { code: "MD", name: "Maryland", lat: 39.0, lng: -76.7 },
+  { code: "MA", name: "Massachusetts", lat: 42.3, lng: -71.8 },
+  { code: "MI", name: "Michigan", lat: 44.3, lng: -85.4 },
+  { code: "MN", name: "Minnesota", lat: 46.3, lng: -94.3 },
+  { code: "MS", name: "Mississippi", lat: 32.7, lng: -89.7 },
+  { code: "MO", name: "Missouri", lat: 38.5, lng: -92.5 },
+  { code: "MT", name: "Montana", lat: 47.0, lng: -109.6 },
+  { code: "NE", name: "Nebraska", lat: 41.5, lng: -99.8 },
+  { code: "NV", name: "Nevada", lat: 39.3, lng: -116.6 },
+  { code: "NH", name: "New Hampshire", lat: 43.7, lng: -71.6 },
+  { code: "NJ", name: "New Jersey", lat: 40.1, lng: -74.7 },
+  { code: "NM", name: "New Mexico", lat: 34.4, lng: -106.1 },
+  { code: "NY", name: "New York", lat: 42.9, lng: -75.5 },
+  { code: "NC", name: "North Carolina", lat: 35.6, lng: -79.4 },
+  { code: "ND", name: "North Dakota", lat: 47.5, lng: -100.5 },
+  { code: "OH", name: "Ohio", lat: 40.3, lng: -82.8 },
+  { code: "OK", name: "Oklahoma", lat: 35.5, lng: -97.5 },
+  { code: "OR", name: "Oregon", lat: 43.9, lng: -120.6 },
+  { code: "PA", name: "Pennsylvania", lat: 40.9, lng: -77.7 },
+  { code: "RI", name: "Rhode Island", lat: 41.7, lng: -71.5 },
+  { code: "SC", name: "South Carolina", lat: 33.9, lng: -80.9 },
+  { code: "SD", name: "South Dakota", lat: 44.4, lng: -100.2 },
+  { code: "TN", name: "Tennessee", lat: 35.9, lng: -86.3 },
+  { code: "TX", name: "Texas", lat: 31.5, lng: -99.3 },
+  { code: "UT", name: "Utah", lat: 39.3, lng: -111.7 },
+  { code: "VT", name: "Vermont", lat: 44.0, lng: -72.7 },
+  { code: "VA", name: "Virginia", lat: 37.5, lng: -78.8 },
+  { code: "WA", name: "Washington", lat: 47.4, lng: -120.5 },
+  { code: "WV", name: "West Virginia", lat: 38.6, lng: -80.6 },
+  { code: "WI", name: "Wisconsin", lat: 44.6, lng: -89.9 },
+  { code: "WY", name: "Wyoming", lat: 43.0, lng: -107.5 },
 ];
 function stateInfo(code) {
   return US_STATES.find((s) => s.code === (code || "").toUpperCase()) || null;
@@ -1508,367 +1505,6 @@ function stateApproxLatLng(code, seed) {
   const { dLat, dLng } = jitterFromSeed(seed, 0.45);
   return { lat: st.lat + dLat, lng: st.lng + dLng };
 }
-
-/* ============================================================================
-   SECTION 3c: GROWING-GUIDE CONTENT (Learn tab)
-   Keyed by the coarse "zone" band on each US_STATES entry. General enough to
-   be true across a whole climate band rather than precise to one county —
-   plenty for "roughly when do I plant" and "what tends to do well here."
-============================================================================ */
-const ZONE_INFO = {
-  cold: {
-    label: "Cold winters, short growing season",
-    blurb: "Hard freezes, real winters, and a growing season that rewards getting your timing right.",
-    frost: { lastSpring: "mid-to-late May", firstFall: "mid-to-late September" },
-    season: "roughly 90–130 frost-free days",
-    plantingGuide: [
-      { window: "As soon as the soil can be worked (April)", crops: "peas, spinach, lettuce, radishes, kale, onion sets" },
-      { window: "After the last frost (late May–June)", crops: "tomatoes, peppers, squash, beans, corn, cucumbers, melons" },
-      { window: "Late summer, for a fall crop", crops: "quick greens, another round of peas, radishes, spinach" },
-    ],
-    bestCrops: ["Potatoes", "Carrots", "Cabbage & other brassicas", "Peas", "Kale", "Rhubarb", "Cold-hardy berries (currants, honeyberries)", "Root vegetables generally"],
-    bestAnimals: ["Chickens (cold-hardy breeds: Chantecler, Wyandotte, Buff Orpington)", "Rabbits (with a sheltered, draft-free hutch)", "Cold-hardy sheep (Icelandic, Romney)", "Bees, with real winter hive prep"],
-  },
-  temperate: {
-    label: "Four real seasons, moderate winters",
-    blurb: "A long, dependable growing season with a genuine winter — the classic setup for a mixed small farm.",
-    frost: { lastSpring: "mid-April to early May", firstFall: "mid-to-late October" },
-    season: "roughly 150–190 frost-free days",
-    plantingGuide: [
-      { window: "Early spring (March–April)", crops: "peas, lettuce, spinach, radishes, broccoli transplants" },
-      { window: "After last frost (May)", crops: "tomatoes, peppers, squash, beans, sweet corn, cucumbers" },
-      { window: "Midsummer, for a fall crop", crops: "carrots, beets, another round of greens, brassicas" },
-    ],
-    bestCrops: ["Sweet corn", "Tomatoes", "Apples & pears", "Winter squash & pumpkins", "Berries (strawberries, raspberries)", "Leafy greens", "Garlic (fall-planted)"],
-    bestAnimals: ["Chickens (most breeds do well)", "Dairy & meat goats", "Pigs", "Bees", "Sheep"],
-  },
-  warm: {
-    label: "Mild winters, long growing season",
-    blurb: "Winters rarely bite hard, which stretches the growing calendar well past what a northern garden gets.",
-    frost: { lastSpring: "late March to mid-April", firstFall: "mid-November" },
-    season: "roughly 200–230 frost-free days",
-    plantingGuide: [
-      { window: "Late winter (February–March)", crops: "peas, lettuce, greens, potatoes" },
-      { window: "Spring (April–May)", crops: "tomatoes, peppers, beans, squash, sweet corn, melons" },
-      { window: "Fall (September)", crops: "a full second round of cool-season crops, often better than spring's" },
-    ],
-    bestCrops: ["Tomatoes", "Peppers (sweet & hot)", "Sweet potatoes", "Okra", "Muscadine & other grapes", "Blackberries", "Greens through most of winter"],
-    bestAnimals: ["Chickens", "Meat goats (Boer, Kiko)", "Cattle on pasture", "Bees"],
-  },
-  hot_arid: {
-    label: "Hot and dry — water is the whole game",
-    blurb: "Intense summer heat and low rainfall mean irrigation and heat tolerance matter more than frost dates.",
-    frost: { lastSpring: "mid-March", firstFall: "late November" },
-    season: "roughly 230–280 frost-free days, with a brutal midsummer lull",
-    plantingGuide: [
-      { window: "Late winter (February)", crops: "cool-season crops before real heat arrives: lettuce, peas, greens" },
-      { window: "Early spring, before summer heat", crops: "tomatoes, peppers, squash — timed to fruit before the worst heat" },
-      { window: "Fall, once heat breaks (September–October)", crops: "a second, often better growing window for most vegetables" },
-    ],
-    bestCrops: ["Chiles & peppers", "Melons", "Dates & figs", "Desert-adapted squash", "Drought-tolerant herbs (rosemary, sage, thyme)", "Pistachios & olives (established plantings)"],
-    bestAnimals: ["Heat-tolerant chicken breeds (Leghorn, Egyptian Fayoumi)", "Goats", "Desert-adapted sheep (Navajo-Churro)", "Bees, with reliable water nearby"],
-  },
-  subtropical: {
-    label: "Hot, humid, and barely a winter",
-    blurb: "Frost is rare or absent, so the growing calendar looks completely different from the rest of the country.",
-    frost: { lastSpring: "rare, or none at all", firstFall: "rare, or none at all" },
-    season: "often close to year-round",
-    plantingGuide: [
-      { window: "Fall through winter (October–February)", crops: "tomatoes, peppers, greens, broccoli — the mild season, not summer" },
-      { window: "Spring (February–April)", crops: "beans, squash, sweet corn, before summer's heat and humidity peak" },
-      { window: "Summer", crops: "heat-lovers only: okra, sweet potatoes, southern peas, some tropical fruit" },
-    ],
-    bestCrops: ["Citrus", "Okra", "Sweet potatoes", "Southern peas (black-eyed, crowder)", "Bananas & other tropicals", "Collards & other heat-tolerant greens"],
-    bestAnimals: ["Heat-tolerant chicken breeds", "Cattle on pasture (with shade & water)", "Bees, watching for year-round pest pressure"],
-  },
-  pacific: {
-    label: "Mild and marine — wet winters, dry summers",
-    blurb: "Rarely extreme in either direction, but the rain and dry season fall opposite most of the country's.",
-    frost: { lastSpring: "March to mid-April", firstFall: "late October to November" },
-    season: "roughly 180–250 frost-free days, varying a lot with distance from the coast",
-    plantingGuide: [
-      { window: "Early spring (March)", crops: "peas, lettuce, brassicas — the mild wet season suits them well" },
-      { window: "Late spring, once soil warms (May)", crops: "tomatoes, squash, beans, corn — often started indoors first" },
-      { window: "Late summer", crops: "a fall round of greens and brassicas before the rains return" },
-    ],
-    bestCrops: ["Berries (blueberries, raspberries, blackberries)", "Brassicas of all kinds", "Wine grapes", "Hazelnuts", "Leafy greens nearly year-round near the coast"],
-    bestAnimals: ["Chickens", "Dairy goats", "Sheep on pasture", "Bees, with shelter from wind and rain"],
-  },
-};
-function zoneInfoFor(stateCode) {
-  const st = stateInfo(stateCode);
-  return (st && ZONE_INFO[st.zone]) || null;
-}
-
-// The three non-location topics in the Learn tab — general enough to hold
-// true anywhere, so they don't need a state picker.
-// Small helper just for the Learn library's photography — a bit wider than
-// the general-purpose PEXELS() thumbnail helper above, since these run as
-// full-width hero banners rather than small product tiles.
-const LEARN_PHOTO = (id, w = 800) => `https://images.pexels.com/photos/${id}/pexels-photo-${id}.jpeg?auto=compress&cs=tinysrgb&w=${w}`;
-
-// Matches recurring animal/crop terms as they appear inside ZONE_INFO's
-// bestAnimals/bestCrops strings (e.g. "Chickens (cold-hardy breeds: ...)")
-// and the plantingGuide's comma-separated crop lists (e.g. "peas, spinach,
-// lettuce"), so the same photo lookup works for both. First match wins, so
-// more specific terms (sweet potato) are listed ahead of broader ones
-// (potato). Falls back to a themed gradient tile — see ItemPhoto — when
-// nothing matches rather than guessing.
-const ITEM_PHOTO_KEYWORDS = [
-  // animals
-  { test: /chicken/i, url: LEARN_PHOTO(19972937) },
-  { test: /rabbit/i, url: LEARN_PHOTO(326012) },
-  { test: /sheep/i, url: LEARN_PHOTO(18859961) },
-  { test: /goat/i, url: LEARN_PHOTO(5210298) },
-  { test: /\bpig/i, url: LEARN_PHOTO(18138263) },
-  { test: /cattle|\bcow/i, url: LEARN_PHOTO(4577861) },
-  { test: /\bbee/i, url: IMG.bees.url },
-  // crops — specific terms before the broader ones they'd otherwise match
-  { test: /sweet potato/i, url: LEARN_PHOTO(9798976) },
-  { test: /potato/i, url: IMG.potato.url },
-  { test: /carrot/i, url: IMG.carrot.url },
-  { test: /cabbage|brassica/i, url: LEARN_PHOTO(4947354) },
-  { test: /southern pea|\bpea/i, url: IMG.peas.url },
-  { test: /kale|spinach|collard|leafy green|\bgreens\b/i, url: IMG.greens.url },
-  { test: /currant/i, url: IMG.currant.url },
-  { test: /strawberr/i, url: LEARN_PHOTO(12775190) },
-  { test: /raspberr/i, url: IMG.raspberry.url },
-  { test: /blackberr/i, url: IMG.blackberry.url },
-  { test: /blueberr/i, url: IMG.blueberry.url },
-  { test: /berr/i, url: IMG.berries.url },
-  { test: /root vegetable/i, url: IMG.carrot.url },
-  { test: /sweet corn|\bcorn\b/i, url: LEARN_PHOTO(189915) },
-  { test: /tomato/i, url: IMG.tomato.url },
-  { test: /apple/i, url: IMG.apple.url },
-  { test: /\bpear\b/i, url: IMG.pear.url },
-  { test: /squash|pumpkin/i, url: LEARN_PHOTO(4671692) },
-  { test: /garlic/i, url: IMG.garlic.url },
-  { test: /pepper|chile|chili/i, url: LEARN_PHOTO(8540921) },
-  { test: /okra/i, url: LEARN_PHOTO(28577186) },
-  { test: /grape/i, url: IMG.grape.url },
-  { test: /melon/i, url: LEARN_PHOTO(1313267) },
-  { test: /\bdate/i, url: LEARN_PHOTO(17877729) },
-  { test: /\bfig/i, url: LEARN_PHOTO(7890081) },
-  { test: /herb|rosemary|sage|thyme/i, url: IMG.basil.url },
-  { test: /olive/i, url: LEARN_PHOTO(6231898) },
-  { test: /pistachio|hazelnut/i, url: IMG.nut.url },
-  { test: /citrus/i, url: LEARN_PHOTO(34815908) },
-  { test: /banana/i, url: LEARN_PHOTO(1093038) },
-  { test: /cucumber/i, url: LEARN_PHOTO(32879155) },
-  { test: /\bbean/i, url: LEARN_PHOTO(185473) },
-  { test: /broccoli/i, url: LEARN_PHOTO(9893184) },
-  { test: /beet/i, url: LEARN_PHOTO(4963554) },
-  { test: /rhubarb/i, url: IMG.currant.url },
-  { test: /lettuce/i, url: IMG.lettuce.url },
-  { test: /radish/i, url: IMG.radish.url },
-  { test: /onion/i, url: IMG.onion.url },
-  { test: /peach/i, url: IMG.peach.url },
-];
-function itemPhotoFor(label) {
-  const hit = ITEM_PHOTO_KEYWORDS.find((k) => k.test.test(label));
-  return hit ? hit.url : null;
-}
-
-const LEARN_STATIC = {
-  companions: {
-    hero: { url: LEARN_PHOTO("23825134"), alt: "Hands planting a seedling into garden soil" },
-    intro: "Some crops genuinely help their neighbors — trading shade, structure, or pest confusion — and some just compete for the same nutrients or trade the same diseases back and forth. None of this is exact science, but it's old, widely-repeated market-garden wisdom worth planning around.",
-    good: [
-      { a: "Tomatoes", b: "Basil", why: "Grown side by side for generations — similar sun and water needs, and basil is widely believed to help keep some pests off tomatoes." },
-      { a: "Corn, beans & squash", b: "(the \"Three Sisters\")", why: "Corn gives beans a pole to climb, beans fix nitrogen in the soil the corn uses heavily, and squash's broad leaves shade out weeds at everyone's feet." },
-      { a: "Carrots", b: "Onions", why: "Onions' strong scent is thought to help confuse the carrot rust fly, and carrots return the favor for onion pests." },
-      { a: "Cucumbers", b: "Sunflowers", why: "A sturdy sunflower stalk gives cucumber vines something to climb, plus a little welcome afternoon shade." },
-      { a: "Cabbage family", b: "Dill or nasturtiums", why: "Nasturtiums lure aphids away as a \"trap crop\"; dill attracts the predatory insects that eat cabbage pests." },
-      { a: "Peppers", b: "Basil or marigolds", why: "Basil is thought to sharpen pepper flavor and repel aphids and spider mites; marigold roots release compounds that deter root-knot nematodes." },
-      { a: "Lettuce", b: "Tall crops like corn or trellised beans", why: "Lettuce bolts and turns bitter in hot sun, so the light afternoon shade from a taller neighbor buys it a few extra weeks." },
-    ],
-    avoid: [
-      { a: "Tomatoes", b: "Corn", why: "Both are magnets for the same pest (corn earworm, which is the same insect as the tomato fruitworm) — planting together concentrates the problem." },
-      { a: "Beans", b: "Onions or garlic", why: "Alliums release compounds that can stunt nearby bean growth." },
-      { a: "Potatoes", b: "Tomatoes", why: "Both nightshades that share the same diseases, blight included — grouping them raises the odds of one outbreak taking both." },
-      { a: "Carrots", b: "Dill", why: "Fine as seedlings, but mature dill can slow young carrots down if planted too close together." },
-      { a: "Sunflowers", b: "Potatoes", why: "Sunflowers release growth-inhibiting compounds through their roots that can stunt nearby potatoes." },
-    ],
-  },
-  pricing: {
-    hero: { url: LEARN_PHOTO("31930012"), alt: "Colorful farmers market vegetable display" },
-    intro: "There's no single formula, but a few habits keep a price fair to the shopper without quietly shorting yourself.",
-    sections: [
-      { title: "Start from your real costs", body: "Seed or starts, water, soil amendments, packaging, and your own time — growing it and hauling it to market — all belong in the number before you land on a price. A price that doesn't cover labor isn't sustainable no matter how fair it looks on the sign." },
-      { title: "Check the going rate around you", body: "Other vendors at the same market, plus nearby grocery or co-op prices for comparable quality, give you a realistic ceiling and floor to work inside rather than guessing." },
-      { title: "Let the season move the price", body: "The first tomatoes of summer or the last squash before frost are scarce and usually priced higher; peak-season abundance is when shoppers expect — and vendors can afford — a lower price." },
-      { title: "Price in bundles shoppers can picture", body: "A bunch, a pint, or a quart is often easier for someone to reason about at a glance than pure per-pound math, and a small discount for a bigger bundle encourages a fuller basket. This is exactly what the \"priced per\" unit picker on your listings is for." },
-      { title: "Use specials with intention", body: "A buy-one-get-one or bundle deal near the end of a picking window can move product that's about to turn, without quietly lowering your everyday price — think of it as a tool for specific moments, not a default setting." },
-      { title: "Don't race to the bottom", body: "Undercutting every other stand chips away at the whole market's prices, yours included. Freshness, variety, and how something was grown usually earn loyalty — and a fair price — better than simply being the cheapest table." },
-    ],
-  },
-  preserving: {
-    hero: { url: LEARN_PHOTO("8896839"), alt: "A jar of homemade preserves" },
-    intro: "A big harvest doesn't have to be sold or eaten all at once — these are the standard ways small growers stretch it out.",
-    methods: [
-      { name: "Water-bath canning", body: "The go-to for high-acid foods — jams, pickles, tomatoes with a little added acid. Basic equipment, shelf-stable for a year or more." },
-      { name: "Pressure canning", body: "Needed for low-acid foods like most vegetables and meats, since they need higher heat than a water bath reaches to be safely shelf-stable." },
-      { name: "Freezing", body: "Usually the fastest way to preserve with the least prep. Blanching most vegetables first — a quick dunk in boiling water, then ice water — helps hold onto color, texture, and nutrients." },
-      { name: "Drying / dehydrating", body: "Well suited to herbs, fruit, and some vegetables. Concentrates flavor and takes up almost no storage space once finished." },
-      { name: "Fermenting", body: "Sauerkraut, kimchi, traditional pickles — needs no canning equipment at all, just salt, time, and a container, and adds beneficial bacteria along the way." },
-      { name: "Root cellaring / cold storage", body: "Potatoes, winter squash, onions, apples, and root vegetables often keep for months with no processing at all — just a cool, dark, humidity-controlled space like a basement corner or an insulated bin." },
-    ],
-  },
-  soil: {
-    hero: { url: LEARN_PHOTO("12644988"), alt: "Healthy soil with a young plant in cupped hands" },
-    intro: "Healthy soil is the foundation everything else on this list depends on — get it right and pests, disease, and watering problems all get easier to manage.",
-    sections: [
-      { title: "What makes soil \"healthy\"", body: "Healthy soil is full of life — bacteria, fungi, earthworms, and insects that break down organic matter into nutrients plants can use. It holds water without staying soggy, and it's loose enough for roots to spread easily. You can't fake that with fertilizer alone; it has to be built up over time." },
-      { title: "Building a compost pile", body: "Layer roughly equal parts \"browns\" (dry leaves, cardboard, straw) and \"greens\" (vegetable scraps, grass clippings, coffee grounds), keep the pile about as damp as a wrung-out sponge, and turn it every couple of weeks to add oxygen. A well-managed pile can finish in 2–3 months; one you never turn can take a year or more." },
-      { title: "Browns vs. greens", body: "Browns are carbon-rich and greens are nitrogen-rich — too many greens and a pile turns slimy and starts to smell; too many browns and it barely breaks down at all. A rough ratio of 3 parts browns to 1 part greens by volume is a solid starting point." },
-      { title: "Cover crops", body: "Planting something like clover, winter rye, or buckwheat in beds that would otherwise sit bare over winter protects soil from erosion, smothers weeds, and adds organic matter and nitrogen back in when you till it under in spring." },
-      { title: "Mulch does double duty", body: "A few inches of straw, wood chips, or shredded leaves over open soil suppresses weeds, holds in moisture, moderates soil temperature, and slowly breaks down into more organic matter — one of the highest-value, lowest-effort habits in gardening." },
-      { title: "Signs of unhealthy soil", body: "Water that pools instead of soaking in, soil that's hard and cracked when dry, few or no earthworms when you dig a shovelful, and plants that consistently look pale or stunted despite regular watering are all signs it's time to add compost and cut back on tilling." },
-    ],
-  },
-  marketing: {
-    hero: { url: LEARN_PHOTO("1187300"), alt: "A vendor standing beside a fresh produce stand" },
-    intro: "Great produce doesn't sell itself — a little presentation and follow-through goes a long way at a farmers market or an online storefront like this one.",
-    sections: [
-      { title: "First impressions at the stand", body: "Shoppers decide whether to stop within a few seconds, so lead with color and abundance — tall items in back, colorful items at eye level, and never let a display look picked-over. A stand that looks half-empty reads as \"nothing good left,\" even when the quality is fine." },
-      { title: "Tell the story, not just the price", body: "\"Heirloom tomatoes, picked this morning\" sells better than \"tomatoes, $4/lb.\" Mention the variety, how it was grown, or what makes it different — people pay more for produce they feel a connection to." },
-      { title: "Photos that actually sell", body: "Natural light beats flash every time — shoot in the morning or late afternoon, fill the frame with the product, and show real texture and color. A slightly imperfect photo of the actual item builds more trust than an overly polished stock photo." },
-      { title: "Build repeat customers", body: "Remembering a regular's name or usual order costs nothing and keeps them coming back. On CropSwap specifically, replying quickly to messages and keeping your listings current are the two biggest things shoppers notice." },
-      { title: "Timing your restocks", body: "Posting new listings or updates right before your usual selling window — the evening before a Saturday market, for example — puts your shop at the top of a shopper's mind right when they're deciding where to go." },
-    ],
-  },
-};
-
-// "Good bugs" library — a garden's natural pest control crew. Purely factual,
-// upbeat nature content: no skulls, gore, or anything sinister, matching how
-// every other section in this app is meant to feel.
-const GOOD_BUGS = [
-  {
-    id: "ladybug",
-    name: "Ladybug (Lady Beetle)",
-    tagline: "Aphid patrol, 24/7",
-    photo: { url: LEARN_PHOTO("121472"), alt: "A ladybug resting on a green leaf" },
-    emoji: "🐞",
-    facts: [
-      "A single ladybug can eat 50 or more aphids a day, and thousands over its lifetime.",
-      "Both the adult beetle and its spiky, alligator-shaped larva are predators — don't mistake the larva for a pest and squash it.",
-      "They also eat mites, scale insects, and mealybugs.",
-      "Most native ladybugs overwinter in leaf litter or under loose bark, emerging again in spring.",
-    ],
-    whyGood: "Ladybugs are one of the fastest, cheapest ways to knock back an aphid outbreak without spraying anything.",
-    keepAlive: "Leave some leaf litter and undisturbed mulch over winter for them to shelter in, and plant dill, fennel, yarrow, or alyssum — their preferred nectar sources when aphids are scarce. Avoid broad-spectrum insecticides, which kill ladybugs right along with the pests you're targeting.",
-    predators: "Birds, spiders, and assassin bugs will all eat ladybugs; some toads and frogs will too if your garden has damp cover nearby.",
-  },
-  {
-    id: "honeybee",
-    name: "Honeybee & Bumblebee",
-    tagline: "Your fruit set depends on them",
-    photo: { url: LEARN_PHOTO("1029567"), alt: "A honeybee gathering pollen on a flower" },
-    emoji: "🐝",
-    facts: [
-      "Roughly a third of the food humans eat depends on pollination by bees.",
-      "A single hive can visit millions of flowers in a single day.",
-      "Bumblebees can fly and pollinate in cooler, cloudier weather than honeybees can.",
-      "Bees communicate the location of good flowers to each other through a \"waggle dance.\"",
-    ],
-    whyGood: "No pollinators, no fruit — squash, cucumbers, melons, berries, and tree fruit all set poorly without bees moving pollen between flowers.",
-    keepAlive: "Plant a range of flowers that bloom from early spring through fall so there's always something for them, leave a patch of bare or sandy ground undisturbed for ground-nesting native bees, set out a shallow water dish with pebbles to land on, and skip spraying anything while it's in bloom.",
-    predators: "Praying mantises, robber flies, and birds pick off individual bees; skunks, bears, and wasps can raid whole hives.",
-  },
-  {
-    id: "mantis",
-    name: "Praying Mantis",
-    tagline: "The ambush hunter",
-    photo: { url: LEARN_PHOTO("1085542"), alt: "A brown praying mantis in close-up" },
-    facts: [
-      "A mantis can rotate its head nearly 180 degrees to track prey.",
-      "They'll eat almost anything they can catch, including beetles, moths, crickets, and flies.",
-      "One egg case (called an ootheca) can hold anywhere from 100 to 400 baby mantises.",
-      "Mantises are patient hunters, often sitting motionless for long stretches waiting to strike.",
-    ],
-    whyGood: "They're a generalist predator that helps keep overall pest numbers down, especially larger, faster-moving insects that other predators tend to miss. One caveat: mantises aren't picky — they'll eat bees and other beneficial bugs too, so think of them as a mixed blessing rather than a silver bullet.",
-    keepAlive: "Leave shrubby, undisturbed corners of the garden for egg cases to overwinter, and if you spot a tan, papery egg case on a stem, leave it alone — that's next year's mantis population.",
-    predators: "Birds, frogs, and spiders will eat mantises, and larger mantises will occasionally eat smaller ones.",
-  },
-  {
-    id: "dragonfly",
-    name: "Dragonfly",
-    tagline: "A flying mosquito net",
-    photo: { url: LEARN_PHOTO("762941"), alt: "A dragonfly perched, wings spread" },
-    facts: [
-      "A dragonfly can eat hundreds of mosquitoes in a single day.",
-      "They're among the fastest insects alive, with some species topping 30 mph.",
-      "Dragonfly nymphs live underwater for months or even years before emerging as adults, and they're voracious predators of mosquito larvae the whole time.",
-      "Their compound eyes have up to 30,000 lenses, giving them nearly 360-degree vision.",
-    ],
-    whyGood: "If you're anywhere near standing water, dragonflies are one of the best natural checks on mosquito populations you can have.",
-    keepAlive: "Keep a small pond, rain barrel, or water feature with some vegetation nearby for the nymphs, and skip mosquito foggers and sprays — they kill dragonflies right along with the mosquitoes.",
-    predators: "Birds, frogs, fish, and spiders all eat dragonflies, especially right after they molt into an adult while their wings are still soft.",
-  },
-  {
-    id: "spider",
-    name: "Garden (Orb-Weaver) Spider",
-    tagline: "A pest net you don't have to build",
-    photo: { url: LEARN_PHOTO("51394"), alt: "An orb-weaver spider on its web" },
-    emoji: "🕷️",
-    facts: [
-      "A single orb-weaver can catch and eat dozens of flying insects overnight.",
-      "They often rebuild their web daily, eating the old silk to recycle the protein in it.",
-      "Most garden spiders are harmless to people — bites are rare and usually no worse than a bee sting.",
-      "Their webs also make a decent gauge of how many flying pests are actually active in your garden.",
-    ],
-    whyGood: "Spiders are one of the highest-volume pest controllers in any garden — they don't discriminate, taking moths, flies, aphids, and beetles alike.",
-    keepAlive: "Leave webs in place where you can, especially around dusk when they're most active, avoid broad pesticide use, and keep some undisturbed shrubs or tall grass nearby for shelter.",
-    predators: "Birds, spider wasps, and larger spiders are the main threats — chickens will happily eat them too.",
-  },
-  {
-    id: "butterfly",
-    name: "Monarch & Pollinator Butterflies",
-    tagline: "Pollination with a light touch",
-    photo: { url: LEARN_PHOTO("1046287"), alt: "A monarch butterfly resting on a flower" },
-    emoji: "🦋",
-    facts: [
-      "Butterflies pollinate while feeding on nectar, though less efficiently than bees since they carry less pollen per visit.",
-      "Monarch caterpillars eat only milkweed — without it, they can't complete their life cycle at all.",
-      "Butterflies taste with their feet, which is how they find the right host plant to lay eggs on.",
-      "Many butterfly species, monarchs especially, migrate hundreds or thousands of miles each year.",
-    ],
-    whyGood: "They add pollination coverage alongside bees, especially for flowers bees visit less often, and a garden full of butterflies is usually a sign it's pesticide-light and healthy.",
-    keepAlive: "Plant native milkweed for monarchs specifically, add a range of nectar flowers that bloom across the season, leave a shallow muddy patch (butterflies \"puddle\" there for minerals), and never spray host plants while caterpillars are feeding on them.",
-    predators: "Birds, wasps, and spiders eat adult butterflies; caterpillars are eaten by birds, wasps, and stink bugs.",
-  },
-  {
-    id: "earthworm",
-    name: "Earthworm",
-    tagline: "The original soil engineer",
-    photo: { url: LEARN_PHOTO("4386496"), alt: "An earthworm on green grass" },
-    emoji: "🪱",
-    facts: [
-      "Earthworms can process roughly their own body weight in soil every day.",
-      "Their tunnels aerate compacted soil and improve drainage.",
-      "Worm castings — their droppings — are a nutrient-rich natural fertilizer.",
-      "A healthy garden bed can hold hundreds of thousands of earthworms per acre.",
-    ],
-    whyGood: "They're not technically an insect, but no list of good garden creatures is complete without them — they build the healthy, well-drained soil every other plant and bug on this list depends on.",
-    keepAlive: "Keep soil covered with mulch or compost so it doesn't dry out or overheat, minimize tilling (which shreds worms and their tunnels), and skip synthetic fertilizers and pesticides that can harm them.",
-    predators: "Birds — robins especially — along with moles, toads, and ground beetles are major earthworm predators.",
-  },
-  {
-    id: "isopod",
-    name: "Pill Bug (Roly-Poly / Isopod)",
-    tagline: "The garden's cleanup crew",
-    photo: { url: LEARN_PHOTO("12568711"), alt: "A pill bug (woodlouse) on a green leaf" },
-    facts: [
-      "Pill bugs aren't insects at all — they're land-dwelling crustaceans, more closely related to shrimp and crabs than to any bug.",
-      "They breathe through gill-like structures and need damp conditions to survive, which is why you find them under logs, mulch, and flower pots.",
-      "Many species roll into a tight ball when threatened, which is exactly where the name \"roly-poly\" comes from.",
-      "A single pill bug can live 2 to 5 years — unusually long for something so small.",
-    ],
-    whyGood: "Pill bugs are decomposers, not predators — they break down dead leaves, rotting wood, and other organic matter into the nutrients your soil needs. They'll occasionally nibble a soft seedling, but their overall effect on soil health is strongly positive.",
-    keepAlive: "Keep some damp mulch, leaf litter, or a rotting log pile somewhere in the garden for them to live and feed in, and avoid letting that habitat dry out or get tilled under. Plenty of decaying material to eat keeps them away from your seedlings too.",
-    predators: "Toads, birds, shrews, centipedes, and some spiders and ground beetles all eat pill bugs.",
-  },
-];
 
 /* ============================================================================
    SECTION 4: UTILITIES — pure functions (unit-testable outside React)
@@ -3243,6 +2879,7 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
   const mine = ctx?.myReviews?.[key];
   const addMyReview = ctx?.addMyReview;
   const patchMyReview = ctx?.patchMyReview;
+  const dropMyReview = ctx?.dropMyReview;
   // Seed synchronously so reviews are on screen immediately instead of flashing
   // empty while the async read completes.
   const [reviews, setReviews] = useState(() => SEED_REVIEWS[`reviews:${entityType}:${entityId}`] || []);
@@ -3356,16 +2993,43 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
     [commitList]
   );
 
-  // Owner-only: removes a review entirely (e.g. a shop owner clearing an
-  // incoming review). Authorization is enforced by the caller (ReviewSection
-  // only renders the control when the viewer owns the shop/product), matching
-  // this app's existing client-side trust model for shared_kv writes.
+  // Author-only: removes a review entirely. A shop/product owner can never
+  // delete someone else's review — only report it (see flagReview below).
+  // Authorization is enforced by the caller (ReviewSection only renders the
+  // control for the review's own author), matching this app's existing
+  // client-side trust model for shared_kv writes.
   const deleteReview = useCallback(
     async (reviewId) => {
       const next = listRef.current.filter((r) => r.id !== reviewId);
       await commitList(next);
+      if (dropMyReview) await dropMyReview(key, reviewId);
     },
-    [commitList]
+    [commitList, dropMyReview, key]
+  );
+
+  // Author-only: edit the rating/body of a review they wrote. Runs back
+  // through the same "post first, screen second" moderation pipeline as a
+  // brand-new review, so an edit can't be used to slip past the screener.
+  const editReview = useCallback(
+    async (reviewId, { rating, body }) => {
+      const patch = { rating, body, status: "pending", moderation: null, editedAt: Date.now() };
+      await commitList(listRef.current.map((r) => (r.id === reviewId ? { ...r, ...patch } : r)));
+      if (patchMyReview) await patchMyReview(key, reviewId, patch);
+
+      (async () => {
+        let mod;
+        try {
+          mod = await moderateText(body);
+        } catch (e) {
+          mod = { flagged: false, reason: "", pending: true };
+        }
+        if (mod.pending) return;
+        const status = mod.flagged ? "removed" : "published";
+        if (patchMyReview) await patchMyReview(key, reviewId, { status, moderation: mod });
+        await commitList(listRef.current.map((r) => (r.id === reviewId ? { ...r, status, moderation: mod } : r)));
+      })();
+    },
+    [commitList, patchMyReview, key]
   );
 
   // Owner-only: attach a single response to a review (e.g. a shop owner
@@ -3507,6 +3171,7 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
     avgRating,
     count,
     submitReview,
+    editReview,
     flagReview,
     adjustHelpful,
     deleteReview,
@@ -3900,7 +3565,13 @@ function GlobalStyles() {
       .cs-track-wide { letter-spacing: 0.18em; }
       .cs-r3 { border-radius: 3px; }
       .cs-py1 { padding-top: 1px; padding-bottom: 1px; }
-      .cs-max75 { max-width: 75%; }
+      /* min-width: 0 matters here — these bubbles are children of a flex
+         column (see the message list), and a flex item's default min-width
+         is "auto" (its content's intrinsic width), which lets a long
+         unbroken word or URL push the bubble past max-width and off the
+         edge of the screen on some browsers. overflow-wrap/word-break force
+         a hard break instead. */
+      .cs-max75 { max-width: 75%; min-width: 0; overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap; }
       .cs-safe-bottom { padding-bottom: calc(env(safe-area-inset-bottom, 8px) + 4px); }
       .cs-toggle-on { left: 22px; }
       /* On the narrowest phones the wordmark yields so the search field can still
@@ -5006,7 +4677,6 @@ function Sidebar({ route, navigate }) {
     { id: "messages", label: "Messages", icon: MessageCircle },
     { id: "favorites", label: "Favorites", icon: Heart },
     { id: "dashboard", label: "Dashboard", icon: TrendingUp },
-    { id: "learn", label: "Learn", icon: BookOpen },
     { id: "places", label: "Places", icon: MapPin },
   ];
   return (
@@ -5577,13 +5247,13 @@ function MapShopPanel({ entry, onOpenShop, onClose }) {
         <span className="flex gap-2">
           {me && shop.ownerId !== me.id && (
             <button
-              onClick={() => navigate({ screen: "messages", withUserId: shop.ownerId, withUserName: shop.name, withUserAvatar: shop.emoji })}
+              onClick={() => { onClose(); navigate({ screen: "messages", withUserId: shop.ownerId, withUserName: shop.name, withUserAvatar: shop.emoji }); }}
               className="border border-stone-200 text-stone-700 text-xs font-semibold px-3 py-1.5 rounded-lg"
             >
               Message
             </button>
           )}
-          <button onClick={() => onOpenShop(shop)} className="bg-emerald-800 text-white text-xs font-bold px-4 py-1.5 rounded-lg">
+          <button onClick={() => { onClose(); onOpenShop(shop); }} className="bg-emerald-800 text-white text-xs font-bold px-4 py-1.5 rounded-lg">
             Visit shop
           </button>
         </span>
@@ -5983,6 +5653,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
     avgRating,
     count,
     submitReview,
+    editReview,
     flagReview,
     adjustHelpful,
     deleteReview,
@@ -5994,6 +5665,10 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
   const [writing, setWriting] = useState(false);
   const [draftRating, setDraftRating] = useState(0);
   const [draftBody, setDraftBody] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editRating, setEditRating] = useState(0);
+  const [editBody, setEditBody] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
   const [lastResult, setLastResult] = useState(null);
   const [flagState, setFlagState] = useState({});
   const [pendingHelpful, setPendingHelpful] = useState(null);
@@ -6029,6 +5704,29 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
     if (!window.confirm("Delete this review? This can't be undone.")) return;
     await deleteReview(reviewId);
     showToast("Review deleted");
+  };
+
+  const startEditReview = (review) => {
+    setEditingId(review.id);
+    setEditRating(review.rating);
+    setEditBody(review.body);
+  };
+
+  const cancelEditReview = () => {
+    setEditingId(null);
+    setEditRating(0);
+    setEditBody("");
+  };
+
+  const submitEditReview = async (reviewId) => {
+    if (!editBody.trim() || editRating === 0 || editBusy) return;
+    setEditBusy(true);
+    await editReview(reviewId, { rating: editRating, body: editBody.trim() });
+    setEditBusy(false);
+    setEditingId(null);
+    setEditRating(0);
+    setEditBody("");
+    showToast("Review updated — pending re-screening");
   };
 
   const startReply = (review) => {
@@ -6155,13 +5853,43 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-semibold text-stone-800">{r.authorName}</span>
                   {r.status === "pending" && <span className="cs-t10 font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">Pending review</span>}
-                  <span className="cs-t11 text-stone-400">{timeAgo(r.createdAt)}</span>
+                  <span className="cs-t11 text-stone-400" title={new Date(r.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}>
+                    {timeAgo(r.createdAt)}{r.editedAt ? " · edited" : ""}
+                  </span>
                 </div>
-                <StarRating value={r.rating} size="sm" />
-                <p className="text-sm text-stone-600 mt-1">{r.body}</p>
-                {r.status === "pending" && me && r.authorId === me.id && (
+                {editingId === r.id ? (
+                  <div className="bg-stone-50 rounded-2xl p-3 border border-stone-200 mt-1.5">
+                    <StarRating value={editRating} onChange={setEditRating} size="lg" />
+                    <TextField
+                      value={editBody}
+                      onChange={setEditBody}
+                      placeholder="How was your experience?"
+                      label="Your review"
+                      multiline
+                      rows={4}
+                      className="w-full mt-2 border border-stone-200 rounded-xl p-2.5 text-sm outline-none focus:border-emerald-700"
+                    />
+                    <div className="flex gap-2 mt-2.5">
+                      <button onClick={cancelEditReview} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-stone-500">Cancel</button>
+                      <button
+                        onClick={() => submitEditReview(r.id)}
+                        disabled={editBusy || editRating === 0 || !editBody.trim()}
+                        className="flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-800 text-white disabled:opacity-40 flex items-center justify-center gap-1.5"
+                      >
+                        {editBusy ? <><Loader2 size={12} className="animate-spin" /> Saving…</> : "Save changes"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <StarRating value={r.rating} size="sm" />
+                    <p className="text-sm text-stone-600 mt-1">{r.body}</p>
+                  </>
+                )}
+                {r.status === "pending" && me && r.authorId === me.id && editingId !== r.id && (
                   <p className="cs-t11 text-amber-700 mt-1">Being screened before it appears on this listing. Only you can see it for now.</p>
                 )}
+                {editingId !== r.id && (
                 <div className="mt-2 flex items-center gap-3 flex-wrap">
                   <button
                     onClick={() => handleHelpful(r.id)}
@@ -6197,12 +5925,18 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
                       <MessageCircle size={11} /> Respond
                     </button>
                   )}
-                  {isOwner && (
-                    <button onClick={() => handleDeleteReview(r.id)} className="cs-t11 text-stone-400 hover:text-rose-600 inline-flex items-center gap-1">
-                      <Trash2 size={11} /> Delete
-                    </button>
+                  {me && r.authorId === me.id && (
+                    <>
+                      <button onClick={() => startEditReview(r)} className="cs-t11 text-stone-400 hover:text-emerald-800 inline-flex items-center gap-1">
+                        <Pencil size={11} /> Edit
+                      </button>
+                      <button onClick={() => handleDeleteReview(r.id)} className="cs-t11 text-stone-400 hover:text-rose-600 inline-flex items-center gap-1">
+                        <Trash2 size={11} /> Delete
+                      </button>
+                    </>
                   )}
                 </div>
+                )}
 
                 {isOwner && replyingTo === r.id && (
                   <div className="mt-2.5 bg-stone-50 rounded-xl p-3 border border-stone-200">
@@ -6484,11 +6218,19 @@ function ShopProfileView({ shopId, navigate }) {
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-      <button onClick={() => navigate({ screen: "explore" })} className="fixed md:absolute top-3 left-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-stone-700">
+      {/* absolute (not fixed) on every breakpoint: this screen's nearest
+          positioned ancestor is <main>, which sits below the sticky TopBar
+          (z-30). A `fixed` button here is positioned against the raw
+          viewport instead, landing at the same top-3 coordinates as the
+          TopBar itself — which then paints over it and hides it entirely
+          on phones. Positioning against <main> keeps it visibly below the
+          header on every screen size, matching how it already looked on
+          desktop. */}
+      <button onClick={() => navigate({ screen: "explore" })} className="absolute top-3 left-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-stone-700">
         <ArrowLeft size={15} /> Back
       </button>
       {isOwner && (
-        <button onClick={() => navigate({ screen: "storeEditor" })} className="fixed md:absolute top-3 right-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-emerald-800">
+        <button onClick={() => navigate({ screen: "storeEditor" })} className="absolute top-3 right-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-emerald-800">
           <Pencil size={14} /> Edit storefront
         </button>
       )}
@@ -8892,7 +8634,6 @@ function AccountModal({ open, onClose }) {
     { id: "places", label: "Places", icon: MapPin },
     { id: "blocked", label: "Blocked", icon: AlertCircle },
     { id: "data", label: "Data", icon: Package },
-    { id: "learn", label: "Learn", icon: BookOpen },
   ];
 
   return (
@@ -9062,30 +8803,6 @@ function AccountModal({ open, onClose }) {
               ))}
             </div>
           ))}
-
-        {tab === "learn" && (
-          <div>
-            <p className="text-xs font-bold text-stone-400 uppercase mb-2">Pick something to learn about</p>
-            <div className="flex flex-col gap-1.5">
-              {LEARN_TOPICS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => { onClose(); navigate({ screen: "learn", topic: t.id }); }}
-                  className="w-full flex items-center gap-3 border border-stone-200 rounded-xl px-3 py-2.5 text-left hover:bg-stone-50 transition"
-                >
-                  <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
-                    <t.icon size={16} />
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-sm font-semibold text-stone-800">{t.label}</span>
-                    {t.blurb && <span className="block text-xs text-stone-400 truncate">{t.blurb}</span>}
-                  </span>
-                  <ChevronRight size={16} className="text-stone-300 shrink-0" />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
 
         <button onClick={() => { signOut(); onClose(); }} className="w-full flex items-center justify-center gap-1.5 text-sm font-semibold text-stone-400 mt-6 pt-4 border-t border-stone-100">
           <LogOut size={14} /> Sign out
@@ -9315,11 +9032,36 @@ function InfoTip({ text, align = "center" }) {
     </span>
   );
 }
-function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate }) {
+// Shared color language for the vendor dashboard — each metric gets a
+// consistent tint across its stat card, digest chip, and chart color so the
+// whole page reads as one coherent, colorful system instead of a wall of
+// identical green cards.
+const DASH_TINTS = {
+  emerald: { bg: "bg-emerald-50", text: "text-emerald-700", bar: "#059669", soft: "bg-emerald-50" },
+  rose: { bg: "bg-rose-50", text: "text-rose-700", bar: "#e11d48", soft: "bg-rose-50" },
+  blue: { bg: "bg-blue-50", text: "text-blue-700", bar: "#2563eb", soft: "bg-blue-50" },
+  violet: { bg: "bg-violet-50", text: "text-violet-700", bar: "#7c3aed", soft: "bg-violet-50" },
+  amber: { bg: "bg-amber-50", text: "text-amber-700", bar: "#d97706", soft: "bg-amber-50" },
+  teal: { bg: "bg-teal-50", text: "text-teal-700", bar: "#0d9488", soft: "bg-teal-50" },
+};
+// Warm-gradient interpolation (pale amber -> deep rose) for the peak-activity
+// heatmap, used in place of a single-hue green so busier squares really pop.
+function dashHeatColor(t) {
+  const c1 = [253, 230, 138]; // amber-200
+  const c2 = [225, 29, 72]; // rose-600
+  const clamped = Math.max(0, Math.min(1, t));
+  const r = Math.round(c1[0] + (c2[0] - c1[0]) * clamped);
+  const g = Math.round(c1[1] + (c2[1] - c1[1]) * clamped);
+  const b = Math.round(c1[2] + (c2[2] - c1[2]) * clamped);
+  return `rgb(${r},${g},${b})`;
+}
+function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate, tint = "emerald", warn = false }) {
+  const showWarn = warn && !locked;
+  const t = showWarn ? DASH_TINTS.rose : DASH_TINTS[tint] || DASH_TINTS.emerald;
   return (
-    <div className="bg-white border border-stone-200 rounded-xl p-3.5 relative">
+    <div className={`bg-white border rounded-xl p-3.5 relative ${showWarn ? "border-rose-200 ring-1 ring-rose-100" : "border-stone-200"}`}>
       <div className="flex items-center justify-between mb-1.5">
-        <span className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-700">
+        <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${t.bg} ${t.text}`}>
           <Icon size={14} />
         </span>
         <div className="flex items-center gap-1.5">
@@ -9328,6 +9070,7 @@ function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate
               {delta >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />} {Math.abs(delta)}%
             </span>
           )}
+          {showWarn && <span className="text-[9px] font-bold uppercase tracking-wide text-rose-600 bg-rose-50 rounded-full px-1.5 py-0.5">Watch</span>}
           {info && <InfoTip text={info} align="right" />}
         </div>
       </div>
@@ -9343,6 +9086,26 @@ function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate
       )}
       <p className="cs-t11 text-stone-500">{label}</p>
       {sub && <p className="cs-t10 text-stone-400 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+// A small colorful metric chip for the "This week's digest" panel — shows
+// the count plus a week-over-week delta when a prior value is supplied.
+function DigestChip({ tint = "emerald", icon: Icon, label, value, prior }) {
+  const t = DASH_TINTS[tint] || DASH_TINTS.emerald;
+  const delta = prior != null ? (prior ? Math.round(((value - prior) / prior) * 100) : value > 0 ? 100 : null) : null;
+  return (
+    <div className={`rounded-xl px-3 py-2.5 ${t.soft}`}>
+      <div className="flex items-center justify-between mb-1">
+        <Icon size={13} className={t.text} />
+        {delta != null && (
+          <span className={`text-[10px] font-bold ${delta >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+            {delta >= 0 ? "+" : ""}{delta}%
+          </span>
+        )}
+      </div>
+      <p className="text-lg font-bold text-stone-900 font-mono tabular-nums leading-none">{value}</p>
+      <p className="cs-t10 text-stone-500 mt-0.5">{label}</p>
     </div>
   );
 }
@@ -9467,7 +9230,7 @@ function MassMessageComposer({ me, shop, subscribers, onSent, showToast }) {
 }
 
 function VendorDashboard({ navigate }) {
-  const { me, shopsById, shops, products, conversations, updateMe, showToast } = useApp();
+  const { me, shopsById, shops, products, conversations, showToast } = useApp();
   const shop = me?.shopId ? shopsById[me.shopId] : null;
   const { reviews: shopReviews, avgRating, count } = useReviews("shop", shop?.id || "none");
   const premium = isPremiumPlan(me);
@@ -9476,8 +9239,6 @@ function VendorDashboard({ navigate }) {
   const [rangeId, setRangeId] = useState("days");
   const range = DASHBOARD_RANGES.find((r) => r.id === rangeId) || DASHBOARD_RANGES[1];
   const [lookupTerm, setLookupTerm] = useState("");
-  const [goalMetric, setGoalMetric] = useState(me?.dashboardGoal?.metric || "favorites");
-  const [goalTarget, setGoalTarget] = useState(me?.dashboardGoal?.target || 50);
 
   const [rangeEvents, setRangeEvents] = useState({ shop: [], signups: [], searches: [] });
   const [digestEvents, setDigestEvents] = useState([]);
@@ -9504,7 +9265,7 @@ function VendorDashboard({ navigate }) {
   }, [shop?.id, rangeId]);
 
   // A fixed trailing-35-day window, independent of the range selector above,
-  // so the weekly digest and monthly goal always have what they need.
+  // so the weekly digest always has the prior-week data it needs.
   useEffect(() => {
     if (!shop) return;
     let cancelled = false;
@@ -9562,6 +9323,9 @@ function VendorDashboard({ navigate }) {
     if (!first) return second > 0 ? 100 : null;
     return Math.round(((second - first) / first) * 100);
   };
+  const viewsDelta = pctChange(viewEvents);
+  const favoritesDelta = pctChange(favoriteEvents);
+  const messagesDelta = pctChange(messageEvents);
 
   const viewSeries = useMemo(() => bucketSeries(viewEvents, range.granularity, sinceMs, nowMs), [viewEvents, range, sinceMs, nowMs]);
   const favoriteSeries = useMemo(() => bucketSeries(favoriteEvents, range.granularity, sinceMs, nowMs), [favoriteEvents, range, sinceMs, nowMs]);
@@ -9673,6 +9437,10 @@ function VendorDashboard({ navigate }) {
     return [...counts.entries()].map(([place, n]) => ({ place, n })).sort((a, b) => b.n - a.n).slice(0, 8);
   }, [viewEvents, favoriteEvents]);
 
+  // A data-rich weekly digest: this-week vs. last-week for views, favorites
+  // and messages; new reviews; the top trending searches; and whichever
+  // metric moved the most week-over-week, so a vendor gets a real "here's
+  // what changed" story instead of a flat list of numbers.
   const digest = useMemo(() => {
     const weekAgo = nowMs - 7 * 86400000;
     const twoWeeksAgo = nowMs - 14 * 86400000;
@@ -9682,32 +9450,32 @@ function VendorDashboard({ navigate }) {
       const t = new Date(e.created_at).getTime();
       return t >= twoWeeksAgo && t < weekAgo;
     });
+    const views = countType(thisWeek, "view_shop") + countType(thisWeek, "view_product");
+    const viewsPrior = countType(lastWeek, "view_shop") + countType(lastWeek, "view_product");
+    const favorites = countType(thisWeek, "favorite");
+    const favoritesPrior = countType(lastWeek, "favorite");
+    const messages = countType(thisWeek, "message");
+    const messagesPrior = countType(lastWeek, "message");
+    const pctMove = (now, prior) => (prior ? Math.round(((now - prior) / prior) * 100) : now > 0 ? 100 : 0);
+    const movers = [
+      { key: "views", label: "views", now: views, prior: viewsPrior, pct: pctMove(views, viewsPrior) },
+      { key: "favorites", label: "favorites", now: favorites, prior: favoritesPrior, pct: pctMove(favorites, favoritesPrior) },
+      { key: "messages", label: "messages", now: messages, prior: messagesPrior, pct: pctMove(messages, messagesPrior) },
+    ];
+    const biggestMover = movers.filter((m) => m.now > 0 || m.prior > 0).sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))[0] || null;
     return {
-      views: countType(thisWeek, "view_shop") + countType(thisWeek, "view_product"),
-      favorites: countType(thisWeek, "favorite"),
-      favoritesPrior: countType(lastWeek, "favorite"),
+      views,
+      viewsPrior,
+      favorites,
+      favoritesPrior,
+      messages,
+      messagesPrior,
       reviews: publishedReviews.filter((r) => r.createdAt >= weekAgo).length,
-      topSearchThisWeek: trendingSearches[0]?.term || null,
+      topSearches: trendingSearches.slice(0, 3),
+      biggestMover,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [digestEvents, publishedReviews, trendingSearches]);
-
-  const monthStart = useMemo(() => {
-    const d = new Date();
-    d.setDate(1);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
-  }, []);
-  const goalMetricSaved = me?.dashboardGoal?.metric || "favorites";
-  const goalTargetSaved = me?.dashboardGoal?.target || 50;
-  const goalProgress = useMemo(() => {
-    const type = goalMetricSaved === "views" ? "view_shop" : goalMetricSaved === "messages" ? "message" : "favorite";
-    return digestEvents.filter((e) => new Date(e.created_at).getTime() >= monthStart && e.event_type === type).length;
-  }, [digestEvents, monthStart, goalMetricSaved]);
-  const saveGoal = async () => {
-    await updateMe({ dashboardGoal: { metric: goalMetric, target: Number(goalTarget) || 50 } });
-    showToast("Goal updated");
-  };
 
   if (!shop) {
     return (
@@ -9727,17 +9495,23 @@ function VendorDashboard({ navigate }) {
           <ArrowLeft size={15} /> Back to storefront
         </button>
 
-        <div className="flex items-center justify-between gap-2 mb-1">
-          <h1 className="text-2xl font-bold text-stone-900" style={displayFont}>{shop.name} dashboard</h1>
-          {premium ? (
-            <CrownPill size="md" />
-          ) : (
-            <button onClick={() => navigate({ screen: "plans" })} className="text-xs font-bold text-amber-700 flex items-center gap-1 shrink-0">
-              <Crown size={13} /> Preview only
-            </button>
-          )}
+        <div className="rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-500 px-5 py-5 mb-5 shadow-sm relative overflow-hidden">
+          <div className="absolute -right-6 -top-10 w-40 h-40 rounded-full bg-white/10" />
+          <div className="absolute -right-16 bottom-0 w-28 h-28 rounded-full bg-white/10" />
+          <div className="relative flex items-center justify-between gap-2">
+            <div>
+              <h1 className="text-2xl font-bold text-white" style={displayFont}>{shop.name} dashboard</h1>
+              <p className="text-emerald-50/90 text-sm mt-0.5">{shopProducts.length} active listing{shopProducts.length === 1 ? "" : "s"} · real activity, not simulated</p>
+            </div>
+            {premium ? (
+              <CrownPill size="md" />
+            ) : (
+              <button onClick={() => navigate({ screen: "plans" })} className="text-xs font-bold text-white bg-white/15 hover:bg-white/25 backdrop-blur-sm rounded-full px-3 py-1.5 flex items-center gap-1 shrink-0 transition">
+                <Crown size={13} /> Preview only
+              </button>
+            )}
+          </div>
         </div>
-        <p className="text-stone-400 text-sm mb-4">{shopProducts.length} active listing{shopProducts.length === 1 ? "" : "s"} · real activity, not simulated</p>
 
         <div className="flex flex-wrap items-center gap-2 mb-5">
           <div className="flex gap-1 bg-stone-100 rounded-full p-1">
@@ -9772,7 +9546,7 @@ function VendorDashboard({ navigate }) {
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4">
             <Crown size={14} className="text-amber-600 shrink-0" />
             <p className="text-xs text-amber-900">
-              You're seeing a preview — a couple of numbers below are blurred and the goal/broadcast tools are locked.{" "}
+              You're seeing a preview — a couple of numbers below are blurred and the mass-message tool is locked.{" "}
               <button onClick={() => navigate({ screen: "plans" })} className="font-bold underline underline-offset-2">Go Premium</button> to unlock everything.
             </p>
           </div>
@@ -9781,31 +9555,37 @@ function VendorDashboard({ navigate }) {
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
           <DashStat
             icon={Eye}
+            tint="emerald"
             label="Views"
             value={viewEvents.length.toLocaleString()}
-            delta={pctChange(viewEvents)}
+            delta={viewsDelta}
+            warn={premium && viewsDelta != null && viewsDelta <= -20}
             locked={!premium}
             navigate={navigate}
             info="How many times shoppers opened your storefront or one of your listings in the selected date range."
           />
           <DashStat
             icon={Heart}
+            tint="rose"
             label="New favorites"
             value={favoriteEvents.length}
-            delta={pctChange(favoriteEvents)}
+            delta={favoritesDelta}
             info="Shoppers who tapped the heart on your shop or a listing — a strong signal they want to come back."
           />
           <DashStat
             icon={MessageCircle}
+            tint="blue"
             label="Messages"
             value={messageEvents.length}
-            delta={pctChange(messageEvents)}
+            delta={messagesDelta}
+            warn={premium && messagesDelta != null && messagesDelta <= -20}
             locked={!premium}
             navigate={navigate}
             info="New conversations shoppers started with you in this range — usually your best sign of real buying intent."
           />
           <DashStat
             icon={Share2}
+            tint="violet"
             label="Shares"
             value={shareEvents.length}
             delta={pctChange(shareEvents)}
@@ -9813,6 +9593,8 @@ function VendorDashboard({ navigate }) {
           />
           <DashStat
             icon={Star}
+            tint="amber"
+            warn={count > 0 && platformAvgRating != null && avgRating < platformAvgRating}
             label="Avg rating"
             value={count > 0 ? avgRating.toFixed(1) : "—"}
             sub={`${count} review${count === 1 ? "" : "s"}`}
@@ -9820,6 +9602,7 @@ function VendorDashboard({ navigate }) {
           />
           <DashStat
             icon={Users}
+            tint="teal"
             label="Repeat visitors"
             value={`${repeatStats.pct}%`}
             sub={`${repeatStats.repeat} of ${repeatStats.total} viewers`}
@@ -9865,7 +9648,7 @@ function VendorDashboard({ navigate }) {
                   <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(favoriteSeries.length / 6))} />
                   <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
                   <Tooltip />
-                  <Line type="monotone" dataKey="count" stroke="#b45309" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="count" stroke={DASH_TINTS.rose.bar} strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -9910,21 +9693,24 @@ function VendorDashboard({ navigate }) {
 
         <DashPanel title="Conversion funnel" icon={Target} className="mb-4" info="How viewers move down the funnel from viewing, to favoriting, to messaging you — each bar shows what percent of viewers made it that far.">
           <div className="space-y-2">
-            {funnel.map((f) => (
-              <div key={f.label}>
-                <div className="flex items-center justify-between text-xs mb-0.5">
-                  <span className="font-semibold text-stone-700">{f.label}</span>
-                  <span className="font-mono text-stone-500">{f.value} · {f.pct}%</span>
+            {funnel.map((f, i) => {
+              const barColor = [DASH_TINTS.emerald.bar, DASH_TINTS.rose.bar, DASH_TINTS.blue.bar][i] || DASH_TINTS.emerald.bar;
+              return (
+                <div key={f.label}>
+                  <div className="flex items-center justify-between text-xs mb-0.5">
+                    <span className="font-semibold text-stone-700">{f.label}</span>
+                    <span className="font-mono text-stone-500">{f.value} · {f.pct}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${f.pct}%`, backgroundColor: barColor }} />
+                  </div>
                 </div>
-                <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
-                  <div className="h-full bg-emerald-700 rounded-full" style={{ width: `${f.pct}%` }} />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </DashPanel>
 
-        <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4" info="A heatmap of exactly when shoppers view you, broken out by day of week and hour of day — darker squares are busier. Great for timing new posts.">
+        <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4" info="A heatmap of exactly when shoppers view you, broken out by day of week and hour of day — warmer, redder squares are busier. Great for timing new posts.">
           <div className="overflow-x-auto">
             <div className="inline-grid gap-[2px]" style={{ gridTemplateColumns: "repeat(24, 8px)" }}>
               {heatmap.map((row, d) =>
@@ -9933,13 +9719,13 @@ function VendorDashboard({ navigate }) {
                     key={`${d}-${h}`}
                     title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
                     className="w-2 h-2 rounded-sm"
-                    style={{ backgroundColor: `rgba(6,95,70,${0.08 + 0.85 * (v / heatmapMax)})` }}
+                    style={{ backgroundColor: v === 0 ? "#f5f5f4" : dashHeatColor(v / heatmapMax) }}
                   />
                 ))
               )}
             </div>
           </div>
-          <p className="cs-t11 text-stone-400 mt-2">Darker = busier. Rows are Sun–Sat, columns are hour of day.</p>
+          <p className="cs-t11 text-stone-400 mt-2">Warmer (amber → rose) = busier. Rows are Sun–Sat, columns are hour of day.</p>
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
@@ -10013,42 +9799,43 @@ function VendorDashboard({ navigate }) {
           </DashPanel>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-4 mb-4">
-          <DashPanel title="This week's digest" icon={Calendar} info="A quick recap of the last 7 days — views, new favorites (vs. the week before), new reviews, and this week's top search term.">
-            <ul className="text-sm text-stone-700 space-y-1">
-              <li>{digest.views} views</li>
-              <li>
-                {digest.favorites} new favorite{digest.favorites === 1 ? "" : "s"}
-                {digest.favoritesPrior ? ` (${digest.favorites >= digest.favoritesPrior ? "+" : ""}${digest.favorites - digest.favoritesPrior} vs last week)` : ""}
-              </li>
-              <li>{digest.reviews} new review{digest.reviews === 1 ? "" : "s"}</li>
-              {digest.topSearchThisWeek && <li>Trending search: "{digest.topSearchThisWeek}"</li>}
-            </ul>
-          </DashPanel>
-          <DashPanel
-            title="Monthly goal"
-            icon={Target}
-            info="Set a target for favorites, views, or messages this calendar month and track your progress toward it with the bar below."
-            right={
-              <select value={goalMetric} onChange={(e) => setGoalMetric(e.target.value)} disabled={!premium} className="text-[11px] border border-stone-200 rounded px-1 py-0.5 disabled:opacity-40">
-                <option value="favorites">Favorites</option>
-                <option value="views">Views</option>
-                <option value="messages">Messages</option>
-              </select>
-            }
-          >
-            <ToolLock locked={!premium} navigate={navigate} label="Premium — set a monthly goal">
-              <div className="flex items-center gap-2 mb-2">
-                <input type="number" value={goalTarget} onChange={(e) => setGoalTarget(e.target.value)} className="w-20 border border-stone-200 rounded-lg px-2 py-1 text-sm" />
-                <button onClick={saveGoal} className="text-xs font-semibold text-emerald-800">Set goal</button>
+        <DashPanel title="This week's digest" icon={Calendar} className="mb-4" info="A data-rich recap of the last 7 days vs. the 7 days before — views, favorites, messages, reviews, whichever metric moved the most, and the top search terms shoppers are typing right now.">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
+            <DigestChip tint="emerald" icon={Eye} label="Views" value={digest.views} prior={digest.viewsPrior} />
+            <DigestChip tint="rose" icon={Heart} label="Favorites" value={digest.favorites} prior={digest.favoritesPrior} />
+            <DigestChip tint="blue" icon={MessageCircle} label="Messages" value={digest.messages} prior={digest.messagesPrior} />
+            <DigestChip tint="amber" icon={Star} label="New reviews" value={digest.reviews} />
+          </div>
+
+          {digest.biggestMover && digest.biggestMover.pct !== 0 && (
+            <div className={`flex items-center gap-2 rounded-xl px-3 py-2 mb-3 ${digest.biggestMover.pct > 0 ? "bg-emerald-50 border border-emerald-200" : "bg-rose-50 border border-rose-200"}`}>
+              {digest.biggestMover.pct > 0 ? <TrendingUp size={15} className="text-emerald-700 shrink-0" /> : <TrendingDown size={15} className="text-rose-600 shrink-0" />}
+              <p className={`text-xs font-semibold ${digest.biggestMover.pct > 0 ? "text-emerald-800" : "text-rose-800"}`}>
+                Biggest mover: {digest.biggestMover.label} {digest.biggestMover.pct > 0 ? "up" : "down"} {Math.abs(digest.biggestMover.pct)}% vs. last week ({digest.biggestMover.prior} → {digest.biggestMover.now})
+              </p>
+            </div>
+          )}
+
+          {digest.topSearches.length > 0 && (
+            <div>
+              <p className="cs-t11 text-stone-400 mb-1.5">Trending searches this week</p>
+              <div className="space-y-1.5">
+                {digest.topSearches.map((t, i) => (
+                  <div key={t.term} className="flex items-center gap-2">
+                    <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${i === 0 ? "bg-violet-600" : i === 1 ? "bg-violet-400" : "bg-violet-300"}`}>
+                      {i + 1}
+                    </span>
+                    <span className="text-xs font-semibold text-stone-700 flex-1 truncate">{t.term}</span>
+                    <div className="w-24 h-1.5 rounded-full bg-stone-100 overflow-hidden hidden sm:block">
+                      <div className="h-full bg-violet-500 rounded-full" style={{ width: `${Math.max(8, Math.round((t.n / digest.topSearches[0].n) * 100))}%` }} />
+                    </div>
+                    <span className="text-[11px] font-mono font-bold text-violet-700 w-4 text-right">{t.n}</span>
+                  </div>
+                ))}
               </div>
-              <div className="h-2.5 rounded-full bg-stone-100 overflow-hidden mb-1">
-                <div className="h-full bg-emerald-700 rounded-full" style={{ width: `${Math.min(100, Math.round((goalProgress / Math.max(1, goalTargetSaved)) * 100))}%` }} />
-              </div>
-              <p className="cs-t11 text-stone-500">{goalProgress} / {goalTargetSaved} this month ({goalMetricSaved})</p>
-            </ToolLock>
-          </DashPanel>
-        </div>
+            </div>
+          )}
+        </DashPanel>
 
         <DashPanel title="Mailing list & mass messages" icon={Megaphone} className="mb-4" info="Everyone who has ever messaged you first joins your mailing list automatically. Send them all one broadcast message at once — delivered as an in-app message + notification.">
           <p className="cs-t11 text-stone-400 mb-3">
@@ -10235,402 +10022,6 @@ function StoreScreen({ navigate }) {
           {creating ? "Setting up…" : "Create my storefront"}
         </button>
         {!shopState && <p className="cs-t11 text-stone-400 text-center mt-2">Pick a state to continue.</p>}
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================================
-   SECTION 25b: LEARN
-   Six short, self-contained reference topics reachable from the Learn tab in
-   Your Account. Three are tailored to a state (planting times, what grows
-   well, what animals do well) and three are general market-farming reading.
-============================================================================ */
-const LEARN_TOPICS = [
-  { id: "planting", label: "Planting times", icon: Calendar, locationAware: true, blurb: "Best planting windows for your state", section: "Growing in your area", hero: { url: LEARN_PHOTO("12314915"), alt: "Hands planting a young vegetable seedling into rich soil" } },
-  { id: "crops", label: "What grows well here", icon: Sprout, locationAware: true, blurb: "Crops suited to your climate", section: "Growing in your area", hero: { url: LEARN_PHOTO("16723207"), alt: "A vibrant assortment of fresh vegetables in a wicker basket" } },
-  { id: "animals", label: "Animals that do well here", icon: PawPrint, locationAware: true, blurb: "Livestock and poultry for your area", section: "Growing in your area", hero: { url: LEARN_PHOTO("31875441"), alt: "A herd of goats grazing in a lush green pasture" } },
-  { id: "bugs", label: "Good bugs for your garden", icon: Bug, locationAware: false, blurb: "Meet the field guide of helpful garden insects", section: "Field guide" },
-  { id: "companions", label: "Companion planting pairs", icon: Link2, locationAware: false, blurb: "What to plant together — and what to avoid", section: "Field guide" },
-  { id: "soil", label: "Composting & soil health", icon: Recycle, locationAware: false, blurb: "Build the soil everything else depends on", section: "Field guide" },
-  { id: "pricing", label: "Pricing your produce fairly", icon: DollarSign, locationAware: false, blurb: "Simple ways to price your goods", section: "Running your stand" },
-  { id: "preserving", label: "Preserving your harvest", icon: Archive, locationAware: false, blurb: "Canning, drying, and storage basics", section: "Running your stand" },
-  { id: "marketing", label: "Marketing your stand", icon: Megaphone, locationAware: false, blurb: "How to present, photograph, and sell what you grow", section: "Running your stand" },
-];
-
-// Small rounded banner photo shared by every Learn panel — a picture up top,
-// a graceful gradient fallback if it fails to load, so the library always
-// feels alive without ever showing a broken image.
-function LearnHero({ src, alt }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-  if (!src || failed) {
-    return <div className="w-full h-36 sm:h-44 rounded-xl mb-4 bg-gradient-to-br from-emerald-100 via-amber-50 to-emerald-50" />;
-  }
-  return (
-    <div className="w-full h-36 sm:h-44 rounded-xl mb-4 overflow-hidden bg-stone-100">
-      <img
-        src={src}
-        alt={alt || ""}
-        loading="lazy"
-        decoding="async"
-        referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
-        className="w-full h-full object-cover"
-      />
-    </div>
-  );
-}
-
-// A single accordion-style item photo: fades in on mount, falls back to a
-// themed gradient tile (matching LearnHero's own fallback) if the photo
-// fails to load rather than leaving a broken image.
-function ItemPhoto({ src, alt, icon: Icon }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-  if (!src || failed) {
-    return (
-      <div className="w-full h-36 bg-gradient-to-br from-emerald-100 via-amber-50 to-emerald-50 flex items-center justify-center">
-        <Icon size={26} className="text-emerald-700/50" />
-      </div>
-    );
-  }
-  return (
-    <img
-      src={src}
-      alt={alt || ""}
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-      className="w-full h-36 object-cover cs-fade-anim"
-    />
-  );
-}
-
-// The accordion behind "what animals/crops do well here": one line is open
-// at a time, showing a picture of that specific item right underneath it.
-// Clicking another line closes the current picture and opens the new one.
-function ItemPickList({ items, icon, defaultOpen = 0 }) {
-  const [openIdx, setOpenIdx] = useState(defaultOpen);
-  return (
-    <div className="flex flex-col gap-2">
-      {items.map((label, i) => {
-        const open = openIdx === i;
-        return (
-          <div key={i} className="border border-stone-200 rounded-xl overflow-hidden bg-white">
-            <button
-              onClick={() => setOpenIdx(open ? -1 : i)}
-              className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
-            >
-              {React.createElement(icon, { size: 14, className: "text-emerald-700 shrink-0" })}
-              <span className="text-sm text-stone-700 flex-1">{label}</span>
-              <ChevronDown size={14} className={`text-stone-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-            </button>
-            {open && <ItemPhoto src={itemPhotoFor(label)} alt={label} icon={icon} />}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function LearnLocationPanel({ topic }) {
-  const { me } = useApp();
-  const homeLoc = splitCityState(me?.homeLocation?.label);
-  const guess = (homeLoc.state || "").toUpperCase().slice(0, 2);
-  const [stateCode, setStateCode] = useState(stateInfo(guess) ? guess : "");
-  const zone = zoneInfoFor(stateCode);
-  const topicMeta = LEARN_TOPICS.find((t) => t.id === topic);
-
-  return (
-    <div>
-      <LearnHero src={topicMeta?.hero?.url} alt={topicMeta?.hero?.alt} />
-      <div className="bg-white border border-stone-200 rounded-xl p-4 mb-5">
-        <label className="block cs-t11 font-semibold text-stone-500 mb-1.5">Show this for</label>
-        <select
-          value={stateCode}
-          onChange={(e) => setStateCode(e.target.value)}
-          className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm bg-white"
-        >
-          <option value="">Pick a state…</option>
-          {US_STATES.map((s) => (
-            <option key={s.code} value={s.code}>{s.name}</option>
-          ))}
-        </select>
-        <p className="cs-t10 text-stone-400 mt-1.5">Defaults to your home location — change it any time to see how another state compares.</p>
-      </div>
-
-      {!zone ? (
-        <p className="text-sm text-stone-400">Pick a state above to see guidance tailored to that area.</p>
-      ) : topic === "planting" ? (
-        <div>
-          <div className="bg-white border border-stone-200 rounded-xl p-4 mb-4">
-            <p className="text-sm font-semibold text-stone-800 mb-1">{zone.label}</p>
-            <p className="text-sm text-stone-500 mb-3">{zone.blurb}</p>
-            <div className="flex flex-wrap gap-4 text-sm">
-              <div><span className="cs-t10 font-bold text-stone-400 uppercase block mb-0.5">Typical last spring frost</span>{zone.frost.lastSpring}</div>
-              <div><span className="cs-t10 font-bold text-stone-400 uppercase block mb-0.5">Typical first fall frost</span>{zone.frost.firstFall}</div>
-              <div><span className="cs-t10 font-bold text-stone-400 uppercase block mb-0.5">Growing season</span>{zone.season}</div>
-            </div>
-          </div>
-          <div className="flex flex-col gap-4">
-            {zone.plantingGuide.map((g, i) => (
-              <div key={i} className="border border-stone-200 rounded-xl p-3.5 bg-white">
-                <p className="text-sm font-semibold text-emerald-800 mb-2.5">{g.window}</p>
-                <ItemPickList
-                  items={g.crops.split(",").map((s) => s.trim()).filter(Boolean)}
-                  icon={Sprout}
-                  defaultOpen={-1}
-                />
-              </div>
-            ))}
-          </div>
-          <p className="cs-t11 text-stone-400 mt-4">Rough guidance for the area, not a guarantee — always weigh it against your own local frost history. Tap any crop for a picture.</p>
-        </div>
-      ) : topic === "crops" ? (
-        <div>
-          <p className="text-sm text-stone-500 mb-4">{zone.blurb}</p>
-          <ItemPickList items={zone.bestCrops} icon={Sprout} />
-        </div>
-      ) : (
-        <div>
-          <p className="text-sm text-stone-500 mb-4">{zone.blurb}</p>
-          <ItemPickList items={zone.bestAnimals} icon={PawPrint} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LearnStaticPanel({ topic }) {
-  if (topic === "companions") {
-    const data = LEARN_STATIC.companions;
-    return (
-      <div>
-        <LearnHero src={data.hero?.url} alt={data.hero?.alt} />
-        <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
-        <p className="cs-t11 font-bold text-emerald-800 uppercase mb-2">Good pairings</p>
-        <div className="flex flex-col gap-2.5 mb-5">
-          {data.good.map((p, i) => (
-            <div key={i} className="border border-stone-200 rounded-xl p-3.5">
-              <p className="text-sm font-semibold text-stone-800 mb-1">{p.a} + {p.b}</p>
-              <p className="text-sm text-stone-500">{p.why}</p>
-            </div>
-          ))}
-        </div>
-        <p className="cs-t11 font-bold text-rose-700 uppercase mb-2">Keep apart</p>
-        <div className="flex flex-col gap-2.5">
-          {data.avoid.map((p, i) => (
-            <div key={i} className="border border-stone-200 rounded-xl p-3.5">
-              <p className="text-sm font-semibold text-stone-800 mb-1">{p.a} + {p.b}</p>
-              <p className="text-sm text-stone-500">{p.why}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  if (topic === "pricing") {
-    const data = LEARN_STATIC.pricing;
-    return (
-      <div>
-        <LearnHero src={data.hero?.url} alt={data.hero?.alt} />
-        <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
-        <div className="flex flex-col gap-3">
-          {data.sections.map((s, i) => (
-            <div key={i} className="border border-stone-200 rounded-xl p-3.5">
-              <p className="text-sm font-semibold text-stone-800 mb-1">{s.title}</p>
-              <p className="text-sm text-stone-500">{s.body}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  if (topic === "preserving") {
-    const data = LEARN_STATIC.preserving;
-    return (
-      <div>
-        <LearnHero src={data.hero?.url} alt={data.hero?.alt} />
-        <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
-        <div className="flex flex-col gap-3">
-          {data.methods.map((m, i) => (
-            <div key={i} className="border border-stone-200 rounded-xl p-3.5">
-              <p className="text-sm font-semibold text-stone-800 mb-1">{m.name}</p>
-              <p className="text-sm text-stone-500">{m.body}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  // "soil" and "marketing" share the same simple sections layout.
-  const data = LEARN_STATIC[topic];
-  return (
-    <div>
-      <LearnHero src={data.hero?.url} alt={data.hero?.alt} />
-      <p className="text-sm text-stone-500 mb-4">{data.intro}</p>
-      <div className="flex flex-col gap-3">
-        {data.sections.map((s, i) => (
-          <div key={i} className="border border-stone-200 rounded-xl p-3.5">
-            <p className="text-sm font-semibold text-stone-800 mb-1">{s.title}</p>
-            <p className="text-sm text-stone-500">{s.body}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// One "good bug" as a medium-sized popup — a picture, quick facts, why it
-// helps, how to keep it around, and what preys on it. Reuses the app's
-// standard Modal, which renders at a comfortable medium max-width.
-// Whole-subject bug photo: object-contain (never object-cover) so a tall or
-// oddly-framed macro shot never gets its head, legs, or wings cropped off —
-// letterboxed on a soft themed gradient instead of cutting the bug itself.
-// Falls back to the same gradient plus an emoji if the photo can't load.
-function BugPhoto({ src, alt, emoji, className = "" }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-  return (
-    <div className={`bg-gradient-to-br from-emerald-50 via-amber-50 to-emerald-100 flex items-center justify-center ${className}`}>
-      {!failed ? (
-        <img
-          src={src}
-          alt={alt || ""}
-          loading="lazy"
-          decoding="async"
-          referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
-          className="w-full h-full object-contain"
-        />
-      ) : (
-        <span className="text-4xl">{emoji || "🐛"}</span>
-      )}
-    </div>
-  );
-}
-
-function BugModal({ bug, onClose }) {
-  if (!bug) return null;
-  return (
-    <Modal open={!!bug} onClose={onClose} labelledBy="bug-title">
-      <BugPhoto src={bug.photo.url} alt={bug.photo.alt} emoji={bug.emoji} className="w-full h-48 sm:h-60 overflow-hidden rounded-t-3xl sm:rounded-t-3xl" />
-      <div className="p-5">
-        <div className="flex items-start justify-between gap-2 mb-1">
-          <div>
-            <h2 id="bug-title" className="text-lg font-bold text-stone-900" style={displayFont}>{bug.name}</h2>
-            <p className="text-sm text-emerald-700 font-semibold">{bug.tagline}</p>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="shrink-0 text-stone-400 hover:text-stone-600"><X size={20} /></button>
-        </div>
-
-        <p className="text-xs font-bold text-stone-400 uppercase mt-4 mb-2">Facts</p>
-        <ul className="flex flex-col gap-1.5 mb-4">
-          {bug.facts.map((f, i) => (
-            <li key={i} className="text-sm text-stone-600 flex items-start gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
-              {f}
-            </li>
-          ))}
-        </ul>
-
-        <p className="text-xs font-bold text-stone-400 uppercase mb-1">Why it's a good bug</p>
-        <p className="text-sm text-stone-600 mb-4">{bug.whyGood}</p>
-
-        <p className="text-xs font-bold text-emerald-800 uppercase mb-1">How to keep them around</p>
-        <p className="text-sm text-stone-600 mb-4">{bug.keepAlive}</p>
-
-        <p className="text-xs font-bold text-rose-700 uppercase mb-1">Watch out for these predators</p>
-        <p className="text-sm text-stone-600">{bug.predators}</p>
-      </div>
-    </Modal>
-  );
-}
-
-// The "good bugs" field guide — a tappable grid of cards, each opening a
-// medium popup with the full write-up. Purely a benevolent-nature-photos
-// section, on purpose, per the app's standing no-scary-imagery rule.
-function LearnBugsPanel() {
-  const [openBug, setOpenBug] = useState(null);
-  return (
-    <div>
-      <p className="text-sm text-stone-500 mb-4">
-        Every garden has a crew of insects working for you, free of charge. Get to know them so you don't mistake a helper for a pest — tap any card for the full write-up, including how to keep them around and what preys on them.
-      </p>
-      <div className="grid grid-cols-2 gap-3">
-        {GOOD_BUGS.map((bug) => (
-          <button
-            key={bug.id}
-            onClick={() => setOpenBug(bug)}
-            className="text-left border border-stone-200 rounded-xl overflow-hidden bg-white hover:shadow-md transition"
-          >
-            <BugPhoto src={bug.photo.url} alt={bug.photo.alt} emoji={bug.emoji} className="w-full h-28 overflow-hidden" />
-            <div className="p-2.5">
-              <p className="text-sm font-bold text-stone-900 leading-tight">{bug.name}</p>
-              <p className="cs-t10 text-emerald-700 font-semibold mt-0.5">{bug.tagline}</p>
-            </div>
-          </button>
-        ))}
-      </div>
-      <BugModal bug={openBug} onClose={() => setOpenBug(null)} />
-    </div>
-  );
-}
-
-function LearnScreen({ navigate, topic }) {
-  const current = LEARN_TOPICS.find((t) => t.id === topic) || LEARN_TOPICS[0];
-  const sections = useMemo(() => {
-    const order = [];
-    LEARN_TOPICS.forEach((t) => {
-      let bucket = order.find((s) => s.title === t.section);
-      if (!bucket) {
-        bucket = { title: t.section, items: [] };
-        order.push(bucket);
-      }
-      bucket.items.push(t);
-    });
-    return order;
-  }, []);
-
-  return (
-    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-      <div className="max-w-2xl mx-auto p-4">
-        <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
-          <ArrowLeft size={15} /> Back
-        </button>
-        <div className="flex items-center gap-2 mb-1">
-          <BookOpen size={18} className="text-emerald-800" />
-          <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide">The CropSwap Library</p>
-        </div>
-        <div className="flex items-center gap-2.5 mb-4">
-          <span className="w-10 h-10 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-800 shrink-0">
-            <current.icon size={18} />
-          </span>
-          <h1 className="text-xl font-bold text-stone-900" style={displayFont}>{current.label}</h1>
-        </div>
-
-        <div className="flex flex-col gap-3 mb-5">
-          {sections.map((sec) => (
-            <div key={sec.title}>
-              <p className="cs-t10 font-bold text-stone-400 uppercase mb-1.5">{sec.title}</p>
-              <div className="flex flex-wrap gap-1.5">
-                {sec.items.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => navigate({ screen: "learn", topic: t.id })}
-                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${t.id === current.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-600"}`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {current.id === "bugs" ? <LearnBugsPanel /> : current.locationAware ? <LearnLocationPanel topic={current.id} /> : <LearnStaticPanel topic={current.id} />}
       </div>
     </div>
   );
@@ -11014,7 +10405,6 @@ function RootShell() {
             {route.screen === "dashboard" && <VendorDashboard navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
-            {route.screen === "learn" && <LearnScreen navigate={navigate} topic={route.topic} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
             {route.screen === "profile" && <PublicProfileView userId={route.userId} navigate={navigate} />}
           </main>
