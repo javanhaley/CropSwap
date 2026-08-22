@@ -2501,14 +2501,33 @@ function useMarketData() {
     setProducts(nextProducts);
   }, []);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (retry = 0) => {
     const res = await readJSON(MARKET_KEY, true, null);
-    const stored = res.ok ? res.value : null;
+    // A failed read (network hiccup, or a token-refresh race on mobile that
+    // fires a request on the about-to-expire access token and gets a
+    // transient 401) is NOT the same as the key being missing — readJSON
+    // already tells the two apart via res.ok. Collapsing "failed" into
+    // "missing" here once caused the whole shared market to be silently
+    // reseeded with demo shops over a real one, because a single bad
+    // request looked identical to a first-ever run. So: never reseed on a
+    // failed read. Retry a couple times with a short backoff instead, and
+    // if it still hasn't recovered, just leave things as they are — a
+    // subsequent load (nav change, manual refresh) will try again.
+    if (!res.ok) {
+      if (retry < 3) {
+        setTimeout(() => loadAll(retry + 1), 800 * (retry + 1));
+      } else {
+        setLoading(false);
+      }
+      return;
+    }
+    const stored = res.value;
     // Any stored market object — even one with zero shops — means the key
     // has already been initialized (whether by first-run seeding or by an
-    // intentional reset). Only a genuinely missing key (stored === null)
-    // should trigger demo reseeding; otherwise an intentionally emptied
-    // market would silently repopulate with fake shops on next load.
+    // intentional reset). Only a genuinely missing key (stored === null,
+    // confirmed by a *successful* read) should trigger demo reseeding;
+    // otherwise an intentionally emptied market would silently repopulate
+    // with fake shops on next load.
     if (stored && Array.isArray(stored.shops)) {
       // Storefronts belonging to a lapsed (cancelled/expired) plan are kept
       // around, inactive, for ABANDON_DAYS in case the owner re-subscribes —
