@@ -50,6 +50,11 @@ const CATEGORIES = [
   { id: "Tree", label: "Trees & Plants", tint: "#3f6b4a", accent: "bg-emerald-100 text-emerald-700 border-emerald-200" },
   { id: "Bug", label: "Bugs & Pollinators", tint: "#a1741f", accent: "bg-amber-100 text-amber-700 border-amber-200" },
   { id: "Dairy", label: "Dairy & Eggs", tint: "#9a7b2e", accent: "bg-yellow-100 text-yellow-700 border-yellow-200" },
+  { id: "Baked", label: "Baked Goods", tint: "#8b5e34", accent: "bg-orange-100 text-orange-800 border-orange-200" },
+  // Catch-all: anything a vendor's listing doesn't fit elsewhere. Also
+  // doubles as the "everything the other filters don't cover" option in
+  // the filter panel, since every listing must pick one category.
+  { id: "Other", label: "Other", tint: "#6b7280", accent: "bg-stone-100 text-stone-600 border-stone-200" },
 ];
 
 /* Small drawn marks instead of emoji. Emoji render as another platform's
@@ -62,6 +67,8 @@ function CategoryMark({ id, size = 14, className = "" }) {
     Tree: <><path d="M12 21v-6" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" /><circle cx="12" cy="9" r="6" /></>,
     Bug: <><ellipse cx="12" cy="14" rx="5" ry="6" /><circle cx="12" cy="6" r="2.6" /><path d="M7 10 3 7M17 10l4-3" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" /></>,
     Dairy: <><ellipse cx="12" cy="13" rx="6" ry="8" /></>,
+    Baked: <><path d="M4 15c0-4 3.5-7 8-7s8 3 8 7c0 2.8-3.6 5-8 5s-8-2.2-8-5Z" /><path d="M8.5 9c1-1.7 2-2.5 3.5-2.5s2.5.8 3.5 2.5" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" /></>,
+    Other: <><circle cx="7" cy="12" r="2.3" /><circle cx="12" cy="12" r="2.3" /><circle cx="17" cy="12" r="2.3" /></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill={cat.tint} className={className} aria-hidden="true">
@@ -437,10 +444,10 @@ const ART_FOR_KEY = {
   microbes: "worm", garlic: "garlic", greens: "greens", radish: "root", tomato: "tomato",
   basil: "greens", peas: "greens", carrot: "carrot", lettuce: "greens", potato: "root",
   onion: "garlic", peach: "peach", pear: "pear", houseplant: "houseplant", pomegranate: "apple",
-  truffle: "mushroom", forest: "tree", farm: "egg",
+  truffle: "mushroom", forest: "tree", farm: "egg", bread: "grain",
 };
 
-const ART_FOR_CATEGORY = { Fruit: "apple", Veggie: "greens", Tree: "tree", Bug: "bee", Dairy: "egg" };
+const ART_FOR_CATEGORY = { Fruit: "apple", Veggie: "greens", Tree: "tree", Bug: "bee", Dairy: "egg", Baked: "grain", Other: "sprout" };
 
 function ProduceArt({ artKey, category }) {
   const kind = (artKey && PLATES[artKey] ? artKey : null) || (artKey && ART_FOR_KEY[artKey]) || ART_FOR_CATEGORY[category] || "sprout";
@@ -708,6 +715,20 @@ const IMG = {
   truffle: { url: PHOTO("photo-1760288256101-bb930c69bb61"), by: null, source: "Unsplash" },
   forest: { url: PHOTO("photo-1441974231531-c6227db76b6e"), by: null, source: "Unsplash" },
   farm: { url: PHOTO("photo-1589923188900-85dae523342b"), by: null, source: "Unsplash" },
+  root: { url: PHOTO("photo-1533231040102-5ec7a63e6d0a"), by: null, source: "Unsplash" },
+  squash: { url: PHOTO("photo-1570586437263-ab629fccc818"), by: null, source: "Unsplash" },
+  mushroom: { url: PHOTO("photo-1543904856-8257e34283d9"), by: null, source: "Unsplash" },
+  grain: { url: PHOTO("photo-1714168526009-2d0d333640d5"), by: null, source: "Unsplash" },
+  citrus: { url: PHOTO("photo-1585939268339-886c9643ee98"), by: null, source: "Unsplash" },
+  tree: { url: PHOTO("photo-1782855242105-21215cefe24e"), by: null, source: "Unsplash" },
+  sprout: { url: PHOTO("photo-1734794049686-38f3e8df8b98"), by: null, source: "Unsplash" },
+  egg: { url: PHOTO("photo-1506976785307-8732e854ad03"), by: null, source: "Unsplash" },
+  bread: { url: PHOTO("photo-1566698629409-787a68fc5724"), by: null, source: "Unsplash" },
+  // Aliases: the icon-picker keys are "bee" (singular) and "grapes" (plural),
+  // but the existing verified photos above are keyed "bees"/"grape" — reuse
+  // those same photo IDs here under the icon-picker's own key spelling.
+  bee: { url: PHOTO("photo-1558642452-9d2a7deb7f62"), by: null, source: "Unsplash" },
+  grapes: { url: PHOTO("photo-1537640538966-79f369143f8f"), by: null, source: "Unsplash" },
 };
 
 // Category tiles: layered gradients evoking real materials (soil, sky, honey,
@@ -720,6 +741,8 @@ const CATEGORY_TEXTURE = {
   Tree: "linear-gradient(160deg,#eef1ec 0%,#cfd9cd 100%)",
   Bug: "linear-gradient(160deg,#f7f1e4 0%,#e5d7bd 100%)",
   Dairy: "linear-gradient(160deg,#f9f4e8 0%,#ece0c8 100%)",
+  Baked: "linear-gradient(160deg,#f8f0e6 0%,#e8d2b8 100%)",
+  Other: "linear-gradient(160deg,#f2f2f0 0%,#dcdcd8 100%)",
 };
 
 /* ============================================================================
@@ -5273,7 +5296,10 @@ function ShopCoverPhoto({ shop }) {
 
 function ShopThumb({ shop, className = "" }) {
   const [failed, setFailed] = useState(false);
-  const uploaded = usePhotoUrl(shop.coverPhotoId);
+  // Deliberately its own field, separate from the cover/background photo —
+  // a shop's circular logo and its full-width banner are two different
+  // photos a vendor should be able to set independently.
+  const uploaded = usePhotoUrl(shop.logoPhotoId);
   if (uploaded) {
     return <img src={uploaded} alt="" className={`w-full h-full object-cover ${className}`} />;
   }
@@ -6517,7 +6543,7 @@ function LayoutTab({ shop }) {
         ))}
       </div>
 
-      <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Cover photo</p>
+      <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Cover photo (background)</p>
       <div className="mb-5">
         <PhotoPicker
           photoId={shop.coverPhotoId}
@@ -6525,6 +6551,19 @@ function LayoutTab({ shop }) {
           label="Upload a cover photo"
           hint="Shown across the top of your storefront"
           aspect={16 / 7}
+          size="lg"
+        />
+      </div>
+
+      <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Profile icon (circle logo)</p>
+      <div className="mb-5">
+        <PhotoPicker
+          photoId={shop.logoPhotoId}
+          onChange={(id) => updateShop(shop.id, { logoPhotoId: id })}
+          shape="round"
+          square
+          label="Upload a profile photo"
+          hint="Your shop's circular icon — separate from the cover photo above"
           size="lg"
         />
       </div>
@@ -6901,6 +6940,7 @@ const PRODUCT_ICON_CHOICES = [
   { key: "pear", label: "Pear" }, { key: "tree", label: "Tree" },
   { key: "sprout", label: "Seedling" }, { key: "houseplant", label: "Plant" },
   { key: "bee", label: "Bees" }, { key: "egg", label: "Eggs & dairy" },
+  { key: "bread", label: "Bread & baked" },
 ];
 
 function AddProductForm({ shop, onClose, editing }) {
@@ -6918,6 +6958,11 @@ function AddProductForm({ shop, onClose, editing }) {
   const save = async () => {
     if (!canSave || saving) return;
     setSaving(true);
+    // The chosen icon now carries a real stock photo (see IMG) rather than
+    // just a cartoon — set it as the listing's fallback image/credit so a
+    // vendor who skips uploading their own photo still gets a realistic
+    // one. An uploaded photoId still always wins at render time.
+    const stock = IMG[art];
     const payload = {
       name: name.trim(),
       category,
@@ -6926,6 +6971,8 @@ function AddProductForm({ shop, onClose, editing }) {
       desc: desc.trim(),
       photoId,
       art,
+      image: stock ? stock.url : null,
+      credit: stock ? { by: stock.by, source: stock.source } : null,
       emoji: "",
     };
     if (editing) {
@@ -6965,25 +7012,41 @@ function AddProductForm({ shop, onClose, editing }) {
 
           <div className="flex items-center gap-3 my-4">
             <span className="flex-1 h-px bg-stone-200" />
-            <span className="cs-t11 font-semibold text-stone-400 uppercase">or pick an icon</span>
+            <span className="cs-t11 font-semibold text-stone-400 uppercase">or pick a photo</span>
             <span className="flex-1 h-px bg-stone-200" />
           </div>
 
           <div className="grid grid-cols-5 gap-2 mb-5">
-            {PRODUCT_ICON_CHOICES.map((choice) => (
-              <button
-                key={choice.key}
-                onClick={() => setArt(choice.key)}
-                className={`rounded-xl overflow-hidden border-2 transition ${art === choice.key ? "border-emerald-700" : "border-stone-200 hover:border-stone-300"}`}
-                aria-label={choice.label}
-                aria-pressed={art === choice.key}
-                title={choice.label}
-              >
-                <span className="block aspect-square">
-                  <ProduceArt artKey={choice.key} category={category} />
-                </span>
-              </button>
-            ))}
+            {PRODUCT_ICON_CHOICES.map((choice) => {
+              const stock = IMG[choice.key];
+              return (
+                <button
+                  key={choice.key}
+                  onClick={() => setArt(choice.key)}
+                  className={`rounded-xl overflow-hidden border-2 transition ${art === choice.key ? "border-emerald-700" : "border-stone-200 hover:border-stone-300"}`}
+                  aria-label={choice.label}
+                  aria-pressed={art === choice.key}
+                  title={choice.label}
+                >
+                  <span className="block aspect-square relative">
+                    {/* Drawn plate underneath as a graceful fallback if the
+                        stock photo is slow or unreachable; matches the same
+                        loading pattern used everywhere else in the app. */}
+                    <ProduceArt artKey={choice.key} category={category} />
+                    {stock && (
+                      <img
+                        src={stock.url}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    )}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Details</p>
@@ -8424,6 +8487,15 @@ function ProfileCardModal({ target, onClose }) {
   );
 }
 
+// Renders nothing (leaving the gradient behind it showing through) until an
+// uploaded background photo is reachable — same fade-in-over-a-default
+// pattern used for shop cover photos.
+function ProfileBackgroundPhoto({ photoId }) {
+  const url = usePhotoUrl(photoId);
+  if (!url) return null;
+  return <img src={url} alt="" className="absolute inset-0 w-full h-full object-cover" />;
+}
+
 // A lightweight public profile for anyone who isn't you — reached today from
 // the small avatar on a favorite notification. Looks up the same public
 // "users:{id}" record the app already keeps for messaging and the blocked-
@@ -8472,8 +8544,16 @@ function PublicProfileView({ userId, navigate }) {
         <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-5">
           <ArrowLeft size={15} /> Back
         </button>
-        <div className="flex flex-col items-center text-center">
-          <Avatar emoji={user.avatar} name={user.name} size="lg" photoId={user.avatarPhotoId} />
+        {/* Background photo and avatar are deliberately two separate fields
+            (profileBackgroundId vs avatarPhotoId) so a person can set one
+            without touching the other. */}
+        <div className="relative h-28 rounded-2xl overflow-hidden bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-500">
+          <ProfileBackgroundPhoto photoId={user.profileBackgroundId} />
+        </div>
+        <div className="flex flex-col items-center text-center -mt-10">
+          <span className="rounded-full border-4 border-white shadow-lg overflow-hidden bg-white">
+            <Avatar emoji={user.avatar} name={user.name} size="lg" photoId={user.avatarPhotoId} />
+          </span>
           <h1 className="text-xl font-bold text-stone-900 mt-3" style={displayFont}>{user.name}</h1>
           {user.createdAt && (
             <p className="cs-t11 text-stone-400 mt-1">
@@ -8695,6 +8775,16 @@ function AccountModal({ open, onClose }) {
               className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm mb-2 outline-none focus:border-emerald-700"
             />
             <p className="text-xs text-stone-400">Member since {new Date(me.createdAt).toLocaleDateString()}</p>
+
+            <p className="text-xs font-bold text-stone-400 uppercase mb-1.5 mt-4">Profile background</p>
+            <PhotoPicker
+              photoId={me.profileBackgroundId}
+              onChange={(id) => updateMe({ profileBackgroundId: id })}
+              label="Upload a background photo"
+              hint="Shown behind your photo on your public profile — separate from your avatar above"
+              aspect={16 / 7}
+              size="lg"
+            />
           </div>
         )}
 
@@ -9212,7 +9302,7 @@ function MassMessageComposer({ me, shop, subscribers, onSent, showToast }) {
         multiline
         rows={3}
         placeholder={`What's new at ${shop.name}?`}
-        label="Broadcast message"
+        label="Message to send to all"
         className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700 mb-2"
       />
       <div className="flex items-center justify-between gap-2">
@@ -9222,7 +9312,7 @@ function MassMessageComposer({ me, shop, subscribers, onSent, showToast }) {
           disabled={sending || !text.trim() || !activeSubs.length}
           className="bg-emerald-800 text-white text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-40 shrink-0"
         >
-          {sending ? "Sending…" : "Send broadcast"}
+          {sending ? "Sending…" : "Send to all"}
         </button>
       </div>
     </div>
@@ -9610,6 +9700,44 @@ function VendorDashboard({ navigate }) {
           />
         </div>
 
+        <DashPanel title="This week's digest" icon={Calendar} className="mb-4" info="A data-rich recap of the last 7 days vs. the 7 days before — views, favorites, messages, reviews, whichever metric moved the most, and the top search terms shoppers are typing right now.">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
+            <DigestChip tint="emerald" icon={Eye} label="Views" value={digest.views} prior={digest.viewsPrior} />
+            <DigestChip tint="rose" icon={Heart} label="Favorites" value={digest.favorites} prior={digest.favoritesPrior} />
+            <DigestChip tint="blue" icon={MessageCircle} label="Messages" value={digest.messages} prior={digest.messagesPrior} />
+            <DigestChip tint="amber" icon={Star} label="New reviews" value={digest.reviews} />
+          </div>
+
+          {digest.biggestMover && digest.biggestMover.pct !== 0 && (
+            <div className={`flex items-center gap-2 rounded-xl px-3 py-2 mb-3 ${digest.biggestMover.pct > 0 ? "bg-emerald-50 border border-emerald-200" : "bg-rose-50 border border-rose-200"}`}>
+              {digest.biggestMover.pct > 0 ? <TrendingUp size={15} className="text-emerald-700 shrink-0" /> : <TrendingDown size={15} className="text-rose-600 shrink-0" />}
+              <p className={`text-xs font-semibold ${digest.biggestMover.pct > 0 ? "text-emerald-800" : "text-rose-800"}`}>
+                Biggest mover: {digest.biggestMover.label} {digest.biggestMover.pct > 0 ? "up" : "down"} {Math.abs(digest.biggestMover.pct)}% vs. last week ({digest.biggestMover.prior} → {digest.biggestMover.now})
+              </p>
+            </div>
+          )}
+
+          {digest.topSearches.length > 0 && (
+            <div>
+              <p className="cs-t11 text-stone-400 mb-1.5">Trending searches this week</p>
+              <div className="space-y-1.5">
+                {digest.topSearches.map((t, i) => (
+                  <div key={t.term} className="flex items-center gap-2">
+                    <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${i === 0 ? "bg-violet-600" : i === 1 ? "bg-violet-400" : "bg-violet-300"}`}>
+                      {i + 1}
+                    </span>
+                    <span className="text-xs font-semibold text-stone-700 flex-1 truncate">{t.term}</span>
+                    <div className="w-24 h-1.5 rounded-full bg-stone-100 overflow-hidden hidden sm:block">
+                      <div className="h-full bg-violet-500 rounded-full" style={{ width: `${Math.max(8, Math.round((t.n / digest.topSearches[0].n) * 100))}%` }} />
+                    </div>
+                    <span className="text-[11px] font-mono font-bold text-violet-700 w-4 text-right">{t.n}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </DashPanel>
+
         <DashPanel title="Views over time" icon={TrendingUp} className="mb-4" info="Every view of your storefront or a listing, plotted across the date range you picked above. Look for spikes after you post something new.">
           <div style={{ width: "100%", height: 190 }}>
             <ResponsiveContainer>
@@ -9799,47 +9927,9 @@ function VendorDashboard({ navigate }) {
           </DashPanel>
         </div>
 
-        <DashPanel title="This week's digest" icon={Calendar} className="mb-4" info="A data-rich recap of the last 7 days vs. the 7 days before — views, favorites, messages, reviews, whichever metric moved the most, and the top search terms shoppers are typing right now.">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
-            <DigestChip tint="emerald" icon={Eye} label="Views" value={digest.views} prior={digest.viewsPrior} />
-            <DigestChip tint="rose" icon={Heart} label="Favorites" value={digest.favorites} prior={digest.favoritesPrior} />
-            <DigestChip tint="blue" icon={MessageCircle} label="Messages" value={digest.messages} prior={digest.messagesPrior} />
-            <DigestChip tint="amber" icon={Star} label="New reviews" value={digest.reviews} />
-          </div>
-
-          {digest.biggestMover && digest.biggestMover.pct !== 0 && (
-            <div className={`flex items-center gap-2 rounded-xl px-3 py-2 mb-3 ${digest.biggestMover.pct > 0 ? "bg-emerald-50 border border-emerald-200" : "bg-rose-50 border border-rose-200"}`}>
-              {digest.biggestMover.pct > 0 ? <TrendingUp size={15} className="text-emerald-700 shrink-0" /> : <TrendingDown size={15} className="text-rose-600 shrink-0" />}
-              <p className={`text-xs font-semibold ${digest.biggestMover.pct > 0 ? "text-emerald-800" : "text-rose-800"}`}>
-                Biggest mover: {digest.biggestMover.label} {digest.biggestMover.pct > 0 ? "up" : "down"} {Math.abs(digest.biggestMover.pct)}% vs. last week ({digest.biggestMover.prior} → {digest.biggestMover.now})
-              </p>
-            </div>
-          )}
-
-          {digest.topSearches.length > 0 && (
-            <div>
-              <p className="cs-t11 text-stone-400 mb-1.5">Trending searches this week</p>
-              <div className="space-y-1.5">
-                {digest.topSearches.map((t, i) => (
-                  <div key={t.term} className="flex items-center gap-2">
-                    <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${i === 0 ? "bg-violet-600" : i === 1 ? "bg-violet-400" : "bg-violet-300"}`}>
-                      {i + 1}
-                    </span>
-                    <span className="text-xs font-semibold text-stone-700 flex-1 truncate">{t.term}</span>
-                    <div className="w-24 h-1.5 rounded-full bg-stone-100 overflow-hidden hidden sm:block">
-                      <div className="h-full bg-violet-500 rounded-full" style={{ width: `${Math.max(8, Math.round((t.n / digest.topSearches[0].n) * 100))}%` }} />
-                    </div>
-                    <span className="text-[11px] font-mono font-bold text-violet-700 w-4 text-right">{t.n}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </DashPanel>
-
-        <DashPanel title="Mailing list & mass messages" icon={Megaphone} className="mb-4" info="Everyone who has ever messaged you first joins your mailing list automatically. Send them all one broadcast message at once — delivered as an in-app message + notification.">
+        <DashPanel title="Mailing list & mass messages" icon={Megaphone} className="mb-4" info="Everyone who has ever messaged you first joins your mailing list automatically. Send them all one message at once — delivered as an in-app message + notification.">
           <p className="cs-t11 text-stone-400 mb-3">
-            {mailing.list.length} subscriber{mailing.list.length === 1 ? "" : "s"} — anyone who messages you gets added automatically. Broadcasts deliver as an in-app message + notification, not an outside email.
+            {mailing.list.length} subscriber{mailing.list.length === 1 ? "" : "s"} — anyone who messages you gets added automatically. Messages sent to all deliver as an in-app message + notification, not an outside email.
           </p>
           <ToolLock locked={!premium} navigate={navigate} label="Premium — send mass messages">
             <MassMessageComposer me={me} shop={shop} subscribers={mailing.list} onSent={mailing.reload} showToast={showToast} />
