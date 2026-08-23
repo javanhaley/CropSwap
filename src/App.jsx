@@ -4982,12 +4982,20 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
           )}
         </button>
 
-        <button onClick={onOpenAccount} className="shrink-0 relative w-8 h-8 flex items-center justify-center" aria-label="Account">
+        <button onClick={onOpenAccount} className="shrink-0 relative w-8 h-8 flex items-center justify-center" aria-label={me ? "Account" : "Sign up or log in"}>
           {me?.avatarPhotoId ? (
             <Avatar emoji={me.avatar} name={me.name} size="sm" photoId={me.avatarPhotoId} />
-          ) : (
+          ) : me ? (
             <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-50 text-emerald-800">
               <SproutMark size={16} />
+            </span>
+          ) : (
+            // Signed out (including a brand-new guest who hasn't created a
+            // profile yet): a blank, generic headshot rather than the sprout
+            // mark, so the icon itself signals "you're not signed in" before
+            // they even tap it.
+            <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-stone-100 text-stone-400">
+              <User size={16} />
             </span>
           )}
           {unreadCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-600 border-2 border-white" />}
@@ -13187,14 +13195,14 @@ const AUTH_REASON_BY_SCREEN = {
 // to that full flow; anything else (the X, or tapping outside) just closes
 // the card and leaves them right where they were, still browsing.
 const AUTH_PROMPT_W = 272;
-function AuthPromptPopover({ prompt, onSignUp, onDismiss }) {
+function AuthPromptPopover({ prompt, onSignUp, onLogIn, onDismiss }) {
   const { viewportHeight } = useApp();
   const [style, setStyle] = useState(null);
 
   useEffect(() => {
     const vh = viewportHeight || window.innerHeight;
     const vw = window.innerWidth;
-    const cardH = 148; // rough estimate — icon + title + line + button
+    const cardH = 148 + (onLogIn ? 28 : 0); // rough estimate — icon + title + line + button(s)
     const anchor = prompt?.anchor;
     let left, top;
     if (anchor) {
@@ -13229,6 +13237,11 @@ function AuthPromptPopover({ prompt, onSignUp, onDismiss }) {
         <button onClick={onSignUp} className="w-full bg-emerald-800 hover:bg-emerald-700 text-white text-sm font-semibold py-2 rounded-xl transition">
           Sign up free
         </button>
+        {onLogIn && (
+          <button onClick={onLogIn} className="w-full text-center text-xs font-semibold text-stone-500 hover:text-emerald-800 mt-2.5 py-1">
+            Already have an account? Log in
+          </button>
+        )}
       </div>
     </div>
   );
@@ -13573,7 +13586,7 @@ function RootShell() {
   // asked for it (see requireAuth / navigate above) — never up front.
   if (authFlow && !me) {
     if (!hasSession) {
-      return <AuthGate reason={authFlow.reason} onCancel={() => setAuthFlow(null)} />;
+      return <AuthGate reason={authFlow.reason} onCancel={() => setAuthFlow(null)} initialMode={authFlow.mode || "signin"} />;
     }
     return (
       <Onboarding
@@ -13695,7 +13708,11 @@ function RootShell() {
           prompt={authPrompt}
           onDismiss={() => setAuthPrompt(null)}
           onSignUp={() => {
-            setAuthFlow({ reason: authPrompt.reason, pendingRoute: authPrompt.pendingRoute });
+            setAuthFlow({ reason: authPrompt.reason, pendingRoute: authPrompt.pendingRoute, mode: "signup" });
+            setAuthPrompt(null);
+          }}
+          onLogIn={() => {
+            setAuthFlow({ reason: authPrompt.reason, pendingRoute: authPrompt.pendingRoute, mode: "signin" });
             setAuthPrompt(null);
           }}
         />

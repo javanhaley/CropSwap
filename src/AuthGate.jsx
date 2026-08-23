@@ -9,8 +9,8 @@ const bodyFont = { fontFamily: "'Inter', sans-serif" };
 // itself never asks for a password — but a deployed, multi-device app needs a
 // real account behind that friendly profile, so this is the thin real-auth
 // layer the rest of the app (and Supabase RLS) relies on.
-export default function AuthGate({ onSignedIn, reason, onCancel }) {
-  const [mode, setMode] = useState("signin"); // signin | signup
+export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "signin" }) {
+  const [mode, setMode] = useState(initialMode); // signin | signup
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
