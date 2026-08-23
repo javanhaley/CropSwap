@@ -2319,6 +2319,41 @@ async function moderateText(text) {
   }
 }
 
+// Fast, synchronous first line of defense — runs the instant someone hits
+// "Post review", before anything reaches the network. It exists to catch the
+// blatant stuff (slurs, explicit profanity, vulgar/hateful emoji) and stop it
+// with a clear explanation immediately, rather than letting it post and only
+// getting pulled after the async screener above catches up (which is the
+// right tradeoff for subtler cases, but not for content this obvious). The
+// two layers are complementary: this one is instant but only catches exact
+// matches; moderateText() is slower but understands context and phrasing
+// this can't.
+//
+// Deliberately narrow on emoji: this is a produce marketplace, so fruit/veg
+// emoji (peaches, eggplants, etc.) are never treated as violations here even
+// though they get used as innuendo elsewhere — blocking someone's honest
+// "these peaches were amazing" review would be a worse outcome than letting
+// genuine innuendo slip through to the AI screener.
+const BLOCKED_REVIEW_WORDS = [
+  "fuck", "fucking", "fucker", "shit", "bullshit", "bitch", "asshole", "bastard",
+  "cunt", "dick", "piss", "cock", "pussy", "whore", "slut",
+  "nigger", "nigga", "fag", "faggot", "retard", "retarded", "spic", "chink", "kike", "tranny",
+  "porn", "pornographic", "nude", "nudes", "blowjob", "handjob", "cumshot", "xxx",
+];
+const BLOCKED_REVIEW_EMOJI = ["🖕", "💀", "☠️"];
+
+function containsBlockedContent(text) {
+  if (!text) return { blocked: false };
+  for (const emoji of BLOCKED_REVIEW_EMOJI) {
+    if (text.includes(emoji)) return { blocked: true, reason: "emoji" };
+  }
+  const lower = text.toLowerCase();
+  for (const word of BLOCKED_REVIEW_WORDS) {
+    if (new RegExp(`(^|[^a-z])${word}([^a-z]|$)`, "i").test(lower)) return { blocked: true, reason: "language" };
+  }
+  return { blocked: false };
+}
+
 /* ============================================================================
    SECTION 8: DATA HOOKS
 ============================================================================ */
@@ -5684,6 +5719,65 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
 /* ============================================================================
    SECTION 16: REVIEWS (shared by shop + product screens)
 ============================================================================ */
+// Shown the instant containsBlockedContent() catches something, so the
+// person understands why their review didn't post rather than just seeing
+// it silently refuse to submit.
+function TosWarningModal({ open, onClose }) {
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="tos-warning-title">
+      <div className="p-6">
+        <div className="w-11 h-11 rounded-full bg-rose-100 text-rose-700 flex items-center justify-center mb-3">
+          <ShieldAlert size={22} />
+        </div>
+        <h2 id="tos-warning-title" className="text-lg font-bold text-stone-900" style={displayFont}>This can't be posted</h2>
+        <p className="text-sm text-stone-600 mt-2">
+          That review contains language or content that goes against CropSwap's Terms &amp; Conditions — things
+          like profanity, slurs, explicit content, or hateful/vulgar imagery aren't allowed anywhere on the app,
+          including in reviews.
+        </p>
+        <p className="text-sm text-stone-600 mt-2">Please rewrite it and try again.</p>
+        <button onClick={onClose} className="w-full mt-4 px-4 py-2.5 rounded-lg text-sm font-semibold bg-stone-900 text-white">Got it</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Reporting a review offers two distinct paths: an actual content violation
+// (re-screened immediately, same pipeline as flagReview always used), or a
+// review that just seems fake/bad-faith, which nothing here can verify
+// automatically — that one is only ever logged for a human to look at, never
+// auto-hidden, so this can't be weaponized to silently bury real negative
+// feedback.
+function ReportReviewModal({ review, onClose, onReportContent, onReportSuspicious, busy }) {
+  return (
+    <Modal open={!!review} onClose={onClose} labelledBy="report-review-title">
+      <div className="p-6">
+        <h2 id="report-review-title" className="text-lg font-bold text-stone-900" style={displayFont}>Report this review</h2>
+        <p className="text-sm text-stone-600 mt-1.5 mb-4">What's the issue?</p>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={onReportContent}
+            disabled={busy}
+            className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 disabled:opacity-50"
+          >
+            <span className="block text-sm font-semibold text-stone-800">Inappropriate content</span>
+            <span className="block text-xs text-stone-500 mt-0.5">Swearing, hate speech, explicit content, or similar</span>
+          </button>
+          <button
+            onClick={onReportSuspicious}
+            disabled={busy}
+            className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 disabled:opacity-50"
+          >
+            <span className="block text-sm font-semibold text-stone-800">Doesn't seem genuine</span>
+            <span className="block text-xs text-stone-500 mt-0.5">e.g. a low rating from someone who never visited or bought anything</span>
+          </button>
+        </div>
+        <button onClick={onClose} disabled={busy} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
 function ReviewSection({ entityType, entityId, ownerId, shopId }) {
   const { me, updateShop, updateProduct, shopsById, showToast, helpfulMarks, toggleHelpfulMark, openProfileCard } = useApp();
   const handleStats = useCallback(
@@ -5721,6 +5815,35 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
   const [replyDraft, setReplyDraft] = useState("");
   const [replyBusy, setReplyBusy] = useState(false);
   const [pendingRespHelpful, setPendingRespHelpful] = useState(null);
+  const [tosWarning, setTosWarning] = useState(false);
+  const [reportTarget, setReportTarget] = useState(null);
+  const [reportBusy, setReportBusy] = useState(false);
+
+  // Logs to the same shared reports:queue the message-report flow already
+  // writes to (see MessagesScreen's handleReport) — one queue, tagged by
+  // `type`, is what the admin tooling planned for later will read from.
+  const logReviewReport = useCallback(
+    async (review, type, extra = {}) => {
+      const report = {
+        id: uid("report"),
+        type,
+        reporterId: me.id,
+        reportedUserId: review.authorId,
+        reportedUserName: review.authorName,
+        reviewId: review.id,
+        entityType,
+        entityId,
+        shopId: shopId || (entityType === "shop" ? entityId : null),
+        reviewSnapshot: { rating: review.rating, body: review.body, createdAt: review.createdAt },
+        createdAt: Date.now(),
+        status: "open",
+        ...extra,
+      };
+      const existing = await getJSON("reports:queue", true, []);
+      await setJSON("reports:queue", [report, ...existing].slice(0, 200), true);
+    },
+    [me, entityType, entityId, shopId]
+  );
 
   const handleHelpful = async (reviewId) => {
     if (!me || pendingHelpful) return;
@@ -5738,11 +5861,37 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
     setPendingRespHelpful(null);
   };
 
-  const handleFlag = async (reviewId) => {
-    setFlagState((s) => ({ ...s, [reviewId]: "checking" }));
-    const { outcome } = await flagReview(reviewId, me.id);
-    setFlagState((s) => ({ ...s, [reviewId]: outcome }));
+  // "Inappropriate content": re-runs the AI screener immediately (same
+  // pipeline submitReview always uses) AND logs the outcome to reports:queue,
+  // so even an auto-resolved report leaves a trail for the admin tooling
+  // planned for later — not just the unresolved "suspicious" reports below.
+  const handleReportContent = async (review) => {
+    setReportBusy(true);
+    setFlagState((s) => ({ ...s, [review.id]: "checking" }));
+    const { outcome } = await flagReview(review.id, me.id);
+    setFlagState((s) => ({ ...s, [review.id]: outcome }));
+    await logReviewReport(review, "review_content", {
+      outcome,
+      status: outcome === "removed" ? "auto_removed" : "auto_cleared",
+    });
+    setReportBusy(false);
+    setReportTarget(null);
     if (outcome === "removed") showToast("Review removed — thanks for reporting it");
+    else showToast("Reported — our screener found no violation, but it's logged for our team");
+  };
+
+  // "Doesn't seem genuine": nothing here can actually verify whether someone
+  // visited a shop or bought anything, so — unlike a content violation —
+  // this never auto-hides the review. It only ever queues for a human to
+  // weigh in, which also means it can't be weaponized to bury real negative
+  // feedback just by claiming it's fake.
+  const handleReportSuspicious = async (review) => {
+    setReportBusy(true);
+    await logReviewReport(review, "review_suspicious");
+    setFlagState((s) => ({ ...s, [review.id]: "flagged_suspicious" }));
+    setReportBusy(false);
+    setReportTarget(null);
+    showToast("Thanks — flagged for our team to review");
   };
 
   const handleDeleteReview = async (reviewId) => {
@@ -5765,6 +5914,10 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
 
   const submitEditReview = async (reviewId) => {
     if (!editBody.trim() || editRating === 0 || editBusy) return;
+    if (containsBlockedContent(editBody).blocked) {
+      setTosWarning(true);
+      return;
+    }
     setEditBusy(true);
     await editReview(reviewId, { rating: editRating, body: editBody.trim() });
     setEditBusy(false);
@@ -5805,6 +5958,10 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
 
   const handleSubmit = async () => {
     if (!me || draftRating === 0 || !draftBody.trim()) return;
+    if (containsBlockedContent(draftBody).blocked) {
+      setTosWarning(true);
+      return;
+    }
     const targetShop = entityType === "shop" ? shopsById[entityId] : shopsById[shopId];
     const result = await submitReview(
       me,
@@ -5958,8 +6115,10 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
                       <span className="cs-t11 text-stone-400">Screened — no violation found</span>
                     ) : flagState[r.id] === "pending" ? (
                       <span className="cs-t11 text-amber-600">Couldn't screen right now — try again shortly</span>
+                    ) : flagState[r.id] === "flagged_suspicious" ? (
+                      <span className="cs-t11 text-stone-400">Reported — thanks</span>
                     ) : (
-                      <button onClick={() => handleFlag(r.id)} className="cs-t11 text-stone-400 hover:text-rose-600 inline-flex items-center gap-1">
+                      <button onClick={() => setReportTarget(r)} className="cs-t11 text-stone-400 hover:text-rose-600 inline-flex items-center gap-1">
                         <ShieldAlert size={11} /> Report this review
                       </button>
                     )}
@@ -6050,6 +6209,14 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
           ))}
         </div>
       )}
+      <TosWarningModal open={tosWarning} onClose={() => setTosWarning(false)} />
+      <ReportReviewModal
+        review={reportTarget}
+        busy={reportBusy}
+        onClose={() => !reportBusy && setReportTarget(null)}
+        onReportContent={() => handleReportContent(reportTarget)}
+        onReportSuspicious={() => handleReportSuspicious(reportTarget)}
+      />
     </div>
   );
 }
@@ -7948,6 +8115,7 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
     if (!activeOther) return;
     const report = {
       id: uid("report"),
+      type: "message",
       reporterId: me.id,
       reportedUserId: activeOther.id,
       reportedUserName: activeOther.name,
@@ -10229,6 +10397,17 @@ function RootShell() {
   const photos = usePhotoLibrary();
 
   const viewportHeight = useViewportHeight();
+  // Only touch devices need the shell pinned to a JS-measured pixel height —
+  // that's purely to dodge the on-screen keyboard (see SECTION 6b). On
+  // desktop it actively hurt: window.visualViewport's resize event doesn't
+  // reliably fire for every way a browser can zoom (ctrl+scroll, ctrl +/-,
+  // trackpad pinch all behave differently across browsers), so the shell's
+  // pinned pixel height could go stale after a zoom change while the real
+  // viewport kept moving — the gap between the two showed up as a growing
+  // blank strip at the bottom of the page, worst on the Storefront editor's
+  // tall scrolling content. Desktop now always uses plain CSS 100dvh, which
+  // tracks zoom natively with no JS in the loop to go stale.
+  const isTouch = useIsTouchDevice();
   const imageSupport = useExternalImageSupport();
   const [photoNoteDismissed, setPhotoNoteDismissed] = useState(false);
   const [textSheet, setTextSheet] = useState(null);
@@ -10461,7 +10640,7 @@ function RootShell() {
     <AppContext.Provider value={ctxValue}>
       <link rel="stylesheet" href={FONT_LINK_HREF} />
       <GlobalStyles />
-      <div className={`h-screen w-full flex flex-col overflow-hidden ${TOKENS.bg} ${TOKENS.ink}`} style={{ ...bodyFont, height: viewportHeight ? `${viewportHeight}px` : "100dvh" }}>
+      <div className={`h-screen w-full flex flex-col overflow-hidden ${TOKENS.bg} ${TOKENS.ink}`} style={{ ...bodyFont, height: isTouch && viewportHeight ? `${viewportHeight}px` : "100dvh" }}>
         <TopBar
           onGoHome={() => navigate({ screen: "explore" })}
           onOpenFilters={() => {
