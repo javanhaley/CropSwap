@@ -3337,6 +3337,35 @@ function useMessages(me, cid, otherUser) {
   const [loading, setLoading] = useState(true);
   const [blockedByOther, setBlockedByOther] = useState(false);
   const messagesRef = useRef([]);
+  // "Delete" here is delete-for-me only, same as SMS/most chat apps — the
+  // thread itself (messages:${cid}) is one shared record both people read,
+  // so actually removing an entry would erase it for the other person too.
+  // Instead each side keeps their own private list of message ids they've
+  // hidden, in the row-owned kv table rather than shared_kv, so it never
+  // touches the other person's copy of the conversation.
+  const [hiddenIds, setHiddenIds] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    setHiddenIds([]);
+    if (!cid) return;
+    getJSON(`hiddenMsgs:${cid}`, false, []).then((ids) => {
+      if (!cancelled) setHiddenIds(Array.isArray(ids) ? ids : []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cid]);
+  const deleteMessage = useCallback(
+    async (id) => {
+      if (!cid) return;
+      setHiddenIds((prev) => {
+        const next = prev.includes(id) ? prev : [...prev, id];
+        setJSON(`hiddenMsgs:${cid}`, next, false);
+        return next;
+      });
+    },
+    [cid]
+  );
 
   // Whether the other person has blocked *me* — checked from their own
   // profile (shared_kv is readable by any signed-in user), not from anything
@@ -3424,7 +3453,9 @@ function useMessages(me, cid, otherUser) {
     [cid, me, otherUser]
   );
 
-  return { messages, loading, send, blockedByOther };
+  const visibleMessages = useMemo(() => messages.filter((m) => !hiddenIds.includes(m.id)), [messages, hiddenIds]);
+
+  return { messages: visibleMessages, loading, send, blockedByOther, deleteMessage };
 }
 
 function useNotifications(me) {
@@ -5368,7 +5399,7 @@ function MapShopPanel({ entry, onOpenShop, onClose }) {
         <span className="flex gap-2">
           {(!me || shop.ownerId !== me.id) && (
             <button
-              onClick={() => { onClose(); navigate({ screen: "messages", withUserId: shop.ownerId, withUserName: shop.name, withUserAvatar: shop.emoji }); }}
+              onClick={() => { if (navigate({ screen: "messages", withUserId: shop.ownerId, withUserName: shop.name, withUserAvatar: shop.emoji })) onClose(); }}
               className="border border-stone-200 text-stone-700 text-xs font-semibold px-3 py-1.5 rounded-lg"
             >
               Message
@@ -6364,7 +6395,7 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
             </button>
             {shop && (!me || me.id !== shop.ownerId) && (
               <button
-                onClick={() => { onClose(); navigate({ screen: "messages", withUserId: shop.ownerId, withUserName: shop.name, withUserAvatar: shop.emoji }); }}
+                onClick={() => { if (navigate({ screen: "messages", withUserId: shop.ownerId, withUserName: shop.name, withUserAvatar: shop.emoji })) onClose(); }}
                 className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-800 text-white rounded-xl py-2.5 font-semibold text-sm"
               >
                 <MessageCircle size={15} /> Message
@@ -8141,6 +8172,83 @@ function FavoritesView() {
 /* ============================================================================
    SECTION 21: MESSAGES VIEW
 ============================================================================ */
+// Press-and-hold (or right-click on desktop) to pull up per-message actions —
+// the same gesture Google Messages, WhatsApp, and iMessage all use. Pointer
+// events cover touch and mouse with one set of handlers; a real move during
+// the hold (scrolling, not just the finger settling) cancels it so a scroll
+// gesture never gets mistaken for a long-press.
+function useLongPress(onLongPress, ms = 450) {
+  const timerRef = useRef(null);
+  const startRef = useRef(null);
+  const clear = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }, []);
+  const start = useCallback(
+    (e) => {
+      startRef.current = { x: e.clientX, y: e.clientY };
+      clear();
+      timerRef.current = setTimeout(() => onLongPress(e), ms);
+    },
+    [onLongPress, ms, clear]
+  );
+  const onPointerMove = useCallback(
+    (e) => {
+      const s = startRef.current;
+      if (!s) return;
+      if (Math.abs(e.clientX - s.x) > 10 || Math.abs(e.clientY - s.y) > 10) clear();
+    },
+    [clear]
+  );
+  return {
+    onPointerDown: start,
+    onPointerUp: clear,
+    onPointerLeave: clear,
+    onPointerCancel: clear,
+    onPointerMove,
+    onContextMenu: (e) => {
+      e.preventDefault();
+      clear();
+      onLongPress(e);
+    },
+  };
+}
+
+// The small "what do you want to do with this message" sheet a long-press
+// opens — delete here is always delete-for-me (see useMessages), so it's
+// safe to offer on a message from either side of the conversation.
+function MessageActionSheet({ message, onClose, onCopy, onDelete }) {
+  return (
+    <Modal open={!!message} onClose={onClose} labelledBy="msg-action-title">
+      <div className="p-6">
+        <h2 id="msg-action-title" className="sr-only">Message actions</h2>
+        {message && <p className="text-xs text-stone-400 mb-4 line-clamp-2">"{message.body}"</p>}
+        <div className="flex flex-col gap-2">
+          <button onClick={onCopy} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800">
+            Copy text
+          </button>
+          <button onClick={onDelete} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600">
+            Delete for me
+          </button>
+        </div>
+        <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
+function MessageBubble({ message, isMine, onLongPress }) {
+  const longPress = useLongPress(() => onLongPress(message));
+  return (
+    <div
+      {...longPress}
+      className={`cs-max75 px-3.5 py-2 rounded-2xl text-sm cursor-pointer ${isMine ? "self-end bg-emerald-800 text-white rounded-br-sm" : "self-start bg-white border border-stone-200 text-stone-800 rounded-bl-sm"}`}
+    >
+      {message.body}
+    </div>
+  );
+}
+
 function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserAvatar, initialCid }) {
   const { me, conversations, ensureConversation, updateMe, showToast, openProfileCard } = useApp();
   const [selectedCid, setSelectedCid] = useState(initialCid || null);
@@ -8166,8 +8274,24 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
     }
   }, [selectedCid, conversations, activeOther]);
 
-  const { messages, send, blockedByOther } = useMessages(me, selectedCid, activeOther);
+  const { messages, send, blockedByOther, deleteMessage } = useMessages(me, selectedCid, activeOther);
   const isBlocked = !!activeOther && (me.blockedUserIds || []).includes(activeOther.id);
+  const [actionTarget, setActionTarget] = useState(null);
+
+  const copyMessage = async (m) => {
+    try {
+      await navigator.clipboard.writeText(m.body);
+      showToast("Copied");
+    } catch (e) {
+      showToast("Couldn't copy — try selecting the text instead");
+    }
+    setActionTarget(null);
+  };
+  const confirmDeleteMessage = async (m) => {
+    await deleteMessage(m.id);
+    setActionTarget(null);
+    showToast("Message deleted");
+  };
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ block: "end" });
@@ -8279,9 +8403,7 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
               </div>
             )}
             {messages.map((m) => (
-              <div key={m.id} className={`cs-max75 px-3.5 py-2 rounded-2xl text-sm ${m.senderId === me.id ? "self-end bg-emerald-800 text-white rounded-br-sm" : "self-start bg-white border border-stone-200 text-stone-800 rounded-bl-sm"}`}>
-                {m.body}
-              </div>
+              <MessageBubble key={m.id} message={m} isMine={m.senderId === me.id} onLongPress={setActionTarget} />
             ))}
             <div ref={scrollRef} />
           </div>
@@ -8317,6 +8439,13 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
           <MessageCircle size={48} />
         </div>
       )}
+
+      <MessageActionSheet
+        message={actionTarget}
+        onClose={() => setActionTarget(null)}
+        onCopy={() => copyMessage(actionTarget)}
+        onDelete={() => confirmDeleteMessage(actionTarget)}
+      />
     </div>
   );
 }
@@ -8460,6 +8589,36 @@ function BillingSlider({ value, onChange }) {
   );
 }
 
+// Shown only after "Cancel plan" is tapped — a real popup rather than an
+// inline expansion, since giving up a paid plan (and the refund math that
+// comes with it) deserves a deliberate, can't-miss-it confirmation step.
+function CancelPlanModal({ tierName, withinWindow, cancelling, onKeep, onConfirm }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 cs-z-pop flex items-center justify-center p-4 cs-fade-anim" onMouseDown={(e) => e.target === e.currentTarget && !cancelling && onKeep()}>
+      <div className="cs-modal-anim bg-white rounded-2xl w-full max-w-sm p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-rose-50 text-rose-600 shrink-0">
+            <AlertCircle size={18} />
+          </span>
+          <p className="font-bold text-stone-900 text-lg" style={displayFont}>Cancel {tierName}?</p>
+        </div>
+        <p className="text-sm text-stone-600 mb-4">
+          {withinWindow
+            ? `You're within the ${REFUND_WINDOW_DAYS}-day window — cancelling now refunds 50% of what you paid (test mode).`
+            : `It's past day ${REFUND_WINDOW_DAYS} of this term, so no refund applies — access is removed immediately.`}
+          {" "}Your storefront stays on the platform, inactive, for {ABANDON_DAYS} days in case you come back.
+        </p>
+        <div className="flex gap-2">
+          <button onClick={onKeep} disabled={cancelling} className="flex-1 text-sm font-semibold py-2.5 rounded-xl border border-stone-200 disabled:opacity-50">Keep plan</button>
+          <button onClick={onConfirm} disabled={cancelling} className="flex-1 text-sm font-semibold py-2.5 rounded-xl bg-rose-600 text-white disabled:opacity-50">
+            {cancelling ? "Cancelling…" : "Confirm cancel"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlansScreen({ navigate }) {
   const { me, cancelPlan, showToast } = useApp();
   const [billingByPlan, setBillingByPlan] = useState({ basic: "monthly", premium: "monthly" });
@@ -8467,6 +8626,21 @@ function PlansScreen({ navigate }) {
   const [cancelling, setCancelling] = useState(false);
   const currentTier = planTier(me);
   const isPaid = currentTier !== "free";
+
+  // The slider on your OWN active plan isn't a preview like the ones on the
+  // other cards — it's a real change. Sliding up to annual sends you to
+  // checkout to confirm and "pay" for it; sliding an annual plan back down
+  // to monthly isn't allowed here at all, since leaving annual early is
+  // exactly what Cancel plan (with its refund warning) is for.
+  const handleCurrentPlanBillingChange = (tierId, v) => {
+    const currentBilling = me.plan?.billing || "monthly";
+    if (v === currentBilling) return;
+    if (v === "annual") {
+      navigate({ screen: "checkout", tier: tierId, billing: "annual" });
+    } else {
+      showToast("To move to monthly, cancel your annual plan first");
+    }
+  };
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
@@ -8486,48 +8660,44 @@ function PlansScreen({ navigate }) {
                 {currentTier === "premium" && <Crown size={15} className="text-amber-500" />}
                 You're on {PLAN_CATALOG[currentTier].name}
               </p>
-              {!cancelConfirm && (
-                <button onClick={() => setCancelConfirm(true)} className="text-xs font-semibold text-rose-600 shrink-0">Cancel plan</button>
-              )}
+              <button onClick={() => setCancelConfirm(true)} className="text-xs font-semibold text-rose-600 shrink-0">Cancel plan</button>
             </div>
             <p className="text-xs text-stone-500 mb-1">
               {formatMoney(planPrice(currentTier, me.plan?.billing))}
               {planPeriodLabel(me.plan?.billing)} · billed {me.plan?.billing === "annual" ? "yearly" : "monthly"}
             </p>
             {me.plan?.periodEnd && <p className="cs-t11 text-stone-400">Renews {new Date(me.plan.periodEnd).toLocaleDateString()}</p>}
-            {cancelConfirm && (
-              <div className="mt-3 pt-3 border-t border-stone-200">
-                <p className="text-xs text-stone-600 mb-2">
-                  {daysBetween(me.plan?.startedAt || Date.now(), Date.now()) <= REFUND_WINDOW_DAYS
-                    ? `You're within the ${REFUND_WINDOW_DAYS}-day window — cancelling now refunds 50% (test mode).`
-                    : `It's past day ${REFUND_WINDOW_DAYS} of this term, so no refund applies — access is removed immediately.`}
-                  {" "}Your storefront stays on the platform, inactive, for {ABANDON_DAYS} days in case you come back.
-                </p>
-                <div className="flex gap-2">
-                  <button onClick={() => setCancelConfirm(false)} className="flex-1 text-xs font-semibold py-2 rounded-lg border border-stone-200">Keep plan</button>
-                  <button
-                    onClick={async () => {
-                      setCancelling(true);
-                      const { refundPct } = await cancelPlan();
-                      setCancelling(false);
-                      setCancelConfirm(false);
-                      showToast(refundPct > 0 ? `Cancelled — ${refundPct}% refunded (test mode)` : "Cancelled — no refund available");
-                    }}
-                    disabled={cancelling}
-                    className="flex-1 text-xs font-semibold py-2 rounded-lg bg-rose-600 text-white disabled:opacity-50"
-                  >
-                    {cancelling ? "Cancelling…" : "Confirm cancel"}
-                  </button>
-                </div>
+            {/* Another, more visible chance to move to annual right where the
+                current plan is summarized — not shown once already annual. */}
+            {(me.plan?.billing || "monthly") !== "annual" && (
+              <div className="mt-3 pt-3 border-t border-stone-200/70">
+                <p className="cs-t11 font-semibold text-stone-500 mb-1.5">Switch to annual and save ~40%</p>
+                <BillingSlider value={me.plan?.billing || "monthly"} onChange={(v) => handleCurrentPlanBillingChange(currentTier, v)} />
               </div>
             )}
           </div>
         )}
 
+        {cancelConfirm && (
+          <CancelPlanModal
+            tierName={PLAN_CATALOG[currentTier].name}
+            withinWindow={daysBetween(me.plan?.startedAt || Date.now(), Date.now()) <= REFUND_WINDOW_DAYS}
+            cancelling={cancelling}
+            onKeep={() => setCancelConfirm(false)}
+            onConfirm={async () => {
+              setCancelling(true);
+              const { refundPct } = await cancelPlan();
+              setCancelling(false);
+              setCancelConfirm(false);
+              showToast(refundPct > 0 ? `Cancelled — ${refundPct}% refunded (test mode)` : "Cancelled — no refund available");
+            }}
+          />
+        )}
+
         <div className="grid md:grid-cols-3 gap-4">
           {Object.values(PLAN_CATALOG).map((p) => {
             const isCurrent = currentTier === p.id;
-            const billing = billingByPlan[p.id] || "monthly";
+            const billing = isCurrent ? (me.plan?.billing || "monthly") : (billingByPlan[p.id] || "monthly");
             const price = p.id === "free" ? p.monthly : billing === "annual" ? p.annual : p.monthly;
             const isPremiumCard = p.id === "premium";
             return (
@@ -8544,7 +8714,10 @@ function PlansScreen({ navigate }) {
                 </div>
                 <p className="text-sm text-stone-500 mb-3">{p.tagline}</p>
                 {p.id !== "free" && (
-                  <BillingSlider value={billing} onChange={(v) => setBillingByPlan((prev) => ({ ...prev, [p.id]: v }))} />
+                  <BillingSlider
+                    value={billing}
+                    onChange={(v) => (isCurrent ? handleCurrentPlanBillingChange(p.id, v) : setBillingByPlan((prev) => ({ ...prev, [p.id]: v })))}
+                  />
                 )}
                 <p className="text-3xl font-bold text-stone-900 mb-1" style={displayFont}>
                   {formatMoney(price)}
@@ -8657,7 +8830,11 @@ function CheckoutScreen({ navigate, tier, billing }) {
         : undefined
     );
     setBusy(false);
-    showToast(`Welcome to ${plan.name} — test mode, no charge made`);
+    showToast(
+      tier === planTier(me)
+        ? `Switched to annual billing — test mode, no charge made`
+        : `Welcome to ${plan.name} — test mode, no charge made`
+    );
     navigate({ screen: "dashboard" });
   };
 
@@ -8892,8 +9069,7 @@ function ProfileCardModal({ target, onClose }) {
           {!isSelf && (
             <button
               onClick={() => {
-                onClose();
-                navigate({ screen: "messages", withUserId: target.id, withUserName: shown.name, withUserAvatar: shown.avatar });
+                if (navigate({ screen: "messages", withUserId: target.id, withUserName: shown.name, withUserAvatar: shown.avatar })) onClose();
               }}
               className="w-full flex items-center justify-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700"
             >
@@ -10897,13 +11073,19 @@ function RootShell() {
     return () => document.removeEventListener("focusin", onFocusIn);
   }, []);
 
+  // Returns whether it actually navigated (false means a guest just got the
+  // sign-up popover instead) so callers that close their own modal/card
+  // first — "Message" buttons on a quick-view card, say — can hold off on
+  // that close until it's clear the trip is really happening. Otherwise the
+  // card would vanish out from under the popover the instant it's tapped.
   const navigate = useCallback(
     (r) => {
       if (AUTH_REQUIRED_SCREENS.has(r.screen) && !me) {
         requireAuth(AUTH_REASON_BY_SCREEN[r.screen] || "continue", r);
-        return;
+        return false;
       }
       setRoute(r);
+      return true;
     },
     [me, requireAuth]
   );
