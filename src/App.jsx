@@ -4462,6 +4462,11 @@ function ProductCard({ product, onEdit, onDelete }) {
           <span className="cs-t17 font-semibold text-stone-900" style={displayFont}>{formatPrice(product.price, product.priceUnit)}</span>
           {dist != null && <span className="cs-t10 text-stone-400 font-medium uppercase tracking-wider">{formatDistance(dist)}</span>}
         </div>
+        {product.showStock && product.stockQty != null && (
+          <p className={`cs-t10 font-semibold mt-1 ${product.stockQty > 0 ? "text-emerald-700" : "text-rose-600"}`}>
+            {product.stockQty > 0 ? `${product.stockQty} ${priceUnitLabel(product.priceUnit)} left in stock` : "0 left in stock"}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -6398,6 +6403,12 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
             <PriceTag tone="white"><span className="inline-flex items-center gap-1"><CategoryMark id={cat.id} size={11} /> {cat.label}</span></PriceTag>
             {product.status === "sold_out" && <PriceTag tone="stone">Sold out</PriceTag>}
           </div>
+
+          {product.showStock && product.stockQty != null && (
+            <p className={`cs-t11 font-semibold mt-2 ${product.stockQty > 0 ? "text-emerald-700" : "text-rose-600"}`}>
+              {product.stockQty > 0 ? `${product.stockQty} ${priceUnitLabel(product.priceUnit)} left in stock` : "0 left in stock"}
+            </p>
+          )}
 
           <p className="text-sm text-stone-600 mt-4 leading-relaxed">{product.desc}</p>
 
@@ -10843,11 +10854,13 @@ function InventoryItemModal({ open, onClose, onSave, initial, products }) {
   const [threshold, setThreshold] = useState("");
   const [price, setPrice] = useState("0");
   const [notes, setNotes] = useState("");
+  const [showStock, setShowStock] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setLinkedProductId(initial?.linkedProductId || "");
+    const linkedId = initial?.linkedProductId || "";
+    setLinkedProductId(linkedId);
     setName(initial?.name || "");
     setCategory(initial?.category || "Other");
     setUnit(initial?.unit || "each");
@@ -10855,17 +10868,23 @@ function InventoryItemModal({ open, onClose, onSave, initial, products }) {
     setThreshold(initial?.lowStockThreshold == null ? "" : String(initial.lowStockThreshold));
     setPrice(String(initial?.price ?? 0));
     setNotes(initial?.notes || "");
-  }, [open, initial]);
+    const linkedProduct = linkedId ? products.find((p) => p.id === linkedId) : null;
+    setShowStock(!!linkedProduct?.showStock);
+  }, [open, initial, products]);
 
   const pickProduct = (productId) => {
     setLinkedProductId(productId);
-    if (!productId) return;
+    if (!productId) {
+      setShowStock(false);
+      return;
+    }
     const p = products.find((pr) => pr.id === productId);
     if (!p) return;
     setName(p.name);
     setCategory(p.category || "Other");
     setUnit(p.priceUnit || "each");
     setPrice(String(p.price ?? 0));
+    setShowStock(!!p.showStock);
   };
 
   const canSave = name.trim().length > 0;
@@ -10873,7 +10892,18 @@ function InventoryItemModal({ open, onClose, onSave, initial, products }) {
   const handleSave = async () => {
     if (!canSave) return;
     setSaving(true);
-    await onSave({ name, category, unit, qty, lowStockThreshold: threshold, price, notes, linkedProductId: linkedProductId || null });
+    await onSave({
+      name,
+      category,
+      unit,
+      qty,
+      lowStockThreshold: threshold,
+      price,
+      notes,
+      linkedProductId: linkedProductId || null,
+      showStock,
+      prevLinkedProductId: initial?.linkedProductId || null,
+    });
     setSaving(false);
     onClose();
   };
@@ -10906,6 +10936,15 @@ function InventoryItemModal({ open, onClose, onSave, initial, products }) {
               <p className="cs-t10 text-emerald-700 mt-1 flex items-center gap-1"><Store size={10} /> Linked — stock changes here can auto-update that listing's Sold Out banner.</p>
             )}
           </div>
+          {linkedProductId && (
+            <div className="flex items-center justify-between gap-3 bg-stone-50 border border-stone-200 rounded-xl px-3 py-2.5">
+              <div>
+                <p className="text-sm font-semibold text-stone-700">Show stock count on storefront</p>
+                <p className="cs-t10 text-stone-400">Customers see "{qty || 0} {priceUnitLabel(unit)} left in stock" on this listing.</p>
+              </div>
+              <ToggleSwitch checked={showStock} onChange={setShowStock} />
+            </div>
+          )}
           <TextField
             label="Item name"
             value={name}
@@ -11146,7 +11185,7 @@ function CalendarTab({ calendar, onAddNote, onOpenEvent, onOpenDay }) {
 // The Outlook-style "click a day, see everything in it" card — every event
 // on that date with its time, plus edit/delete for your own notes (orders
 // route back to the Orders tab to be managed) and a per-event reminder.
-function DayViewModal({ open, onClose, date, events, onAddNote, onOpenEvent, onEditNote, onDeleteNote, onSetReminder }) {
+function DayViewModal({ open, onClose, date, events, onAddNote, onOpenEvent, onEditNote, onDeleteNote, onSetReminder, onUnlinkOrder }) {
   if (!date) return null;
   const dayEvents = events.slice().sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99"));
   const dateLabel = new Date(`${date}T00:00:00`).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
@@ -11188,7 +11227,10 @@ function DayViewModal({ open, onClose, date, events, onAddNote, onOpenEvent, onE
                         <IconButton icon={Trash2} label="Delete" size={13} onClick={() => onDeleteNote(ev.id)} />
                       </>
                     ) : (
-                      <span className="cs-t11 font-semibold text-emerald-800 whitespace-nowrap">View</span>
+                      <>
+                        <span className="cs-t11 font-semibold text-emerald-800 whitespace-nowrap mr-1">View</span>
+                        {onUnlinkOrder && <IconButton icon={X} label="Remove from calendar" size={13} onClick={() => onUnlinkOrder(ev)} />}
+                      </>
                     )}
                   </div>
                 </div>
@@ -11216,7 +11258,7 @@ function DayViewModal({ open, onClose, date, events, onAddNote, onOpenEvent, onE
 // A big, share-ready detail card — deliberately roomier than the app's usual
 // small sheets, since the point is to hand someone (or yourself) the whole
 // picture of a pickup in one glance: who, what, how much, and any notes.
-function EventDetailModal({ open, onClose, event, order, onManageOrder }) {
+function EventDetailModal({ open, onClose, event, order, onManageOrder, onEditNote, onDeleteNote, onUnlinkOrder }) {
   if (!event) return null;
   const isOrder = event.kind === "order" && !!order;
   const total = isOrder ? orderTotal(order) : 0;
@@ -11273,11 +11315,24 @@ function EventDetailModal({ open, onClose, event, order, onManageOrder }) {
                 <span className={`w-2.5 h-2.5 rounded-full ${order.completed ? "bg-emerald-600" : "bg-amber-500"}`} />
                 <span className="text-sm font-semibold text-stone-600">{order.completed ? "Completed" : "Not yet fulfilled"}</span>
               </div>
-              {onManageOrder && (
-                <button onClick={() => onManageOrder(order)} className="text-sm font-semibold text-emerald-800">
-                  Edit this order →
-                </button>
-              )}
+              <div className="flex items-center gap-3">
+                {onUnlinkOrder && (
+                  <button
+                    onClick={() => {
+                      onUnlinkOrder(event);
+                      onClose();
+                    }}
+                    className="text-sm font-semibold text-stone-500 hover:text-rose-600"
+                  >
+                    Remove from calendar
+                  </button>
+                )}
+                {onManageOrder && (
+                  <button onClick={() => onManageOrder(order)} className="text-sm font-semibold text-emerald-800">
+                    Edit this order →
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ) : (
@@ -11286,6 +11341,26 @@ function EventDetailModal({ open, onClose, event, order, onManageOrder }) {
               <Clock size={14} /> {event.date}{event.time ? ` @ ${event.time}` : ""}
             </p>
             {event.notes && <p className="text-sm text-stone-600 whitespace-pre-wrap">{event.notes}</p>}
+            {(onEditNote || onDeleteNote) && (
+              <div className="flex items-center gap-3 pt-1">
+                {onEditNote && (
+                  <button onClick={() => onEditNote(event)} className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800">
+                    <Pencil size={14} /> Edit
+                  </button>
+                )}
+                {onDeleteNote && (
+                  <button
+                    onClick={() => {
+                      onDeleteNote(event.id);
+                      onClose();
+                    }}
+                    className="flex items-center gap-1.5 text-sm font-semibold text-rose-600"
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -11485,11 +11560,18 @@ function OrdersScreen({ navigate, initialTab }) {
   // vendor's own manual banner choice is never silently overwritten.
   const handleStockChange = useCallback(
     (item, prevQty, nextQty) => {
-      if (!shop?.autoOutOfStock || !item.linkedProductId) return;
+      if (!item.linkedProductId || !shop?.id) return;
+      const product = products.find((p) => p.id === item.linkedProductId);
+      // "Show stock count" is independent of the sold-out-banner toggle — a
+      // vendor might want customers to see "3 left" without the storefront
+      // auto-flipping to Sold Out at zero, or vice versa.
+      if (product?.showStock) {
+        updateProduct(shop.id, item.linkedProductId, { stockQty: nextQty });
+      }
+      if (!shop.autoOutOfStock) return;
       if (prevQty > 0 && nextQty <= 0) {
         updateProduct(shop.id, item.linkedProductId, { bannerId: "sold_out", status: "sold_out" });
       } else if (prevQty <= 0 && nextQty > 0) {
-        const product = products.find((p) => p.id === item.linkedProductId);
         if (product?.bannerId === "sold_out") {
           updateProduct(shop.id, item.linkedProductId, { bannerId: null, status: "available" });
         }
@@ -11621,12 +11703,48 @@ function OrdersScreen({ navigate, initialTab }) {
   const handleToggleComplete = async (order) => {
     const nowCompleting = !order.completed;
     const trackingOn = shop.inventoryEnabled !== false;
-    const deltas = trackingOn
-      ? order.items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: nowCompleting ? -li.qty : li.qty }))
-      : [];
+    let items = order.items;
+    let deltas = [];
+    if (trackingOn) {
+      if (nowCompleting) {
+        // A line item typed as free text (rather than picked from "From your
+        // inventory") never got an inventoryItemId at save time. Resolve it
+        // by name against the current inventory right when the order is
+        // completed, and persist the match back onto the order — that's
+        // what makes unchecking later restore the right item instead of
+        // silently no-oping.
+        items = order.items.map((li) => {
+          if (li.inventoryItemId) return li;
+          const match = inventory.items.find((it) => it.name.trim().toLowerCase() === (li.name || "").trim().toLowerCase());
+          return match ? { ...li, inventoryItemId: match.id } : li;
+        });
+        deltas = items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: -li.qty }));
+      } else {
+        deltas = order.items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: li.qty }));
+      }
+    }
     if (deltas.length) await inventory.adjustStockBatch(deltas, nowCompleting ? "order" : "order-reverted", order.id);
-    await orders.updateOrder(order.id, { completed: nowCompleting, completedAt: nowCompleting ? Date.now() : null });
+    await orders.updateOrder(order.id, { items, completed: nowCompleting, completedAt: nowCompleting ? Date.now() : null });
     showToast(nowCompleting ? (trackingOn ? "Order complete — inventory updated" : "Order marked complete") : "Order reopened");
+  };
+
+  // The "show stock count" flag lives on the public Product record (not the
+  // private inventory item) since customers — who never see inventory —
+  // need to read it. Keep it in sync here rather than inside useInventory,
+  // which has no idea products exist.
+  const handleSaveInventoryItem = async (draft) => {
+    const { showStock, prevLinkedProductId, ...itemDraft } = draft;
+    const item = itemModal.mode === "edit" ? await inventory.updateItem(itemModal.item.id, itemDraft) : await inventory.addItem(itemDraft);
+    if (prevLinkedProductId && prevLinkedProductId !== itemDraft.linkedProductId) {
+      await updateProduct(shop.id, prevLinkedProductId, { showStock: false, stockQty: null });
+    }
+    if (itemDraft.linkedProductId) {
+      await updateProduct(shop.id, itemDraft.linkedProductId, {
+        showStock: !!showStock,
+        stockQty: showStock ? Number(itemDraft.qty) || 0 : null,
+      });
+    }
+    return item;
   };
 
   const handleArchive = async (id, archived) => {
@@ -11639,6 +11757,15 @@ function OrdersScreen({ navigate, initialTab }) {
     if (order?.calendarEventId) await calendar.removeEvent(order.calendarEventId);
     await orders.removeOrder(id);
     showToast("Order deleted");
+  };
+
+  // Removes an order's calendar entry without touching the order itself —
+  // the order stays fully intact on the Orders tab, it just stops showing
+  // up on the calendar.
+  const unlinkOrderEvent = async (ev) => {
+    await calendar.removeEvent(ev.id);
+    if (ev.orderId) await orders.updateOrder(ev.orderId, { calendarEventId: null });
+    showToast("Removed from calendar");
   };
 
   return (
@@ -11706,7 +11833,7 @@ function OrdersScreen({ navigate, initialTab }) {
           onClose={() => setItemModal(null)}
           initial={itemModal.mode === "edit" ? itemModal.item : null}
           products={shopProducts}
-          onSave={(draft) => (itemModal.mode === "edit" ? inventory.updateItem(itemModal.item.id, draft) : inventory.addItem(draft))}
+          onSave={handleSaveInventoryItem}
         />
       )}
       {noteModal && (
@@ -11729,6 +11856,16 @@ function OrdersScreen({ navigate, initialTab }) {
             setTab("orders");
             setOrderModal({ mode: "edit", order });
           }}
+          onUnlinkOrder={eventDetail.kind === "order" ? unlinkOrderEvent : null}
+          onEditNote={
+            eventDetail.kind === "note"
+              ? (ev) => {
+                  setEventDetail(null);
+                  setNoteModal({ mode: "edit", event: ev });
+                }
+              : null
+          }
+          onDeleteNote={eventDetail.kind === "note" ? (id) => calendar.removeEvent(id) : null}
         />
       )}
       {dayView && (
@@ -11751,6 +11888,7 @@ function OrdersScreen({ navigate, initialTab }) {
           }}
           onDeleteNote={(id) => calendar.removeEvent(id)}
           onSetReminder={(id, mins) => calendar.updateEvent(id, { reminderMinutesBefore: mins })}
+          onUnlinkOrder={unlinkOrderEvent}
         />
       )}
     </div>
