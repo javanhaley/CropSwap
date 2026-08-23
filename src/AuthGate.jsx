@@ -9,7 +9,7 @@ const bodyFont = { fontFamily: "'Inter', sans-serif" };
 // itself never asks for a password — but a deployed, multi-device app needs a
 // real account behind that friendly profile, so this is the thin real-auth
 // layer the rest of the app (and Supabase RLS) relies on.
-export default function AuthGate({ onSignedIn }) {
+export default function AuthGate({ onSignedIn, reason, onCancel }) {
   const [mode, setMode] = useState("signin"); // signin | signup
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -50,7 +50,17 @@ export default function AuthGate({ onSignedIn }) {
         <div className="flex items-center gap-2 text-emerald-800 font-bold text-2xl mb-1 justify-center" style={displayFont}>
           <Sparkles size={24} /> CropSwap
         </div>
-        <p className="text-center text-stone-500 mb-7 text-sm">A hyper-local, nationwide hub connecting growers and buyers.</p>
+        {reason ? (
+          <p className="text-center text-stone-500 mb-7 text-sm">Create a free account to {reason} — browsing is always open, this is just for that.</p>
+        ) : (
+          <p className="text-center text-stone-500 mb-7 text-sm">A hyper-local, nationwide hub connecting growers and buyers.</p>
+        )}
+
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="text-xs font-semibold text-stone-400 hover:text-stone-600 mb-3 block mx-auto">
+            Not now — keep browsing
+          </button>
+        )}
 
         <form onSubmit={submit} className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm">
           <div className="flex mb-4 bg-stone-100 rounded-xl p-1">

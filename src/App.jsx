@@ -2400,10 +2400,16 @@ function useCurrentUser() {
       const existing = await getJSON("me:profile", false, null);
       if (cancelled) return;
       if (existing) {
-        meRef.current = existing;
-        setMeState(existing);
+        // Accounts created before email capture was added won't have it —
+        // backfill from the live auth session the first time they load
+        // rather than needing a one-off migration script.
+        const authEmail = sessionRef.current?.user?.email || null;
+        const patched = authEmail && existing.email !== authEmail ? { ...existing, email: authEmail } : existing;
+        meRef.current = patched;
+        setMeState(patched);
         // keep the shared public copy fresh in case it drifted
-        setJSON(`users:${existing.id}`, existing, true);
+        setJSON(`users:${patched.id}`, patched, true);
+        if (patched !== existing) setJSON("me:profile", patched, false);
       } else {
         meRef.current = null;
         setMeState(null);
@@ -2421,6 +2427,7 @@ function useCurrentUser() {
     const profile = {
       id,
       name: name || "Guest",
+      email: sessionRef.current?.user?.email || null,
       avatar: avatar || AVATAR_EMOJI[Math.floor(Math.random() * AVATAR_EMOJI.length)],
       createdAt: Date.now(),
       isVendor: false,
@@ -4410,7 +4417,6 @@ function ProductCard({ product, onEdit, onDelete }) {
           <FavoriteHeart
             active={isFav}
             count={product.favoriteCount || 0}
-            disabled={!me}
             onToggle={() => toggleFavorite("product", product)}
           />
         </div>
@@ -4469,7 +4475,7 @@ function ShopCard({ shop }) {
         </div>
         <div className="mt-2 flex items-center justify-between">
           <span className="cs-t11 text-stone-400 font-medium">{itemCount} listing{itemCount === 1 ? "" : "s"}</span>
-          <FavoriteHeart active={isFav} count={shop.favoriteCount || 0} disabled={!me} onToggle={() => toggleFavorite("shop", shop)} />
+          <FavoriteHeart active={isFav} count={shop.favoriteCount || 0} onToggle={() => toggleFavorite("shop", shop)} />
         </div>
       </div>
     </div>
@@ -5001,7 +5007,7 @@ function ToggleSwitch({ checked, onChange }) {
    SECTION 15: EXPLORE VIEW
 ============================================================================ */
 function ExploreView({ navigate }) {
-  const { products: allProducts, shops: allShops, shopsById, userLoc, favShops, me, showToast, globalSearch, setGlobalSearch } = useApp();
+  const { products: allProducts, shops: allShops, shopsById, userLoc, favShops, me, showToast, globalSearch, setGlobalSearch, requireAuth } = useApp();
   const { filters, setFilters, filterOpen, setFilterOpen, exploreView: view, setExploreView: setView, registerSaveSearch } = useApp();
   const searchDraft = globalSearch;
   const setSearchDraft = setGlobalSearch;
@@ -5027,6 +5033,7 @@ function ExploreView({ navigate }) {
   };
 
   const saveCurrentSearch = useCallback(() => {
+    if (!requireAuth("save searches")) return;
     const label =
       (filters.search || searchDraft || "").trim() ||
       (filters.categories.length ? filters.categories.map((c) => catInfo(c).label).join(" + ") : "") ||
@@ -5035,7 +5042,7 @@ function ExploreView({ navigate }) {
     persistSaved([entry, ...savedSearches.filter((s) => s.label !== label)].slice(0, 8));
     showToast(`Saved "${label}"`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, searchDraft, savedSearches, showToast]);
+  }, [filters, searchDraft, savedSearches, showToast, requireAuth]);
 
   useEffect(() => {
     registerSaveSearch?.(() => saveCurrentSearch);
@@ -5779,7 +5786,7 @@ function ReportReviewModal({ review, onClose, onReportContent, onReportSuspiciou
 }
 
 function ReviewSection({ entityType, entityId, ownerId, shopId }) {
-  const { me, updateShop, updateProduct, shopsById, showToast, helpfulMarks, toggleHelpfulMark, openProfileCard } = useApp();
+  const { me, updateShop, updateProduct, shopsById, showToast, helpfulMarks, toggleHelpfulMark, openProfileCard, requireAuth } = useApp();
   const handleStats = useCallback(
     (avg, cnt) => {
       if (entityType === "shop") updateShop(entityId, { avgRating: avg, reviewCount: cnt });
@@ -5846,7 +5853,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
   );
 
   const handleHelpful = async (reviewId) => {
-    if (!me || pendingHelpful) return;
+    if (pendingHelpful) return;
     setPendingHelpful(reviewId);
     const res = await toggleHelpfulMark(reviewId);
     if (res) await adjustHelpful(reviewId, res.added ? 1 : -1);
@@ -5854,7 +5861,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
   };
 
   const handleResponseHelpful = async (reviewId) => {
-    if (!me || pendingRespHelpful) return;
+    if (pendingRespHelpful) return;
     setPendingRespHelpful(reviewId);
     const res = await toggleHelpfulMark(`resp:${reviewId}`);
     if (res) await adjustResponseHelpful(reviewId, res.added ? 1 : -1);
@@ -5996,7 +6003,15 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
         {count > 0 && <StarRating value={avgRating} showNumber />}
       </div>
 
-      {!me && <p className="text-sm text-stone-500 mb-3">Create a CropSwap profile to leave a review.</p>}
+      {!me && (
+        <button
+          type="button"
+          onClick={() => requireAuth("leave a review")}
+          className="text-sm text-emerald-700 font-semibold mb-3 hover:underline"
+        >
+          Create a free CropSwap profile to leave a review.
+        </button>
+      )}
       {isOwner && <p className="text-sm text-stone-500 mb-3">You can't review your own listing.</p>}
 
       {me && !isOwner && !alreadyReviewed && (
@@ -6095,7 +6110,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
                 <div className="mt-2 flex items-center gap-3 flex-wrap">
                   <button
                     onClick={() => handleHelpful(r.id)}
-                    disabled={!me || pendingHelpful === r.id}
+                    disabled={pendingHelpful === r.id}
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition ${
                       helpfulMarks?.[r.id]
                         ? "bg-emerald-50 border-emerald-200 text-emerald-800"
@@ -6179,7 +6194,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
                     <div className="mt-1.5 flex items-center gap-3 flex-wrap">
                       <button
                         onClick={() => handleResponseHelpful(r.id)}
-                        disabled={!me || pendingRespHelpful === r.id}
+                        disabled={pendingRespHelpful === r.id}
                         className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition ${
                           helpfulMarks?.[`resp:${r.id}`]
                             ? "bg-emerald-50 border-emerald-200 text-emerald-800"
@@ -6306,7 +6321,7 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
           <p className="text-sm text-stone-600 mt-4 leading-relaxed">{product.desc}</p>
 
           <div className="flex items-center gap-2 mt-5">
-            <FavoriteHeart active={isFav} count={product.favoriteCount || 0} disabled={!me} onToggle={() => toggleFavorite("product", product)} size="lg" />
+            <FavoriteHeart active={isFav} count={product.favoriteCount || 0} onToggle={() => toggleFavorite("product", product)} size="lg" />
             <button onClick={handleShare} className="flex-1 flex items-center justify-center gap-1.5 border border-stone-200 rounded-xl py-2.5 font-semibold text-sm text-stone-700">
               <Share2 size={15} /> Share{product.shareCount > 0 ? ` · ${product.shareCount}` : ""}
             </button>
@@ -6502,7 +6517,7 @@ function ShopProfileView({ shopId, navigate }) {
         </div>
 
         <div className="flex items-center gap-2 mt-4">
-          <FavoriteHeart active={isFav} count={shop.favoriteCount || 0} disabled={!me} onToggle={() => toggleFavorite("shop", shop)} size="lg" />
+          <FavoriteHeart active={isFav} count={shop.favoriteCount || 0} onToggle={() => toggleFavorite("shop", shop)} size="lg" />
           <button onClick={handleShare} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
             <Share2 size={15} /> Share{shop.shareCount > 0 ? ` · ${shop.shareCount}` : ""}
           </button>
@@ -7791,11 +7806,9 @@ function RestockWatchButton({ product }) {
   return (
     <button
       onClick={async () => {
-        if (!me) return;
         const res = await toggleRestockWatch(product.id);
-        showToast(res?.added ? "We'll let you know when it's back" : "Alert removed");
+        if (res) showToast(res.added ? "We'll let you know when it's back" : "Alert removed");
       }}
-      disabled={!me}
       className={`w-full flex items-center justify-center gap-1.5 rounded-xl py-2.5 font-semibold text-sm border transition ${
         watching ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "border-stone-200 text-stone-700 hover:bg-stone-50"
       }`}
@@ -8507,20 +8520,83 @@ function PlansScreen({ navigate }) {
   );
 }
 
+// US zip only — matches the rest of the app's address model (state
+// abbreviations, US lat/lng seed data).
+function isValidZip(z) {
+  return /^\d{5}(-\d{4})?$/.test((z || "").trim());
+}
+function digitsOnly(s) {
+  return (s || "").replace(/\D/g, "");
+}
+
 function CheckoutScreen({ navigate, tier, billing }) {
-  const { purchasePlan, showToast } = useApp();
+  const { me, purchasePlan, showToast } = useApp();
   const [busy, setBusy] = useState(false);
   const plan = PLAN_CATALOG[tier];
+
+  const existing = me?.billingProfile || null;
+  // Signing up (or an earlier plan purchase) already collected name/zip/phone
+  // — no need to ask again here. Only show the form if something's missing,
+  // or if the person explicitly wants to change what's on file.
+  const alreadyComplete = !!(existing?.fullName && existing?.zipcode && existing?.phone && existing?.phoneVerified);
+  const [editingDetails, setEditingDetails] = useState(false);
+  const showDetailsForm = !alreadyComplete || editingDetails;
+  const [fullName, setFullName] = useState(existing?.fullName || "");
+  const [zipcode, setZipcode] = useState(existing?.zipcode || "");
+  const [phone, setPhone] = useState(existing?.phone || "");
+  // A phone already verified on a previous purchase stays verified as long
+  // as it isn't edited — changing the digits always requires re-verifying.
+  const [phoneVerified, setPhoneVerified] = useState(!!(existing?.phone && existing?.phoneVerified));
+  const [codeStage, setCodeStage] = useState(false);
+  const [code, setCode] = useState("");
+  const [codeBusy, setCodeBusy] = useState(false);
 
   if (!plan || plan.id === "free") {
     return <EmptyState icon={Sparkles} title="Nothing to check out" action={<button onClick={() => navigate({ screen: "plans" })} className="text-sm font-semibold text-emerald-800">See plans</button>} />;
   }
 
   const price = billing === "annual" ? plan.annual : plan.monthly;
+  const nameValid = fullName.trim().length >= 2;
+  const zipValid = isValidZip(zipcode);
+  const phoneValid = digitsOnly(phone).length === 10;
+  const formReady = showDetailsForm ? nameValid && zipValid && phoneValid && phoneVerified : true;
+
+  const handlePhoneChange = (v) => {
+    setPhone(v);
+    setPhoneVerified(false);
+    setCodeStage(false);
+    setCode("");
+  };
+
+  const sendCode = () => {
+    if (!phoneValid) return;
+    setCodeStage(true);
+    showToast("TEST MODE — no text sent. Enter any 6 digits below.");
+  };
+
+  const verifyCode = () => {
+    if (!/^\d{6}$/.test(code.trim())) {
+      showToast("Enter the 6-digit code");
+      return;
+    }
+    setCodeBusy(true);
+    setTimeout(() => {
+      setPhoneVerified(true);
+      setCodeStage(false);
+      setCodeBusy(false);
+    }, 350);
+  };
 
   const confirm = async () => {
+    if (!formReady) return;
     setBusy(true);
-    await purchasePlan(tier, billing);
+    await purchasePlan(
+      tier,
+      billing,
+      showDetailsForm
+        ? { fullName: fullName.trim(), zipcode: zipcode.trim(), phone: digitsOnly(phone), phoneVerified: true, email: me?.email || null }
+        : undefined
+    );
     setBusy(false);
     showToast(`Welcome to ${plan.name} — test mode, no charge made`);
     navigate({ screen: "dashboard" });
@@ -8535,7 +8611,7 @@ function CheckoutScreen({ navigate, tier, billing }) {
 
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 mb-5 flex items-center gap-2">
           <AlertCircle size={15} className="text-amber-700 shrink-0" />
-          <p className="text-xs font-semibold text-amber-900">TEST MODE — no card, no charge. This confirms instantly.</p>
+          <p className="text-xs font-semibold text-amber-900">TEST MODE — no card, no charge, no real text message. This confirms instantly.</p>
         </div>
 
         <div className="bg-white border border-stone-200 rounded-2xl p-5 mb-5">
@@ -8556,10 +8632,107 @@ function CheckoutScreen({ navigate, tier, billing }) {
           </div>
         </div>
 
-        <button onClick={confirm} disabled={busy} className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition">
+        <div className="bg-white border border-stone-200 rounded-2xl p-5 mb-5">
+          <p className="text-xs font-bold text-stone-400 uppercase mb-3">Your details</p>
+
+          {!showDetailsForm ? (
+            <div>
+              <p className="text-sm text-stone-700 mb-0.5">{existing.fullName}</p>
+              <p className="text-sm text-stone-500 mb-0.5">{me?.email}</p>
+              <p className="text-sm text-stone-500 mb-0.5">Zip {existing.zipcode}</p>
+              <p className="cs-t11 text-emerald-700 font-semibold flex items-center gap-1 mt-1.5 mb-2">
+                <BadgeCheck size={13} /> Phone on file, verified
+              </p>
+              <button type="button" onClick={() => setEditingDetails(true)} className="text-xs font-semibold text-emerald-800">Use different details</button>
+            </div>
+          ) : (
+          <>
+          <label className="block mb-3">
+            <span className="block text-xs font-semibold text-stone-500 mb-1">Email</span>
+            <input value={me?.email || "—"} disabled className="w-full border border-stone-200 bg-stone-50 rounded-xl px-3.5 py-2.5 text-sm text-stone-500" />
+          </label>
+
+          <label className="block mb-3">
+            <span className="block text-xs font-semibold text-stone-500 mb-1">Full legal name</span>
+            <input
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Jane Doe"
+              className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700"
+            />
+          </label>
+
+          <label className="block mb-3">
+            <span className="block text-xs font-semibold text-stone-500 mb-1">Zip code</span>
+            <input
+              value={zipcode}
+              onChange={(e) => setZipcode(e.target.value)}
+              placeholder="83854"
+              inputMode="numeric"
+              className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700"
+            />
+            {zipcode && !zipValid && <span className="block cs-t11 text-rose-600 mt-1">Enter a valid 5-digit zip code</span>}
+          </label>
+
+          <label className="block mb-1.5">
+            <span className="block text-xs font-semibold text-stone-500 mb-1">Phone number</span>
+            <div className="flex gap-2">
+              <input
+                value={phone}
+                onChange={(e) => handlePhoneChange(e.target.value)}
+                placeholder="(208) 555-0100"
+                inputMode="tel"
+                className="flex-1 border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700"
+              />
+              {!phoneVerified && (
+                <button
+                  type="button"
+                  onClick={sendCode}
+                  disabled={!phoneValid}
+                  className="shrink-0 px-3.5 rounded-xl text-xs font-semibold border border-stone-200 text-stone-700 disabled:opacity-40 hover:bg-stone-50"
+                >
+                  {codeStage ? "Resend code" : "Send code"}
+                </button>
+              )}
+            </div>
+          </label>
+
+          {phoneVerified ? (
+            <p className="cs-t11 text-emerald-700 font-semibold flex items-center gap-1 mt-1">
+              <BadgeCheck size={13} /> Phone verified (test mode)
+            </p>
+          ) : codeStage ? (
+            <div className="mt-2 bg-stone-50 rounded-xl p-3 border border-stone-200">
+              <p className="cs-t11 text-stone-500 mb-2">TEST MODE — no text was actually sent. Enter any 6 digits to continue.</p>
+              <div className="flex gap-2">
+                <input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="123456"
+                  inputMode="numeric"
+                  className="flex-1 border border-stone-200 rounded-lg px-3 py-2 text-sm tracking-widest outline-none focus:border-emerald-700"
+                />
+                <button
+                  type="button"
+                  onClick={verifyCode}
+                  disabled={codeBusy || code.length !== 6}
+                  className="shrink-0 px-3.5 rounded-lg text-xs font-semibold bg-emerald-800 text-white disabled:opacity-40"
+                >
+                  {codeBusy ? "Checking…" : "Verify"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="cs-t11 text-stone-400 mt-1">We'll text a code to confirm this number.</p>
+          )}
+          </>
+          )}
+        </div>
+
+        <button onClick={confirm} disabled={busy || !formReady} className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition">
           {busy ? "Setting up…" : `Confirm ${plan.name} (Test Mode)`}
         </button>
-        <p className="text-center cs-t10 text-stone-400 mt-3">Real payments aren't collected yet — this is a placeholder so the product can be built and tested end to end.</p>
+        <p className="text-center cs-t10 text-stone-400 mt-3">Real payments aren't collected yet — this is a placeholder so the product can be built and tested end to end. Phone verification is also test mode for now — no real text messages are sent.</p>
       </div>
     </div>
   );
@@ -10323,10 +10496,44 @@ function LoadingScreen({ inline }) {
   );
 }
 
-function Onboarding({ onCreate }) {
+function Onboarding({ onCreate, reason, onCancel }) {
   const [name, setName] = useState("");
   const [avatar, setAvatar] = useState(AVATAR_EMOJI[0]);
+  const [fullName, setFullName] = useState("");
+  const [zipcode, setZipcode] = useState("");
+  const [phone, setPhone] = useState("");
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [codeStage, setCodeStage] = useState(false);
+  const [code, setCode] = useState("");
+  const [codeBusy, setCodeBusy] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  const nameValid = fullName.trim().length >= 2;
+  const zipValid = isValidZip(zipcode);
+  const phoneValid = digitsOnly(phone).length === 10;
+  const formReady = nameValid && zipValid && phoneValid && phoneVerified;
+
+  const handlePhoneChange = (v) => {
+    setPhone(v);
+    setPhoneVerified(false);
+    setCodeStage(false);
+    setCode("");
+  };
+
+  const sendCode = () => {
+    if (!phoneValid) return;
+    setCodeStage(true);
+  };
+
+  const verifyCode = () => {
+    if (!/^\d{6}$/.test(code.trim())) return;
+    setCodeBusy(true);
+    setTimeout(() => {
+      setPhoneVerified(true);
+      setCodeStage(false);
+      setCodeBusy(false);
+    }, 350);
+  };
 
   return (
     <div className="h-screen w-full flex items-start justify-center bg-stone-50 p-6 pt-8 overflow-y-auto" style={{ ...bodyFont, height: "100dvh" }}>
@@ -10336,7 +10543,16 @@ function Onboarding({ onCreate }) {
         <div className="flex items-center gap-2 text-emerald-800 font-bold text-2xl mb-1 justify-center" style={displayFont}>
           <Sparkles size={24} /> CropSwap
         </div>
-        <p className="text-center text-stone-500 mb-7 text-sm">A hyper-local, nationwide hub connecting growers and buyers.</p>
+        {reason ? (
+          <p className="text-center text-stone-500 mb-4 text-sm">One more step to {reason}.</p>
+        ) : (
+          <p className="text-center text-stone-500 mb-4 text-sm">A hyper-local, nationwide hub connecting growers and buyers.</p>
+        )}
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="text-xs font-semibold text-stone-400 hover:text-stone-600 mb-3 block mx-auto">
+            Not now — keep browsing
+          </button>
+        )}
         <div className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm">
           <p className="text-xs font-bold text-stone-400 uppercase mb-2">Pick an avatar</p>
           <div className="grid grid-cols-6 gap-2 mb-4">
@@ -10344,30 +10560,118 @@ function Onboarding({ onCreate }) {
               <button key={em} onClick={() => setAvatar(em)} className={`text-2xl p-2 rounded-xl transition ${avatar === em ? "bg-emerald-100 ring-2 ring-emerald-600" : "hover:bg-stone-100"}`}>{em}</button>
             ))}
           </div>
-          <p className="text-xs font-bold text-stone-400 uppercase mb-2">Your name</p>
+
+          <p className="text-xs font-bold text-stone-400 uppercase mb-2">Display name</p>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="What should we call you?"
             className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700"
           />
+
+          <p className="text-xs font-bold text-stone-400 uppercase mb-2">Full legal name</p>
+          <input
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="Jane Doe"
+            className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700"
+          />
+
+          <p className="text-xs font-bold text-stone-400 uppercase mb-2">Zip code</p>
+          <input
+            value={zipcode}
+            onChange={(e) => setZipcode(e.target.value)}
+            placeholder="83854"
+            inputMode="numeric"
+            className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-1 outline-none focus:border-emerald-700"
+          />
+          {zipcode && !zipValid && <p className="cs-t11 text-rose-600 mb-3">Enter a valid 5-digit zip code</p>}
+          {(!zipcode || zipValid) && <div className="mb-3" />}
+
+          <p className="text-xs font-bold text-stone-400 uppercase mb-2">Phone number</p>
+          <div className="flex gap-2 mb-1.5">
+            <input
+              value={phone}
+              onChange={(e) => handlePhoneChange(e.target.value)}
+              placeholder="(208) 555-0100"
+              inputMode="tel"
+              className="flex-1 border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700"
+            />
+            {!phoneVerified && (
+              <button
+                type="button"
+                onClick={sendCode}
+                disabled={!phoneValid}
+                className="shrink-0 px-3.5 rounded-xl text-xs font-semibold border border-stone-200 text-stone-700 disabled:opacity-40 hover:bg-stone-50"
+              >
+                {codeStage ? "Resend" : "Send code"}
+              </button>
+            )}
+          </div>
+
+          {phoneVerified ? (
+            <p className="cs-t11 text-emerald-700 font-semibold flex items-center gap-1 mb-4">
+              <BadgeCheck size={13} /> Phone verified (test mode)
+            </p>
+          ) : codeStage ? (
+            <div className="mb-4 bg-stone-50 rounded-xl p-3 border border-stone-200">
+              <p className="cs-t11 text-stone-500 mb-2">TEST MODE — no text was actually sent. Enter any 6 digits.</p>
+              <div className="flex gap-2">
+                <input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="123456"
+                  inputMode="numeric"
+                  className="flex-1 border border-stone-200 rounded-lg px-3 py-2 text-sm tracking-widest outline-none focus:border-emerald-700"
+                />
+                <button
+                  type="button"
+                  onClick={verifyCode}
+                  disabled={codeBusy || code.length !== 6}
+                  className="shrink-0 px-3.5 rounded-lg text-xs font-semibold bg-emerald-800 text-white disabled:opacity-40"
+                >
+                  {codeBusy ? "Checking…" : "Verify"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="cs-t11 text-stone-400 mb-4">We'll text a code to confirm this number.</p>
+          )}
+
           <button
             onClick={async () => {
               setBusy(true);
-              await onCreate({ name: name.trim() || "Guest", avatar });
+              await onCreate({ name: name.trim() || "Guest", avatar, fullName: fullName.trim(), zipcode: zipcode.trim(), phone: digitsOnly(phone) });
               setBusy(false);
             }}
-            disabled={busy}
+            disabled={busy || !formReady}
             className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition"
           >
-            {busy ? "Setting up…" : "Get started"}
+            {busy ? "Setting up…" : "Create free account"}
           </button>
         </div>
-        <p className="text-center cs-t11 text-stone-400 mt-4">This is how other growers and buyers will see you — you can change it anytime in your account.</p>
+        <p className="text-center cs-t11 text-stone-400 mt-4">Your display name and avatar are what other growers and buyers see. Everything else stays private — you can change any of it later in your account.</p>
       </div>
     </div>
   );
 }
+
+/* ============================================================================
+   SECTION 26b: GUEST BROWSING — anyone can look around without an account;
+   only these screens (and the write actions gated inline elsewhere) require
+   one. Centralizing the list here means the sidebar, bottom nav, and every
+   "go to X" button all get the same gate for free just by calling navigate().
+============================================================================ */
+const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "dashboard", "store", "storeEditor", "places", "checkout"]);
+const AUTH_REASON_BY_SCREEN = {
+  favorites: "see your favorites",
+  messages: "send and receive messages",
+  dashboard: "view your seller dashboard",
+  store: "start selling on CropSwap",
+  storeEditor: "edit your storefront",
+  places: "save your places",
+  checkout: "subscribe to a plan",
+};
 
 /* ============================================================================
    SECTION 27: ROOT SHELL — wires all hooks into context, owns routing
@@ -10430,6 +10734,21 @@ function RootShell() {
   const openProfileCard = useCallback((target) => setProfileCardTarget(target), []);
   const [openProductId, setOpenProductId] = useState(null);
   const [toast, setToast] = useState("");
+  // Anyone can browse without an account. The moment a guest tries to do
+  // something that needs one — favorite, review, message, open a
+  // sign-in-only screen — this is set, which drops them into the sign-up
+  // flow instead of the screen/action they reached for. It carries the
+  // route they were headed to (if any) so a successful sign-up can resume
+  // there rather than dumping them back on Explore.
+  const [authFlow, setAuthFlow] = useState(null);
+  const requireAuth = useCallback(
+    (reason, pendingRoute) => {
+      if (me) return true;
+      setAuthFlow({ reason, pendingRoute: pendingRoute || null });
+      return false;
+    },
+    [me]
+  );
 
   // One handler covers every text field in the app: when something gains focus,
   // centre it in whatever space the keyboard leaves.
@@ -10449,7 +10768,16 @@ function RootShell() {
     return () => document.removeEventListener("focusin", onFocusIn);
   }, []);
 
-  const navigate = useCallback((r) => setRoute(r), []);
+  const navigate = useCallback(
+    (r) => {
+      if (AUTH_REQUIRED_SCREENS.has(r.screen) && !me) {
+        requireAuth(AUTH_REASON_BY_SCREEN[r.screen] || "continue", r);
+        return;
+      }
+      setRoute(r);
+    },
+    [me, requireAuth]
+  );
   const showToast = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
@@ -10486,7 +10814,7 @@ function RootShell() {
   // count through the market layer (so it re-renders), and tell the shop owner.
   const toggleFavorite = useCallback(
     async (type, entity) => {
-      if (!me) return;
+      if (!requireAuth("favorite items")) return;
       const result = await fav.toggle(type, entity);
       if (!result) return;
       const { added, newCount } = result;
@@ -10512,7 +10840,7 @@ function RootShell() {
         }
       }
     },
-    [me, fav, market]
+    [me, fav, market, requireAuth]
   );
 
   // A simple running tally, like favorites but not per-user — every completed
@@ -10540,11 +10868,19 @@ function RootShell() {
   // tier + billing period on the profile, and reactivates a lapsed storefront
   // if the vendor is re-upping before the 90-day abandonment window closes.
   const purchasePlan = useCallback(
-    async (tier, billing) => {
+    async (tier, billing, billingDetails) => {
       if (!me) return;
       const now = Date.now();
       const periodEnd = addDays(now, billing === "annual" ? 365 : 30);
-      await updateMe({ plan: { tier, billing, status: "active", startedAt: now, periodEnd, cancelledAt: null, refundPct: null } });
+      const patch = { plan: { tier, billing, status: "active", startedAt: now, periodEnd, cancelledAt: null, refundPct: null } };
+      // billingProfile persists across plan changes/cancellations — it's
+      // identity info tied to the account, not to any one subscription term,
+      // so it's kept separate from `plan` and only overwritten when someone
+      // actually resubmits the checkout form (never cleared on cancel).
+      if (billingDetails) {
+        patch.billingProfile = { ...(me.billingProfile || {}), ...billingDetails, updatedAt: now };
+      }
+      await updateMe(patch);
       if (me.shopId) {
         const shop = market.shopsById[me.shopId];
         if (shop?.billingStatus === "inactive") {
@@ -10574,8 +10910,22 @@ function RootShell() {
     return { refundPct };
   }, [me, updateMe, market]);
 
+  // Thin auth-gated wrappers around the hooks' own toggles — the hooks
+  // themselves stay reusable/null-safe on their own, but the *prompt* (as
+  // opposed to a silent no-op) only makes sense with requireAuth in scope,
+  // which lives here at the RootShell level.
+  const toggleRestockWatch = useCallback(
+    (productId) => (requireAuth("get restock alerts") ? restock.toggleRestockWatch(productId) : null),
+    [restock, requireAuth]
+  );
+  const toggleHelpfulMark = useCallback(
+    (key) => (requireAuth("mark reviews helpful") ? helpful.toggleHelpfulMark(key) : null),
+    [helpful, requireAuth]
+  );
+
   const ctxValue = {
     me,
+    requireAuth,
     updateMe,
     signOut,
     shops: market.shops,
@@ -10590,13 +10940,13 @@ function RootShell() {
     loadPhoto: photos.loadPhoto,
     putPhoto: photos.putPhoto,
     restockWatches: restock.restockWatches,
-    toggleRestockWatch: restock.toggleRestockWatch,
+    toggleRestockWatch,
     myReviews: mineReviews.myReviews,
     addMyReview: mineReviews.addMyReview,
     patchMyReview: mineReviews.patchMyReview,
     dropMyReview: mineReviews.dropMyReview,
     helpfulMarks: helpful.helpfulMarks,
-    toggleHelpfulMark: helpful.toggleHelpfulMark,
+    toggleHelpfulMark,
     favProducts: fav.favProducts,
     favShops: fav.favShops,
     toggleFavorite,
@@ -10632,9 +10982,41 @@ function RootShell() {
   };
 
   if (meLoading) return <LoadingScreen />;
-  if (!hasSession) return <AuthGate />;
-  if (!me) return <Onboarding onCreate={(d) => createProfile({ ...d, homeLocation: userLoc })} />;
   if (market.loading) return <LoadingScreen />;
+
+  // Guests fall straight through to the normal shell below and browse freely.
+  // The sign-up flow only takes over the screen once something has actually
+  // asked for it (see requireAuth / navigate above) — never up front.
+  if (authFlow && !me) {
+    if (!hasSession) {
+      return <AuthGate reason={authFlow.reason} onCancel={() => setAuthFlow(null)} />;
+    }
+    return (
+      <Onboarding
+        reason={authFlow.reason}
+        onCreate={async (d) => {
+          const profile = await createProfile({ name: d.name, avatar: d.avatar, homeLocation: userLoc });
+          await updateMe({
+            billingProfile: {
+              fullName: d.fullName,
+              zipcode: d.zipcode,
+              phone: d.phone,
+              phoneVerified: true,
+              email: profile.email || null,
+              updatedAt: Date.now(),
+            },
+          });
+          const pending = authFlow?.pendingRoute;
+          setAuthFlow(null);
+          // setRoute, not navigate — navigate would re-run the auth check
+          // against this render's still-stale `me` closure and bounce right
+          // back into requireAuth. We already know the account exists now.
+          if (pending) setRoute(pending);
+        }}
+        onCancel={() => setAuthFlow(null)}
+      />
+    );
+  }
 
   return (
     <AppContext.Provider value={ctxValue}>
@@ -10658,8 +11040,8 @@ function RootShell() {
             (filters.maxPrice ? 1 : 0)
           }
           onOpenSearch={() => navigate({ screen: "explore" })}
-          onOpenNotifs={() => setNotifOpen(true)}
-          onOpenAccount={() => setAccountOpen(true)}
+          onOpenNotifs={() => (requireAuth("view notifications") ? setNotifOpen(true) : null)}
+          onOpenAccount={() => (requireAuth("view your account") ? setAccountOpen(true) : null)}
           onOpenFavorites={() => navigate({ screen: "favorites" })}
           onSubmitSearch={submitSearch}
         />
