@@ -6,7 +6,7 @@ import {
   Home, Package, Filter, GripVertical, BadgeCheck, AlertCircle,
   LayoutGrid, UserPlus, ShoppingBag, Sparkles, ShieldAlert, Bookmark,
   Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
-  Bug, Save,
+  Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -4828,6 +4828,7 @@ function Sidebar({ route, navigate }) {
     { id: "messages", label: "Messages", icon: MessageCircle },
     { id: "favorites", label: "Favorites", icon: Heart },
     { id: "dashboard", label: "Dashboard", icon: TrendingUp },
+    { id: "orders", label: "Orders", icon: ClipboardList },
     { id: "places", label: "Places", icon: MapPin },
   ];
   return (
@@ -6600,6 +6601,11 @@ function ShopProfileView({ shopId, navigate }) {
           {isOwner && (
             <button onClick={() => navigate({ screen: "dashboard" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
               <TrendingUp size={15} /> Dashboard
+            </button>
+          )}
+          {isOwner && (
+            <button onClick={() => navigate({ screen: "orders" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+              <ClipboardList size={15} /> Orders
             </button>
           )}
           {isOwner && (
@@ -8486,7 +8492,20 @@ const PLAN_CATALOG = {
   },
 };
 const REFUND_WINDOW_DAYS = 30;
-const ABANDON_DAYS = 90;
+// How long a lapsed (cancelled/expired) storefront stays on the platform,
+// inactive and hidden from other shoppers, before the sweep in
+// useMarketData.loadAll() removes it for good. A full year gives a vendor
+// plenty of room to come back before anything is actually deleted.
+const ABANDON_DAYS = 365;
+// Human-friendly phrasing for ABANDON_DAYS in UI copy — "a year" reads far
+// better than "365 days" without hardcoding the number in two places.
+function abandonWindowLabel() {
+  if (ABANDON_DAYS % 365 === 0) {
+    const years = ABANDON_DAYS / 365;
+    return years === 1 ? "up to a year" : `up to ${years} years`;
+  }
+  return `up to ${ABANDON_DAYS} days`;
+}
 
 function planTier(me) {
   return me?.plan?.tier || "free";
@@ -8606,7 +8625,7 @@ function CancelPlanModal({ tierName, withinWindow, cancelling, onKeep, onConfirm
           {withinWindow
             ? `You're within the ${REFUND_WINDOW_DAYS}-day window — cancelling now refunds 50% of what you paid (test mode).`
             : `It's past day ${REFUND_WINDOW_DAYS} of this term, so no refund applies — access is removed immediately.`}
-          {" "}Your storefront stays on the platform, inactive, for {ABANDON_DAYS} days in case you come back.
+          {" "}Your storefront stays on the platform, inactive, for {abandonWindowLabel()} in case you come back.
         </p>
         <div className="flex gap-2">
           <button onClick={onKeep} disabled={cancelling} className="flex-1 text-sm font-semibold py-2.5 rounded-xl border border-stone-200 disabled:opacity-50">Keep plan</button>
@@ -9914,6 +9933,1250 @@ function MassMessageComposer({ me, shop, subscribers, onSent, showToast }) {
   );
 }
 
+/* ============================================================================
+   SECTION 24b: ORDERS / INVENTORY / CALENDAR (Premium)
+   A dedicated workspace for vendors running a real pickup operation: a
+   multi-item order list, a live inventory database that the orders list
+   deducts from the moment a pickup is checked off, and a calendar that stays
+   in sync with both. Everything here is private business data — customer
+   names, stock levels, revenue — so every key below is written to the
+   private kv table (shared=false), never shared_kv, same as me:profile.
+============================================================================ */
+
+// InventoryItem:  { id, name, category, unit, qty, lowStockThreshold, price, notes, createdAt, updatedAt }
+// InventoryLog:   { id, itemId, itemName, change, reason: "order"|"manual"|"restock"|"order-reverted", orderId, at }
+// Order:          { id, customerName, customerUserId, items: [{ id, inventoryItemId, name, qty, unit, price }],
+//                   pickupDate, pickupTime, pickupLocation, notes, completed, completedAt, archived,
+//                   calendarEventId, createdAt }
+// CalendarEvent:  { id, title, date (yyyy-mm-dd), time, notes, orderId, kind: "order"|"note", createdAt }
+
+function normalizeOrderItems(items) {
+  return (items || []).map((li) => ({
+    id: li.id || uid("oi"),
+    inventoryItemId: li.inventoryItemId || null,
+    name: (li.name || "").trim(),
+    qty: Number(li.qty) || 0,
+    unit: li.unit || "each",
+    price: Number(li.price) || 0,
+  }));
+}
+
+function useInventory(shopId) {
+  const [items, setItems] = useState([]);
+  const [log, setLog] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!shopId) {
+      setItems([]);
+      setLog([]);
+      setLoading(false);
+      return;
+    }
+    const [itemsRes, logRes] = await Promise.all([
+      getJSON(`inventory:${shopId}`, false, []),
+      getJSON(`inventoryLog:${shopId}`, false, []),
+    ]);
+    setItems(Array.isArray(itemsRes) ? itemsRes : []);
+    setLog(Array.isArray(logRes) ? logRes : []);
+    setLoading(false);
+  }, [shopId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const persist = useCallback(
+    async (next) => {
+      setItems(next);
+      await setJSON(`inventory:${shopId}`, next, false, { verify: true });
+    },
+    [shopId]
+  );
+
+  const addItem = useCallback(
+    async (draft) => {
+      const item = {
+        id: uid("inv"),
+        name: (draft.name || "").trim(),
+        category: draft.category || "Other",
+        unit: draft.unit || "each",
+        qty: Number(draft.qty) || 0,
+        lowStockThreshold: draft.lowStockThreshold === "" || draft.lowStockThreshold == null ? null : Number(draft.lowStockThreshold),
+        price: Number(draft.price) || 0,
+        notes: draft.notes || "",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const next = [item, ...items];
+      setItems(next);
+      await setJSON(`inventory:${shopId}`, next, false, { verify: true });
+      const nextLog = [{ id: uid("invlog"), itemId: item.id, itemName: item.name, change: item.qty, reason: "manual", orderId: null, at: Date.now() }, ...log].slice(0, 500);
+      setLog(nextLog);
+      await setJSON(`inventoryLog:${shopId}`, nextLog, false);
+      return item;
+    },
+    [items, log, shopId]
+  );
+
+  const updateItem = useCallback(
+    async (id, patch) => {
+      const norm = { ...patch };
+      if (norm.qty !== undefined) norm.qty = Number(norm.qty) || 0;
+      if (norm.price !== undefined) norm.price = Number(norm.price) || 0;
+      if (norm.lowStockThreshold !== undefined) {
+        norm.lowStockThreshold = norm.lowStockThreshold === "" || norm.lowStockThreshold == null ? null : Number(norm.lowStockThreshold);
+      }
+      const next = items.map((it) => (it.id === id ? { ...it, ...norm, updatedAt: Date.now() } : it));
+      await persist(next);
+    },
+    [items, persist]
+  );
+
+  const removeItem = useCallback(
+    async (id) => {
+      await persist(items.filter((it) => it.id !== id));
+    },
+    [items, persist]
+  );
+
+  // Every stock change — whether from a manual +/- tap or an order being
+  // checked off — funnels through one batched write, so the activity log can
+  // never drift out of sync with the quantities actually on the item, and a
+  // multi-item order only costs one storage round trip instead of one per line.
+  const adjustStockBatch = useCallback(
+    async (deltas, reason, orderId = null) => {
+      const logAdds = [];
+      const next = items.map((it) => {
+        const d = deltas.find((x) => x.id === it.id);
+        if (!d) return it;
+        const nextQty = Math.max(0, it.qty + d.delta);
+        logAdds.push({ id: uid("invlog"), itemId: it.id, itemName: it.name, change: d.delta, reason, orderId, at: Date.now() });
+        return { ...it, qty: nextQty, updatedAt: Date.now() };
+      });
+      setItems(next);
+      await setJSON(`inventory:${shopId}`, next, false, { verify: true });
+      const nextLog = [...logAdds, ...log].slice(0, 500);
+      setLog(nextLog);
+      await setJSON(`inventoryLog:${shopId}`, nextLog, false);
+    },
+    [items, log, shopId]
+  );
+
+  const adjustStock = useCallback(
+    (id, delta, reason, orderId = null) => adjustStockBatch([{ id, delta }], reason, orderId),
+    [adjustStockBatch]
+  );
+
+  return { items, log, loading, addItem, updateItem, removeItem, adjustStock, adjustStockBatch, reload: load };
+}
+
+function useOrders(shopId) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!shopId) {
+      setOrders([]);
+      setLoading(false);
+      return;
+    }
+    const list = await getJSON(`orders:${shopId}`, false, []);
+    setOrders(Array.isArray(list) ? list : []);
+    setLoading(false);
+  }, [shopId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const persist = useCallback(
+    async (next) => {
+      setOrders(next);
+      await setJSON(`orders:${shopId}`, next, false, { verify: true });
+    },
+    [shopId]
+  );
+
+  const addOrder = useCallback(
+    async (draft) => {
+      const order = {
+        id: uid("ord"),
+        customerName: (draft.customerName || "").trim(),
+        customerUserId: draft.customerUserId || null,
+        items: normalizeOrderItems(draft.items),
+        pickupDate: draft.pickupDate || "",
+        pickupTime: draft.pickupTime || "",
+        pickupLocation: draft.pickupLocation || "",
+        notes: draft.notes || "",
+        completed: false,
+        completedAt: null,
+        archived: false,
+        calendarEventId: null,
+        createdAt: Date.now(),
+      };
+      await persist([order, ...orders]);
+      return order;
+    },
+    [orders, persist]
+  );
+
+  const updateOrder = useCallback(
+    async (id, patch) => {
+      const norm = { ...patch };
+      if (norm.items) norm.items = normalizeOrderItems(norm.items);
+      await persist(orders.map((o) => (o.id === id ? { ...o, ...norm } : o)));
+    },
+    [orders, persist]
+  );
+
+  const removeOrder = useCallback(
+    async (id) => {
+      await persist(orders.filter((o) => o.id !== id));
+    },
+    [orders, persist]
+  );
+
+  const archiveOrder = useCallback(
+    async (id, archived = true) => {
+      await persist(orders.map((o) => (o.id === id ? { ...o, archived } : o)));
+    },
+    [orders, persist]
+  );
+
+  return { orders, loading, addOrder, updateOrder, removeOrder, archiveOrder, reload: load };
+}
+
+function useShopCalendar(shopId) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!shopId) {
+      setEvents([]);
+      setLoading(false);
+      return;
+    }
+    const list = await getJSON(`calendarEvents:${shopId}`, false, []);
+    setEvents(Array.isArray(list) ? list : []);
+    setLoading(false);
+  }, [shopId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const persist = useCallback(
+    async (next) => {
+      setEvents(next);
+      await setJSON(`calendarEvents:${shopId}`, next, false);
+    },
+    [shopId]
+  );
+
+  const addEvent = useCallback(
+    async (draft) => {
+      const ev = {
+        id: uid("cal"),
+        title: (draft.title || "").trim(),
+        date: draft.date || "",
+        time: draft.time || "",
+        notes: draft.notes || "",
+        orderId: draft.orderId || null,
+        kind: draft.kind || "note",
+        createdAt: Date.now(),
+      };
+      await persist([ev, ...events]);
+      return ev;
+    },
+    [events, persist]
+  );
+
+  const updateEvent = useCallback(
+    async (id, patch) => {
+      await persist(events.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+    },
+    [events, persist]
+  );
+
+  const removeEvent = useCallback(
+    async (id) => {
+      await persist(events.filter((e) => e.id !== id));
+    },
+    [events, persist]
+  );
+
+  return { events, loading, addEvent, updateEvent, removeEvent, reload: load };
+}
+
+// Aggregates whatever's currently on the (non-archived) orders list into two
+// buckets — not-yet-fulfilled and completed — each with a per-product
+// quantity total and a revenue total. Archived orders are excluded on
+// purpose: archiving is what takes an order off the running list.
+function computeOrderTotals(orders) {
+  const mk = () => ({ byProduct: {}, revenue: 0, count: 0 });
+  const pending = mk();
+  const completed = mk();
+  for (const o of orders) {
+    if (o.archived) continue;
+    const bucket = o.completed ? completed : pending;
+    bucket.count++;
+    for (const li of o.items) {
+      bucket.byProduct[li.name] = (bucket.byProduct[li.name] || 0) + Number(li.qty || 0);
+      bucket.revenue += Number(li.qty || 0) * Number(li.price || 0);
+    }
+  }
+  return { pending, completed };
+}
+
+function pickupLabel(order) {
+  if (!order.pickupDate) return "No pickup time set";
+  const d = new Date(`${order.pickupDate}T00:00:00`);
+  const dateLabel = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return order.pickupTime ? `${dateLabel} @ ${order.pickupTime}` : dateLabel;
+}
+
+function TotalsPanel({ title, tone, data }) {
+  const productNames = Object.keys(data.byProduct);
+  return (
+    <div className={`rounded-2xl border p-4 ${tone === "pending" ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+      <p className="font-bold text-stone-800 mb-2">
+        {title} <span className="font-normal text-stone-500 cs-t11">({data.count} order{data.count === 1 ? "" : "s"})</span>
+      </p>
+      {productNames.length === 0 ? (
+        <p className="cs-t11 text-stone-400 mb-2">Nothing here yet.</p>
+      ) : (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 mb-2">
+          {productNames.map((name) => (
+            <span key={name} className="text-sm text-stone-700">
+              <span className="font-semibold">{data.byProduct[name]}</span> {name}
+            </span>
+          ))}
+        </div>
+      )}
+      <p className="text-sm font-bold text-stone-900">{formatMoney(data.revenue)} total</p>
+    </div>
+  );
+}
+
+function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDelete, onAddToCalendar }) {
+  const total = order.items.reduce((sum, li) => sum + Number(li.qty || 0) * Number(li.price || 0), 0);
+  return (
+    <div className={`rounded-2xl border p-4 ${order.completed ? "border-stone-100 bg-stone-50" : "border-stone-200 bg-white"}`}>
+      <div className="flex items-start gap-3">
+        {!readOnly && (
+          <button
+            onClick={onToggleComplete}
+            aria-label={order.completed ? "Mark not complete" : "Mark complete"}
+            className={`w-6 h-6 mt-0.5 rounded-lg border-2 flex items-center justify-center shrink-0 transition ${
+              order.completed ? "bg-emerald-800 border-emerald-800" : "border-stone-300 hover:border-emerald-600"
+            }`}
+          >
+            {order.completed && <Check size={14} className="text-white" />}
+          </button>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className={`font-semibold ${order.completed ? "text-stone-400 line-through" : "text-stone-800"}`}>{order.customerName}</p>
+            <p className="cs-t11 text-stone-400 flex items-center gap-1 shrink-0">
+              <Clock size={11} /> {pickupLabel(order)}
+            </p>
+          </div>
+          {order.pickupLocation && (
+            <p className="cs-t11 text-stone-500 flex items-center gap-1 mt-0.5">
+              <MapPin size={11} /> {order.pickupLocation}
+            </p>
+          )}
+          <div className="mt-2 space-y-0.5">
+            {order.items.map((li) => (
+              <div key={li.id} className="flex items-center justify-between text-sm text-stone-600">
+                <span>
+                  {li.qty} {li.unit} {li.name}
+                </span>
+                <span>{formatMoney(li.qty * li.price)}</span>
+              </div>
+            ))}
+          </div>
+          {order.notes && <p className="cs-t11 text-stone-400 mt-1.5 italic">{order.notes}</p>}
+          <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-stone-100">
+            <p className="text-sm font-bold text-stone-900">{formatMoney(total)}</p>
+            <div className="flex items-center gap-1">
+              {!readOnly && !order.calendarEventId && <IconButton icon={Calendar} label="Add to calendar" size={14} onClick={onAddToCalendar} />}
+              {!readOnly && <IconButton icon={Pencil} label="Edit order" size={14} onClick={onEdit} />}
+              {!readOnly && order.completed && <IconButton icon={Archive} label="Archive order" size={14} onClick={onArchive} />}
+              {readOnly && <IconButton icon={Archive} label="Restore order" size={14} onClick={onArchive} />}
+              <IconButton icon={Trash2} label="Delete order" size={14} onClick={onDelete} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrdersTab({ orders, onAddOrder, onEdit, onToggleComplete, onArchive, onDelete, onAddToCalendar }) {
+  const active = orders.orders.filter((o) => !o.archived);
+  const sorted = active.slice().sort((a, b) => (a.completed === b.completed ? b.createdAt - a.createdAt : a.completed ? 1 : -1));
+  const totals = computeOrderTotals(orders.orders);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <p className="font-bold text-lg text-stone-800" style={displayFont}>Orders</p>
+        <button onClick={onAddOrder} className="flex items-center gap-1.5 bg-emerald-800 hover:bg-emerald-700 text-white text-sm font-semibold px-3.5 py-2 rounded-full">
+          <Plus size={15} /> New order
+        </button>
+      </div>
+      {sorted.length === 0 ? (
+        <EmptyState
+          icon={ClipboardList}
+          title="No orders yet"
+          body="Add your first pickup order to start tracking it here."
+          action={<button onClick={onAddOrder} className="text-sm font-semibold text-emerald-800">Add an order</button>}
+        />
+      ) : (
+        <div className="space-y-3 mb-6">
+          {sorted.map((o) => (
+            <OrderCard
+              key={o.id}
+              order={o}
+              onToggleComplete={() => onToggleComplete(o)}
+              onEdit={() => onEdit(o)}
+              onArchive={() => onArchive(o.id)}
+              onDelete={() => onDelete(o.id)}
+              onAddToCalendar={() => onAddToCalendar(o)}
+            />
+          ))}
+        </div>
+      )}
+      <div className="grid sm:grid-cols-2 gap-3">
+        <TotalsPanel title="Not yet fulfilled" tone="pending" data={totals.pending} />
+        <TotalsPanel title="Completed" tone="completed" data={totals.completed} />
+      </div>
+    </div>
+  );
+}
+
+function OrderFormModal({ open, onClose, onSave, inventory, initial }) {
+  const [customerName, setCustomerName] = useState("");
+  const [pickupDate, setPickupDate] = useState("");
+  const [pickupTime, setPickupTime] = useState("");
+  const [pickupLocation, setPickupLocation] = useState("");
+  const [notes, setNotes] = useState("");
+  const [items, setItems] = useState([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setCustomerName(initial?.customerName || "");
+    setPickupDate(initial?.pickupDate || "");
+    setPickupTime(initial?.pickupTime || "");
+    setPickupLocation(initial?.pickupLocation || "");
+    setNotes(initial?.notes || "");
+    setItems(initial?.items?.length ? initial.items.map((li) => ({ ...li })) : []);
+  }, [open, initial]);
+
+  const addLine = () => setItems((prev) => [...prev, { id: uid("oi"), inventoryItemId: "", name: "", qty: 1, unit: "each", price: 0 }]);
+  const updateLine = (id, patch) => setItems((prev) => prev.map((li) => (li.id === id ? { ...li, ...patch } : li)));
+  const removeLine = (id) => setItems((prev) => prev.filter((li) => li.id !== id));
+
+  const pickInventoryItem = (lineId, invId) => {
+    const src = inventory.items.find((it) => it.id === invId);
+    if (!src) {
+      updateLine(lineId, { inventoryItemId: "" });
+      return;
+    }
+    updateLine(lineId, { inventoryItemId: src.id, name: src.name, unit: src.unit, price: src.price });
+  };
+
+  const canSave = customerName.trim().length > 0 && items.length > 0 && items.every((li) => (li.name || "").trim() && Number(li.qty) > 0);
+
+  const handleSave = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    await onSave({ customerName, pickupDate, pickupTime, pickupLocation, notes, items });
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="order-form-title">
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 id="order-form-title" className="font-bold text-lg text-stone-800" style={displayFont}>
+            {initial ? "Edit order" : "New order"}
+          </h2>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-600">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-3">
+          <TextField
+            label="Customer name"
+            value={customerName}
+            onChange={setCustomerName}
+            placeholder="Who's this for?"
+            className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Pickup date</label>
+              <input type="date" value={pickupDate} onChange={(e) => setPickupDate(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </div>
+            <div>
+              <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Pickup time</label>
+              <input type="time" value={pickupTime} onChange={(e) => setPickupTime(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </div>
+          </div>
+          <TextField
+            label="Pickup location"
+            value={pickupLocation}
+            onChange={setPickupLocation}
+            placeholder="Where will they pick this up?"
+            className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+          />
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="cs-t11 font-semibold text-stone-500">Items</label>
+              <button onClick={addLine} className="cs-t11 font-semibold text-emerald-800 flex items-center gap-1">
+                <Plus size={12} /> Add item
+              </button>
+            </div>
+            <div className="space-y-2">
+              {items.map((li) => {
+                const src = li.inventoryItemId ? inventory.items.find((it) => it.id === li.inventoryItemId) : null;
+                const short = src && Number(li.qty) > src.qty;
+                return (
+                  <div key={li.id} className="border border-stone-200 rounded-xl p-2.5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <select
+                        value={li.inventoryItemId || ""}
+                        onChange={(e) => pickInventoryItem(li.id, e.target.value)}
+                        className="flex-1 border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-emerald-700"
+                      >
+                        <option value="">Custom item…</option>
+                        {inventory.items.map((it) => (
+                          <option key={it.id} value={it.id}>
+                            {it.name} ({it.qty} {it.unit} in stock)
+                          </option>
+                        ))}
+                      </select>
+                      <button onClick={() => removeLine(li.id)} className="text-stone-400 hover:text-red-600 shrink-0">
+                        <X size={16} />
+                      </button>
+                    </div>
+                    {!li.inventoryItemId && (
+                      <input
+                        value={li.name}
+                        onChange={(e) => updateLine(li.id, { name: e.target.value })}
+                        placeholder="Item name"
+                        className="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-emerald-700 mb-2"
+                      />
+                    )}
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="cs-t9 text-stone-400">Qty</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={li.qty}
+                          onChange={(e) => updateLine(li.id, { qty: e.target.value })}
+                          className="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-emerald-700"
+                        />
+                      </div>
+                      <div>
+                        <label className="cs-t9 text-stone-400">Unit</label>
+                        <input
+                          value={li.unit}
+                          onChange={(e) => updateLine(li.id, { unit: e.target.value })}
+                          className="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-emerald-700"
+                        />
+                      </div>
+                      <div>
+                        <label className="cs-t9 text-stone-400">Price ea.</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={li.price}
+                          onChange={(e) => updateLine(li.id, { price: e.target.value })}
+                          className="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-emerald-700"
+                        />
+                      </div>
+                    </div>
+                    {short && <p className="cs-t10 text-amber-700 mt-1.5">Only {src.qty} {src.unit} in stock</p>}
+                  </div>
+                );
+              })}
+              {items.length === 0 && <p className="cs-t11 text-stone-400">No items yet — add at least one.</p>}
+            </div>
+          </div>
+
+          <TextField
+            label="Notes"
+            value={notes}
+            onChange={setNotes}
+            multiline
+            rows={2}
+            placeholder="Optional"
+            className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+          />
+        </div>
+        <button onClick={handleSave} disabled={!canSave || saving} className="w-full mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-40">
+          {saving ? "Saving…" : initial ? "Save changes" : "Add order"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function InventoryTab({ inventory, onAdd, onEdit }) {
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("");
+  const [showLog, setShowLog] = useState(false);
+
+  const filtered = inventory.items.filter((it) => {
+    if (cat && it.category !== cat) return false;
+    if (!q.trim()) return true;
+    return it.name.toLowerCase().includes(q.trim().toLowerCase());
+  });
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <p className="font-bold text-lg text-stone-800" style={displayFont}>Inventory</p>
+        <button onClick={onAdd} className="flex items-center gap-1.5 bg-emerald-800 hover:bg-emerald-700 text-white text-sm font-semibold px-3.5 py-2 rounded-full">
+          <Plus size={15} /> Add item
+        </button>
+      </div>
+      <div className="relative mb-2">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search inventory…"
+          className="w-full border border-stone-200 rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+        />
+      </div>
+      <div className="flex gap-1.5 overflow-x-auto mb-4 pb-1">
+        <button onClick={() => setCat("")} className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${cat === "" ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-500"}`}>
+          All
+        </button>
+        {CATEGORIES.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => setCat(c.id)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${cat === c.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-500"}`}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState
+          icon={Boxes}
+          title="No items yet"
+          body="Add what you stock so orders can pull straight from it."
+          action={<button onClick={onAdd} className="text-sm font-semibold text-emerald-800">Add an item</button>}
+        />
+      ) : (
+        <div className="space-y-2 mb-6">
+          {filtered.map((it) => {
+            const catInfo = CATEGORIES.find((c) => c.id === it.category) || CATEGORIES[CATEGORIES.length - 1];
+            const low = it.lowStockThreshold != null && it.qty <= it.lowStockThreshold;
+            return (
+              <div key={it.id} className="flex items-center gap-3 border border-stone-200 rounded-2xl p-3 flex-wrap sm:flex-nowrap">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: catInfo.tint }} />
+                <div className="flex-1 min-w-[120px]">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <p className="font-semibold text-stone-800 truncate">{it.name}</p>
+                    {low && (
+                      <span className="cs-t9 font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                        <AlertCircle size={9} /> Low
+                      </span>
+                    )}
+                  </div>
+                  <p className="cs-t11 text-stone-400">
+                    {formatMoney(it.price)} / {it.unit} · {catInfo.label}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <IconButton icon={Minus} label="Decrease stock" size={14} onClick={() => inventory.adjustStock(it.id, -1, "manual")} />
+                  <span className="w-10 text-center text-sm font-bold text-stone-800">{it.qty}</span>
+                  <IconButton icon={Plus} label="Increase stock" size={14} onClick={() => inventory.adjustStock(it.id, 1, "manual")} />
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <IconButton icon={Pencil} label="Edit item" size={14} onClick={() => onEdit(it)} />
+                  <IconButton icon={Trash2} label="Delete item" size={14} onClick={() => inventory.removeItem(it.id)} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <button onClick={() => setShowLog((s) => !s)} className="text-sm font-semibold text-stone-500 flex items-center gap-1 mb-2">
+        <ChevronRight size={14} className={`transition-transform ${showLog ? "rotate-90" : ""}`} /> Activity log
+      </button>
+      {showLog && (
+        <div className="space-y-1.5">
+          {inventory.log.length === 0 && <p className="cs-t11 text-stone-400">No activity yet.</p>}
+          {inventory.log.slice(0, 40).map((entry) => (
+            <div key={entry.id} className="flex items-center justify-between text-sm px-1 gap-2">
+              <span className="text-stone-600 min-w-0 truncate">
+                <span className={`font-semibold ${entry.change < 0 ? "text-red-600" : "text-emerald-700"}`}>{entry.change > 0 ? `+${entry.change}` : entry.change}</span> {entry.itemName}
+                <span className="text-stone-400">
+                  {" "}
+                  · {entry.reason === "order" ? "order fulfilled" : entry.reason === "order-reverted" ? "order reopened" : entry.reason === "restock" ? "restock" : "manual edit"}
+                </span>
+              </span>
+              <span className="cs-t10 text-stone-400 shrink-0">{new Date(entry.at).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InventoryItemModal({ open, onClose, onSave, initial }) {
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("Other");
+  const [unit, setUnit] = useState("each");
+  const [qty, setQty] = useState("0");
+  const [threshold, setThreshold] = useState("");
+  const [price, setPrice] = useState("0");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setName(initial?.name || "");
+    setCategory(initial?.category || "Other");
+    setUnit(initial?.unit || "each");
+    setQty(String(initial?.qty ?? 0));
+    setThreshold(initial?.lowStockThreshold == null ? "" : String(initial.lowStockThreshold));
+    setPrice(String(initial?.price ?? 0));
+    setNotes(initial?.notes || "");
+  }, [open, initial]);
+
+  const canSave = name.trim().length > 0;
+
+  const handleSave = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    await onSave({ name, category, unit, qty, lowStockThreshold: threshold, price, notes });
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="inv-item-title">
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 id="inv-item-title" className="font-bold text-lg text-stone-800" style={displayFont}>
+            {initial ? "Edit item" : "Add item"}
+          </h2>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-600">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-3">
+          <TextField
+            label="Item name"
+            value={name}
+            onChange={setName}
+            placeholder="e.g. Yukon Gold Potatoes"
+            className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+          />
+          <div>
+            <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Category</label>
+            <div className="flex flex-wrap gap-1.5">
+              {CATEGORIES.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setCategory(c.id)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${category === c.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-500"}`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Quantity in stock</label>
+              <input type="number" min="0" value={qty} onChange={(e) => setQty(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </div>
+            <div>
+              <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Unit</label>
+              <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="lb, each, dozen…" className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Price per unit</label>
+              <input type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </div>
+            <div>
+              <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Low-stock alert at</label>
+              <input type="number" min="0" value={threshold} onChange={(e) => setThreshold(e.target.value)} placeholder="Optional" className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </div>
+          </div>
+          <TextField
+            label="Notes"
+            value={notes}
+            onChange={setNotes}
+            multiline
+            rows={2}
+            placeholder="Optional"
+            className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+          />
+        </div>
+        <button onClick={handleSave} disabled={!canSave || saving} className="w-full mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-40">
+          {saving ? "Saving…" : initial ? "Save changes" : "Add item"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function daysInMonth(year, month) {
+  return new Date(year, month + 1, 0).getDate();
+}
+function startOfMonthWeekday(year, month) {
+  return new Date(year, month, 1).getDay();
+}
+function ymd(year, month, day) {
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function CalendarTab({ calendar, onAddNote, onOpenOrder }) {
+  const today = new Date();
+  const [cursor, setCursor] = useState({ year: today.getFullYear(), month: today.getMonth() });
+  const [selectedDate, setSelectedDate] = useState(null);
+
+  const eventsByDate = useMemo(() => {
+    const map = {};
+    for (const ev of calendar.events) {
+      (map[ev.date] = map[ev.date] || []).push(ev);
+    }
+    return map;
+  }, [calendar.events]);
+
+  const first = startOfMonthWeekday(cursor.year, cursor.month);
+  const total = daysInMonth(cursor.year, cursor.month);
+  const cells = [];
+  for (let i = 0; i < first; i++) cells.push(null);
+  for (let d = 1; d <= total; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const monthLabel = new Date(cursor.year, cursor.month, 1).toLocaleDateString([], { month: "long", year: "numeric" });
+  const todayStr = ymd(today.getFullYear(), today.getMonth(), today.getDate());
+
+  const goMonth = (delta) => {
+    setCursor((c) => {
+      const d = new Date(c.year, c.month + delta, 1);
+      return { year: d.getFullYear(), month: d.getMonth() };
+    });
+  };
+
+  const dayEvents = selectedDate ? eventsByDate[selectedDate] || [] : [];
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <button onClick={() => goMonth(-1)} aria-label="Previous month" className="w-8 h-8 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
+          <ChevronLeft size={18} />
+        </button>
+        <p className="font-bold text-stone-800" style={displayFont}>{monthLabel}</p>
+        <button onClick={() => goMonth(1)} aria-label="Next month" className="w-8 h-8 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
+          <ChevronRight size={18} />
+        </button>
+      </div>
+      <div className="grid grid-cols-7 gap-1 mb-1">
+        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+          <div key={i} className="text-center cs-t10 font-bold text-stone-400 py-1">{d}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((day, i) => {
+          if (day == null) return <div key={i} />;
+          const dateStr = ymd(cursor.year, cursor.month, day);
+          const evs = eventsByDate[dateStr] || [];
+          const isToday = dateStr === todayStr;
+          const isSelected = dateStr === selectedDate;
+          return (
+            <button
+              key={i}
+              onClick={() => setSelectedDate(dateStr === selectedDate ? null : dateStr)}
+              className={`aspect-square rounded-xl border p-1 flex flex-col items-start gap-0.5 overflow-hidden text-left transition ${
+                isSelected ? "border-emerald-700 bg-emerald-50" : isToday ? "border-emerald-300" : "border-stone-100 hover:border-stone-200"
+              }`}
+            >
+              <span className={`cs-t11 font-bold ${isToday ? "text-emerald-800" : "text-stone-600"}`}>{day}</span>
+              <div className="flex flex-col gap-0.5 w-full">
+                {evs.slice(0, 2).map((ev) => (
+                  <span key={ev.id} className={`cs-t9 truncate w-full rounded px-1 ${ev.kind === "order" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                    {ev.title}
+                  </span>
+                ))}
+                {evs.length > 2 && <span className="cs-t9 text-stone-400">+{evs.length - 2} more</span>}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {selectedDate && (
+        <div className="mt-4 border border-stone-200 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="font-semibold text-stone-800">
+              {new Date(`${selectedDate}T00:00:00`).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
+            </p>
+            <button onClick={() => onAddNote(selectedDate)} className="text-xs font-semibold text-emerald-800 flex items-center gap-1">
+              <Plus size={13} /> Add note
+            </button>
+          </div>
+          {dayEvents.length === 0 && <p className="text-sm text-stone-400">Nothing scheduled.</p>}
+          <div className="space-y-2">
+            {dayEvents.map((ev) => (
+              <div key={ev.id} className="flex items-start justify-between gap-2 bg-stone-50 rounded-xl px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-stone-800 truncate">{ev.title}</p>
+                  {ev.time && <p className="cs-t11 text-stone-500">{ev.time}</p>}
+                  {ev.notes && <p className="cs-t11 text-stone-500 truncate">{ev.notes}</p>}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {ev.kind === "order" ? (
+                    <button onClick={() => onOpenOrder(ev.orderId)} className="cs-t11 font-semibold text-emerald-800 whitespace-nowrap">
+                      View order
+                    </button>
+                  ) : (
+                    <button onClick={() => calendar.removeEvent(ev.id)} className="text-stone-400 hover:text-red-600">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CalendarNoteModal({ open, onClose, onSave, initialDate }) {
+  const [title, setTitle] = useState("");
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setTitle("");
+    setDate(initialDate || "");
+    setTime("");
+    setNotes("");
+  }, [open, initialDate]);
+
+  const canSave = title.trim().length > 0 && !!date;
+
+  const handleSave = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    await onSave({ title, date, time, notes, kind: "note" });
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="cal-note-title">
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 id="cal-note-title" className="font-bold text-lg text-stone-800" style={displayFont}>Add calendar note</h2>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-600">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-3">
+          <TextField
+            label="Title"
+            value={title}
+            onChange={setTitle}
+            placeholder="e.g. Restock potatoes"
+            className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Date</label>
+              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </div>
+            <div>
+              <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Time</label>
+              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </div>
+          </div>
+          <TextField
+            label="Notes"
+            value={notes}
+            onChange={setNotes}
+            multiline
+            rows={2}
+            placeholder="Optional"
+            className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+          />
+        </div>
+        <button onClick={handleSave} disabled={!canSave || saving} className="w-full mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-40">
+          {saving ? "Saving…" : "Add note"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function ArchiveTab({ orders, onRestore, onDelete }) {
+  const [q, setQ] = useState("");
+  const [productFilter, setProductFilter] = useState("");
+  const archived = orders.orders.filter((o) => o.archived);
+
+  const productNames = useMemo(() => {
+    const set = new Set();
+    archived.forEach((o) => o.items.forEach((li) => set.add(li.name)));
+    return Array.from(set).sort();
+  }, [archived]);
+
+  const filtered = archived
+    .filter((o) => {
+      if (productFilter && !o.items.some((li) => li.name === productFilter)) return false;
+      if (!q.trim()) return true;
+      const needle = q.trim().toLowerCase();
+      return (
+        o.customerName.toLowerCase().includes(needle) ||
+        (o.pickupLocation || "").toLowerCase().includes(needle) ||
+        (o.pickupDate || "").includes(needle) ||
+        o.items.some((li) => li.name.toLowerCase().includes(needle))
+      );
+    })
+    .sort((a, b) => (b.completedAt || b.createdAt) - (a.completedAt || a.createdAt));
+
+  return (
+    <div>
+      <p className="font-bold text-lg text-stone-800 mb-3" style={displayFont}>Archive</p>
+      <div className="flex flex-col sm:flex-row gap-2 mb-4">
+        <div className="relative flex-1">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search by name, date, or location…"
+            className="w-full border border-stone-200 rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+          />
+        </div>
+        <select value={productFilter} onChange={(e) => setProductFilter(e.target.value)} className="border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700">
+          <option value="">All products</option>
+          {productNames.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+      </div>
+      {filtered.length === 0 ? (
+        <EmptyState icon={Archive} title="No archived orders" body="Completed orders you archive from the Orders tab will show up here, newest first." />
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((o) => (
+            <OrderCard key={o.id} order={o} readOnly onArchive={() => onRestore(o.id)} onDelete={() => onDelete(o.id)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrdersScreen({ navigate }) {
+  const { me, shopsById, showToast } = useApp();
+  const [tab, setTab] = useState("orders");
+  const shop = me?.shopId ? shopsById[me.shopId] : null;
+
+  // Hooks always run, regardless of the gates below — a conditional early
+  // return before these would break the rules of hooks the moment a vendor
+  // without a shop, or a non-Premium vendor, opens this screen.
+  const inventory = useInventory(shop?.id || null);
+  const orders = useOrders(shop?.id || null);
+  const calendar = useShopCalendar(shop?.id || null);
+
+  const [orderModal, setOrderModal] = useState(null);
+  const [itemModal, setItemModal] = useState(null);
+  const [noteModal, setNoteModal] = useState(null);
+
+  if (!me.isVendor || !me.shopId) {
+    return (
+      <EmptyState
+        icon={Store}
+        title="No storefront yet"
+        body="Become a vendor first to unlock Orders."
+        action={<button onClick={() => navigate({ screen: "store" })} className="text-sm font-semibold text-emerald-800">Start selling</button>}
+      />
+    );
+  }
+  if (!shop) return <LoadingScreen inline />;
+
+  const premium = isPremiumPlan(me);
+  if (!premium) {
+    return (
+      <div className="max-w-md mx-auto text-center py-16 px-6">
+        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center mx-auto mb-5">
+          <Crown size={26} />
+        </div>
+        <p className="font-bold text-xl text-stone-800 mb-2" style={displayFont}>Orders is a Premium tool</p>
+        <p className="text-sm text-stone-500 mb-6">
+          Track pickup orders, keep a live inventory, and see a calendar of every pickup — all in one place, built for vendors running a real market schedule.
+        </p>
+        <button onClick={() => navigate({ screen: "plans" })} className="bg-emerald-800 hover:bg-emerald-700 text-white font-semibold px-6 py-3 rounded-full">
+          Upgrade to Premium
+        </button>
+      </div>
+    );
+  }
+
+  const linkOrderToCalendar = async (order, draft) => {
+    const ev = await calendar.addEvent({
+      title: `${draft.customerName} pickup`,
+      date: draft.pickupDate,
+      time: draft.pickupTime,
+      notes: draft.pickupLocation,
+      orderId: order.id,
+      kind: "order",
+    });
+    await orders.updateOrder(order.id, { calendarEventId: ev.id });
+  };
+
+  const handleCreateOrder = async (draft) => {
+    const order = await orders.addOrder(draft);
+    if (draft.pickupDate) await linkOrderToCalendar(order, draft);
+    showToast("Order added");
+  };
+
+  const handleUpdateOrder = async (order, draft) => {
+    await orders.updateOrder(order.id, draft);
+    if (order.calendarEventId) {
+      if (draft.pickupDate) {
+        await calendar.updateEvent(order.calendarEventId, {
+          title: `${draft.customerName} pickup`,
+          date: draft.pickupDate,
+          time: draft.pickupTime,
+          notes: draft.pickupLocation,
+        });
+      } else {
+        await calendar.removeEvent(order.calendarEventId);
+        await orders.updateOrder(order.id, { calendarEventId: null });
+      }
+    } else if (draft.pickupDate) {
+      await linkOrderToCalendar(order, draft);
+    }
+    showToast("Order updated");
+  };
+
+  const handleAddOrderToCalendar = async (order) => {
+    const ev = await calendar.addEvent({
+      title: `${order.customerName} pickup`,
+      date: order.pickupDate || ymd(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()),
+      time: order.pickupTime,
+      notes: order.pickupLocation,
+      orderId: order.id,
+      kind: "order",
+    });
+    await orders.updateOrder(order.id, { calendarEventId: ev.id });
+    showToast("Added to calendar");
+  };
+
+  const handleToggleComplete = async (order) => {
+    const nowCompleting = !order.completed;
+    const deltas = order.items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: nowCompleting ? -li.qty : li.qty }));
+    if (deltas.length) await inventory.adjustStockBatch(deltas, nowCompleting ? "order" : "order-reverted", order.id);
+    await orders.updateOrder(order.id, { completed: nowCompleting, completedAt: nowCompleting ? Date.now() : null });
+    showToast(nowCompleting ? "Order complete — inventory updated" : "Order reopened — inventory restored");
+  };
+
+  const handleArchive = async (id, archived) => {
+    await orders.archiveOrder(id, archived);
+    showToast(archived ? "Order archived" : "Order restored");
+  };
+
+  const handleDeleteOrder = async (id) => {
+    const order = orders.orders.find((o) => o.id === id);
+    if (order?.calendarEventId) await calendar.removeEvent(order.calendarEventId);
+    await orders.removeOrder(id);
+    showToast("Order deleted");
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="sticky top-0 bg-white border-b border-stone-200 z-10 px-4 pt-3">
+        <div className="flex items-center gap-2 text-emerald-800 font-bold text-lg mb-3" style={displayFont}>
+          <ClipboardList size={20} /> Orders
+        </div>
+        <div className="flex gap-1 overflow-x-auto">
+          {[
+            { id: "orders", label: "Orders", icon: ClipboardList },
+            { id: "calendar", label: "Calendar", icon: Calendar },
+            { id: "inventory", label: "Inventory", icon: Boxes },
+            { id: "archive", label: "Archive", icon: Archive },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition ${tab === t.id ? "border-emerald-800 text-emerald-800" : "border-transparent text-stone-400"}`}
+            >
+              <t.icon size={15} /> {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="max-w-3xl mx-auto p-4">
+        {tab === "orders" && (
+          <OrdersTab
+            orders={orders}
+            onAddOrder={() => setOrderModal({ mode: "add" })}
+            onEdit={(o) => setOrderModal({ mode: "edit", order: o })}
+            onToggleComplete={handleToggleComplete}
+            onArchive={(id) => handleArchive(id, true)}
+            onDelete={handleDeleteOrder}
+            onAddToCalendar={handleAddOrderToCalendar}
+          />
+        )}
+        {tab === "calendar" && <CalendarTab calendar={calendar} onAddNote={(date) => setNoteModal({ date })} onOpenOrder={() => setTab("orders")} />}
+        {tab === "inventory" && <InventoryTab inventory={inventory} onAdd={() => setItemModal({ mode: "add" })} onEdit={(it) => setItemModal({ mode: "edit", item: it })} />}
+        {tab === "archive" && <ArchiveTab orders={orders} onRestore={(id) => handleArchive(id, false)} onDelete={handleDeleteOrder} />}
+      </div>
+
+      {orderModal && (
+        <OrderFormModal
+          open
+          onClose={() => setOrderModal(null)}
+          inventory={inventory}
+          initial={orderModal.mode === "edit" ? orderModal.order : null}
+          onSave={(draft) => (orderModal.mode === "edit" ? handleUpdateOrder(orderModal.order, draft) : handleCreateOrder(draft))}
+        />
+      )}
+      {itemModal && (
+        <InventoryItemModal
+          open
+          onClose={() => setItemModal(null)}
+          initial={itemModal.mode === "edit" ? itemModal.item : null}
+          onSave={(draft) => (itemModal.mode === "edit" ? inventory.updateItem(itemModal.item.id, draft) : inventory.addItem(draft))}
+        />
+      )}
+      {noteModal && <CalendarNoteModal open onClose={() => setNoteModal(null)} initialDate={noteModal.date} onSave={(draft) => calendar.addEvent(draft)} />}
+    </div>
+  );
+}
+
+
 function VendorDashboard({ navigate }) {
   const { me, shopsById, shops, products, conversations, showToast } = useApp();
   const shop = me?.shopId ? shopsById[me.shopId] : null;
@@ -10897,7 +12160,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
    one. Centralizing the list here means the sidebar, bottom nav, and every
    "go to X" button all get the same gate for free just by calling navigate().
 ============================================================================ */
-const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "dashboard", "store", "storeEditor", "places", "checkout"]);
+const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "dashboard", "store", "storeEditor", "places", "checkout", "orders"]);
 const AUTH_REASON_BY_SCREEN = {
   favorites: "see your favorites",
   messages: "send and receive messages",
@@ -10906,6 +12169,7 @@ const AUTH_REASON_BY_SCREEN = {
   storeEditor: "edit your storefront",
   places: "save your places",
   checkout: "subscribe to a plan",
+  orders: "manage your orders",
 };
 
 // A small card next to whatever the guest just tapped — "Create a free
@@ -11177,7 +12441,7 @@ function RootShell() {
   // No real payment processor yet — "purchasing" a plan is an explicit,
   // clearly-labeled test-mode action (see CheckoutScreen) that just sets the
   // tier + billing period on the profile, and reactivates a lapsed storefront
-  // if the vendor is re-upping before the 90-day abandonment window closes.
+  // if the vendor is re-upping before the abandonment window (ABANDON_DAYS) closes.
   const purchasePlan = useCallback(
     async (tier, billing, billingDetails) => {
       if (!me) return;
@@ -11384,6 +12648,7 @@ function RootShell() {
               />
             )}
             {route.screen === "dashboard" && <VendorDashboard navigate={navigate} />}
+            {route.screen === "orders" && <OrdersScreen navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
