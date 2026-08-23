@@ -6,7 +6,7 @@ import {
   Home, Package, Filter, GripVertical, BadgeCheck, AlertCircle,
   LayoutGrid, UserPlus, ShoppingBag, Sparkles, ShieldAlert, Bookmark,
   Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
-  Bug,
+  Bug, Save,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -3588,6 +3588,7 @@ function GlobalStyles() {
       .cs-z-modal { z-index: 100; }
       .cs-z-pop   { z-index: 110; }
       .cs-z-sheet { z-index: 200; }
+      .cs-z-authprompt { z-index: 250; }
       .cs-z-sprout { z-index: 300; }
       /* Seed-to-seedling burst played once when a search is submitted: ~2s,
          styled as a little time-lapse rather than the flat logo mark — a
@@ -4495,23 +4496,14 @@ function SproutMark({ size = 20 }) {
   );
 }
 
-// Plays once when a search is submitted: a little ~2s time-lapse of a real
-// seed sprouting — settles into soil, root pushes down as the stem pushes
-// up, two cotyledon leaves unfurl, a small true leaf buds at the tip, then
-// the whole scene settles and fades. Centred, roughly a third of the screen.
-// Rendered as a RootShell-level sibling (not inside TopBar) since TopBar's
-// backdrop-blur would otherwise re-anchor a position:fixed child to the
-// header instead of the real viewport.
-function SearchSproutBurst({ onDone }) {
-  useEffect(() => {
-    const t = setTimeout(() => onDone?.(), 2100);
-    return () => clearTimeout(t);
-  }, [onDone]);
+// The seed-to-seedling scene itself, factored out so both the full-screen
+// search burst and the small above-the-save-button confirmation can share
+// one drawing (and one set of keyframes) at whatever size each needs.
+function SproutGrowVisual({ size = "clamp(160px, 33vmin, 420px)" }) {
   return (
-    <div className="fixed inset-0 flex items-center justify-center pointer-events-none cs-z-sprout" aria-hidden="true">
       <div
         className="cs-sprout-group relative flex items-center justify-center"
-        style={{ width: "clamp(160px, 33vmin, 420px)", height: "clamp(160px, 33vmin, 420px)" }}
+        style={{ width: size, height: size }}
       >
         <div
           className="absolute inset-0 rounded-full"
@@ -4608,6 +4600,45 @@ function SearchSproutBurst({ onDone }) {
           />
         </svg>
       </div>
+  );
+}
+
+// Plays once when a search is submitted: a little ~2s time-lapse of the seed
+// sprouting, centred over the current screen. Rendered as a RootShell-level
+// sibling (not inside TopBar) since TopBar's backdrop-blur would otherwise
+// re-anchor a position:fixed child to the header instead of the real
+// viewport. Sized off the same JS-measured viewportHeight the rest of the
+// app uses for keyboard-safe overlays — a plain "fixed inset-0" was getting
+// centred against the pre-keyboard layout height on some mobile browsers,
+// which put the animation below the fold once the keyboard was up.
+function SearchSproutBurst({ onDone }) {
+  const { viewportHeight } = useApp();
+  useEffect(() => {
+    const t = setTimeout(() => onDone?.(), 2100);
+    return () => clearTimeout(t);
+  }, [onDone]);
+  return (
+    <div
+      className="fixed inset-x-0 top-0 flex items-center justify-center pointer-events-none cs-z-sprout"
+      style={{ height: viewportHeight ? `${viewportHeight}px` : "100dvh" }}
+      aria-hidden="true"
+    >
+      <SproutGrowVisual />
+    </div>
+  );
+}
+
+// Small confirmation used above the Storefront Editor's floating Save
+// button — same drawing and timing as the search burst, just scaled down
+// and anchored to its parent instead of centred over the whole screen.
+function SaveSproutBurst({ onDone }) {
+  useEffect(() => {
+    const t = setTimeout(() => onDone?.(), 2100);
+    return () => clearTimeout(t);
+  }, [onDone]);
+  return (
+    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 pointer-events-none flex items-center justify-center" aria-hidden="true">
+      <SproutGrowVisual size="76px" />
     </div>
   );
 }
@@ -4718,7 +4749,13 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
         </button>
 
         <button onClick={onOpenAccount} className="shrink-0 relative w-8 h-8 flex items-center justify-center" aria-label="Account">
-          {me ? <Avatar emoji={me.avatar} name={me.name} size="sm" photoId={me.avatarPhotoId} /> : <IconButton icon={User} label="Account" />}
+          {me?.avatarPhotoId ? (
+            <Avatar emoji={me.avatar} name={me.name} size="sm" photoId={me.avatarPhotoId} />
+          ) : (
+            <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-50 text-emerald-800">
+              <SproutMark size={16} />
+            </span>
+          )}
           {unreadCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-600 border-2 border-white" />}
         </button>
       </div>
@@ -5033,7 +5070,7 @@ function ExploreView({ navigate }) {
   };
 
   const saveCurrentSearch = useCallback(() => {
-    if (!requireAuth("save searches")) return;
+    if (!requireAuth("save this search")) return;
     const label =
       (filters.search || searchDraft || "").trim() ||
       (filters.categories.length ? filters.categories.map((c) => catInfo(c).label).join(" + ") : "") ||
@@ -5329,7 +5366,7 @@ function MapShopPanel({ entry, onOpenShop, onClose }) {
           {priceRange ? ` · ${formatPrice(priceRange.min)}–${formatPrice(priceRange.max)}` : ""}
         </span>
         <span className="flex gap-2">
-          {me && shop.ownerId !== me.id && (
+          {(!me || shop.ownerId !== me.id) && (
             <button
               onClick={() => { onClose(); navigate({ screen: "messages", withUserId: shop.ownerId, withUserName: shop.name, withUserAvatar: shop.emoji }); }}
               className="border border-stone-200 text-stone-700 text-xs font-semibold px-3 py-1.5 rounded-lg"
@@ -6325,7 +6362,7 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
             <button onClick={handleShare} className="flex-1 flex items-center justify-center gap-1.5 border border-stone-200 rounded-xl py-2.5 font-semibold text-sm text-stone-700">
               <Share2 size={15} /> Share{product.shareCount > 0 ? ` · ${product.shareCount}` : ""}
             </button>
-            {me && shop && me.id !== shop.ownerId && (
+            {shop && (!me || me.id !== shop.ownerId) && (
               <button
                 onClick={() => { onClose(); navigate({ screen: "messages", withUserId: shop.ownerId, withUserName: shop.name, withUserAvatar: shop.emoji }); }}
                 className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-800 text-white rounded-xl py-2.5 font-semibold text-sm"
@@ -6521,7 +6558,7 @@ function ShopProfileView({ shopId, navigate }) {
           <button onClick={handleShare} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
             <Share2 size={15} /> Share{shop.shareCount > 0 ? ` · ${shop.shareCount}` : ""}
           </button>
-          {me && !isOwner && (
+          {!isOwner && (
             <button
               onClick={() => navigate({ screen: "messages", withUserId: shop.ownerId, withUserName: shop.name, withUserAvatar: shop.emoji })}
               className="flex items-center gap-1.5 bg-emerald-800 text-white rounded-xl px-4 py-2.5 font-semibold text-sm"
@@ -7424,8 +7461,9 @@ function ProductsTab({ shop, products }) {
 }
 
 function StorefrontEditor({ navigate }) {
-  const { me, shopsById, products } = useApp();
+  const { me, shopsById, products, showToast } = useApp();
   const [tab, setTab] = useState("layout");
+  const [justSaved, setJustSaved] = useState(false);
 
   if (!me.isVendor || !me.shopId) {
     return (
@@ -7441,8 +7479,19 @@ function StorefrontEditor({ navigate }) {
   if (!shop) return <LoadingScreen inline />;
   const shopProducts = products.filter((p) => p.shopId === shop.id);
 
+  // Every field on every tab here already writes straight through the moment
+  // it changes (see the updateShop/updateProduct calls inside each tab) — this
+  // button doesn't do any extra saving. It's a deliberate, reassuring "yes,
+  // that's saved" moment a vendor can tap after a batch of edits, complete
+  // with the little sprout as visible confirmation.
+  const handleSave = () => {
+    setJustSaved(false);
+    requestAnimationFrame(() => setJustSaved(true));
+    showToast("Storefront saved");
+  };
+
   return (
-    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8 relative">
       <div className="sticky top-0 bg-white border-b border-stone-200 z-10 px-4 pt-3">
         <button onClick={() => navigate({ screen: "shop", shopId: shop.id })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-3">
           <ArrowLeft size={15} /> Back to storefront
@@ -7469,6 +7518,16 @@ function StorefrontEditor({ navigate }) {
         {tab === "banners" && <BannersTab shop={shop} />}
         {tab === "contact" && <ContactCardEditor shop={shop} />}
         {tab === "products" && <ProductsTab shop={shop} products={shopProducts} />}
+      </div>
+
+      <div className="fixed bottom-24 md:bottom-8 right-4 md:right-8 z-40 flex flex-col items-center">
+        {justSaved && <SaveSproutBurst onDone={() => setJustSaved(false)} />}
+        <button
+          onClick={handleSave}
+          className="flex items-center gap-2 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold px-5 py-3 rounded-full shadow-lg transition active:scale-95"
+        >
+          <Save size={16} /> Save
+        </button>
       </div>
     </div>
   );
@@ -8830,7 +8889,7 @@ function ProfileCardModal({ target, onClose }) {
           >
             <User size={15} /> View profile
           </button>
-          {!isSelf && me && (
+          {!isSelf && (
             <button
               onClick={() => {
                 onClose();
@@ -8930,7 +8989,7 @@ function PublicProfileView({ userId, navigate }) {
               <Store size={15} /> Visit their shop
             </button>
           )}
-          {!isSelf && me && (
+          {!isSelf && (
             <button
               onClick={() => navigate({ screen: "messages", withUserId: user.id, withUserName: user.name, withUserAvatar: user.avatar })}
               className="w-full flex items-center justify-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700"
@@ -10673,6 +10732,59 @@ const AUTH_REASON_BY_SCREEN = {
   checkout: "subscribe to a plan",
 };
 
+// A small card next to whatever the guest just tapped — "Create a free
+// account to favorite this item," etc. — rather than yanking them straight
+// into the full sign-up screen. Only its own "Sign up free" button hands off
+// to that full flow; anything else (the X, or tapping outside) just closes
+// the card and leaves them right where they were, still browsing.
+const AUTH_PROMPT_W = 272;
+function AuthPromptPopover({ prompt, onSignUp, onDismiss }) {
+  const { viewportHeight } = useApp();
+  const [style, setStyle] = useState(null);
+
+  useEffect(() => {
+    const vh = viewportHeight || window.innerHeight;
+    const vw = window.innerWidth;
+    const cardH = 148; // rough estimate — icon + title + line + button
+    const anchor = prompt?.anchor;
+    let left, top;
+    if (anchor) {
+      left = Math.min(Math.max(anchor.x - AUTH_PROMPT_W / 2, 12), vw - AUTH_PROMPT_W - 12);
+      if (anchor.y + 18 + cardH > vh) {
+        top = Math.max(anchor.y - cardH - 18, 12);
+      } else {
+        top = Math.min(anchor.y + 18, vh - cardH - 12);
+      }
+    } else {
+      left = Math.max(12, vw / 2 - AUTH_PROMPT_W / 2);
+      top = Math.max(12, vh - cardH - 96);
+    }
+    setStyle({ left, top, width: AUTH_PROMPT_W });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt]);
+
+  if (!prompt || !style) return null;
+  return (
+    <div className="fixed inset-0 cs-z-authprompt" onMouseDown={(e) => e.target === e.currentTarget && onDismiss()}>
+      <div className="absolute bg-white border border-stone-200 rounded-2xl shadow-xl p-4 cs-fade-anim" style={style}>
+        <button onClick={onDismiss} className="absolute top-2.5 right-2.5 text-stone-300 hover:text-stone-500" aria-label="Dismiss">
+          <X size={14} />
+        </button>
+        <div className="flex items-center gap-2 mb-1 pr-4">
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-50 text-emerald-800 shrink-0">
+            <SproutMark size={14} />
+          </span>
+          <p className="text-sm font-bold text-stone-900 leading-tight" style={displayFont}>Create a free account</p>
+        </div>
+        <p className="text-xs text-stone-500 mb-3">to {prompt.reason}.</p>
+        <button onClick={onSignUp} className="w-full bg-emerald-800 hover:bg-emerald-700 text-white text-sm font-semibold py-2 rounded-xl transition">
+          Sign up free
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ============================================================================
    SECTION 27: ROOT SHELL — wires all hooks into context, owns routing
 ============================================================================ */
@@ -10741,10 +10853,27 @@ function RootShell() {
   // route they were headed to (if any) so a successful sign-up can resume
   // there rather than dumping them back on Explore.
   const [authFlow, setAuthFlow] = useState(null);
+  // The small "create a free account to X" card that pops up right next to
+  // whatever the guest tapped — set by requireAuth below. It only hands off
+  // to the full authFlow screen once its own "Sign up free" button is
+  // pressed; dismissing it (X, or tapping outside) just leaves them browsing.
+  const [authPrompt, setAuthPrompt] = useState(null);
+  // Captured on every click, in the capture phase (so it's already current
+  // by the time React's own onClick handlers — and therefore requireAuth —
+  // run), purely so the popover above can anchor itself next to whatever was
+  // actually clicked without threading a ref through every gated button.
+  const lastClickRef = useRef(null);
+  useEffect(() => {
+    const onDocClick = (e) => {
+      lastClickRef.current = { x: e.clientX, y: e.clientY };
+    };
+    document.addEventListener("click", onDocClick, true);
+    return () => document.removeEventListener("click", onDocClick, true);
+  }, []);
   const requireAuth = useCallback(
     (reason, pendingRoute) => {
       if (me) return true;
-      setAuthFlow({ reason, pendingRoute: pendingRoute || null });
+      setAuthPrompt({ reason, pendingRoute: pendingRoute || null, anchor: lastClickRef.current });
       return false;
     },
     [me]
@@ -10814,7 +10943,7 @@ function RootShell() {
   // count through the market layer (so it re-renders), and tell the shop owner.
   const toggleFavorite = useCallback(
     async (type, entity) => {
-      if (!requireAuth("favorite items")) return;
+      if (!requireAuth(type === "shop" ? "favorite this shop" : "favorite this item")) return;
       const result = await fav.toggle(type, entity);
       if (!result) return;
       const { added, newCount } = result;
@@ -10915,11 +11044,11 @@ function RootShell() {
   // opposed to a silent no-op) only makes sense with requireAuth in scope,
   // which lives here at the RootShell level.
   const toggleRestockWatch = useCallback(
-    (productId) => (requireAuth("get restock alerts") ? restock.toggleRestockWatch(productId) : null),
+    (productId) => (requireAuth("get a restock alert for this item") ? restock.toggleRestockWatch(productId) : null),
     [restock, requireAuth]
   );
   const toggleHelpfulMark = useCallback(
-    (key) => (requireAuth("mark reviews helpful") ? helpful.toggleHelpfulMark(key) : null),
+    (key) => (requireAuth("mark this review as helpful") ? helpful.toggleHelpfulMark(key) : null),
     [helpful, requireAuth]
   );
 
@@ -11104,6 +11233,17 @@ function RootShell() {
       )}
 
       {showSearchBurst && <SearchSproutBurst onDone={() => setShowSearchBurst(false)} />}
+
+      {authPrompt && (
+        <AuthPromptPopover
+          prompt={authPrompt}
+          onDismiss={() => setAuthPrompt(null)}
+          onSignUp={() => {
+            setAuthFlow({ reason: authPrompt.reason, pendingRoute: authPrompt.pendingRoute });
+            setAuthPrompt(null);
+          }}
+        />
+      )}
     </AppContext.Provider>
   );
 }
