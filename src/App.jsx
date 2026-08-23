@@ -6,7 +6,7 @@ import {
   Home, Package, Filter, GripVertical, BadgeCheck, AlertCircle,
   LayoutGrid, UserPlus, ShoppingBag, Sparkles, ShieldAlert, Bookmark,
   Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
-  Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check,
+  Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check, ChevronUp,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -4300,7 +4300,7 @@ function EmptyState({ icon: Icon = Package, title, body, action }) {
   );
 }
 
-function Modal({ open, onClose, children, labelledBy }) {
+function Modal({ open, onClose, children, labelledBy, size = "md" }) {
   const viewportHeight = useSafeViewportHeight();
   useEffect(() => {
     if (!open) return;
@@ -4320,7 +4320,9 @@ function Modal({ open, onClose, children, labelledBy }) {
       aria-modal="true"
       aria-labelledby={labelledBy}
     >
-      <div className="cs-modal-anim w-full sm:max-w-lg max-h-full overflow-y-auto bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl">
+      {/* size="lg" is for detail cards that should feel like they take over the
+          page (the calendar event card) rather than a small form sheet. */}
+      <div className={`cs-modal-anim w-full ${size === "lg" ? "sm:max-w-3xl sm:max-h-[88vh]" : "sm:max-w-lg"} max-h-full overflow-y-auto bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl`}>
         {children}
       </div>
     </div>
@@ -8525,7 +8527,10 @@ function planPeriodLabel(billing) {
   return billing === "annual" ? "/yr" : "/mo";
 }
 function formatMoney(n) {
-  return n % 1 === 0 ? `$${n}` : `$${n.toFixed(2)}`;
+  // Grouped with commas above four digits so a total like $12500 always
+  // reads as $12,500 rather than being misread as $1,250 or $125.
+  const opts = n % 1 === 0 ? {} : { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+  return `$${n.toLocaleString(undefined, opts)}`;
 }
 
 // Small gold badge marking a feature or screen as premium. Kept as one tiny
@@ -9943,9 +9948,10 @@ function MassMessageComposer({ me, shop, subscribers, onSent, showToast }) {
    private kv table (shared=false), never shared_kv, same as me:profile.
 ============================================================================ */
 
-// InventoryItem:  { id, name, category, unit, qty, lowStockThreshold, price, notes, createdAt, updatedAt }
+// InventoryItem:  { id, name, category, unit, qty, lowStockThreshold, price, notes,
+//                   linkedProductId, createdAt, updatedAt }
 // InventoryLog:   { id, itemId, itemName, change, reason: "order"|"manual"|"restock"|"order-reverted", orderId, at }
-// Order:          { id, customerName, customerUserId, items: [{ id, inventoryItemId, name, qty, unit, price }],
+// Order:          { id, customerName, customerUserId, items: [{ id, inventoryItemId, productId, name, qty, unit, price }],
 //                   pickupDate, pickupTime, pickupLocation, notes, completed, completedAt, archived,
 //                   calendarEventId, createdAt }
 // CalendarEvent:  { id, title, date (yyyy-mm-dd), time, notes, orderId, kind: "order"|"note", createdAt }
@@ -9954,6 +9960,7 @@ function normalizeOrderItems(items) {
   return (items || []).map((li) => ({
     id: li.id || uid("oi"),
     inventoryItemId: li.inventoryItemId || null,
+    productId: li.productId || null,
     name: (li.name || "").trim(),
     qty: Number(li.qty) || 0,
     unit: li.unit || "each",
@@ -9961,13 +9968,74 @@ function normalizeOrderItems(items) {
   }));
 }
 
-function useInventory(shopId) {
+// A compact "$ + steppers" money field: type an exact amount directly, or
+// nudge it with the up/down arrows when you just need to round to the
+// nearest quarter — the two ways someone actually sets a price.
+function PriceInput({ value, onChange, step = 0.25, disabled }) {
+  const bump = (delta) => {
+    const next = Math.max(0, Math.round((Number(value || 0) + delta) * 100) / 100);
+    onChange(String(next));
+  };
+  return (
+    <div className={`flex items-center border border-stone-200 rounded-xl overflow-hidden focus-within:border-emerald-700 ${disabled ? "bg-stone-50 opacity-60" : "bg-white"}`}>
+      <span className="pl-2.5 pr-1 text-stone-400 text-sm">$</span>
+      <input
+        type="number"
+        min="0"
+        step="0.01"
+        inputMode="decimal"
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="flex-1 min-w-0 py-2 pr-1 text-sm outline-none bg-transparent"
+      />
+      {!disabled && (
+        <div className="flex flex-col border-l border-stone-200 shrink-0">
+          <button type="button" onClick={() => bump(step)} aria-label="Increase price" className="px-1.5 py-0.5 text-stone-400 hover:text-emerald-700 hover:bg-stone-50">
+            <ChevronUp size={11} />
+          </button>
+          <button type="button" onClick={() => bump(-step)} aria-label="Decrease price" className="px-1.5 py-0.5 text-stone-400 hover:text-emerald-700 hover:bg-stone-50 border-t border-stone-200">
+            <ChevronDown size={11} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Same unit vocabulary as the storefront's own product editor (PRICE_UNITS),
+// so "lb"/"oz"/"dozen"/"each" mean the same thing everywhere in the app.
+function UnitSelect({ value, onChange, disabled }) {
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      className={`w-full border border-stone-200 rounded-xl px-2 py-2.5 text-sm outline-none focus:border-emerald-700 ${disabled ? "bg-stone-50 opacity-60" : "bg-white"}`}
+    >
+      {PRICE_UNITS.map((u) => (
+        <option key={u.id} value={u.id}>{u.label}</option>
+      ))}
+    </select>
+  );
+}
+
+function useInventory(shopId, { onStockChange } = {}) {
   const [items, setItems] = useState([]);
   const [log, setLog] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Mirrors the state above but updates synchronously, so a second mutation
+  // fired right after the first (in the same handler, before React has had a
+  // chance to re-render) reads what the first one just wrote instead of a
+  // stale snapshot from the last render. Without this, e.g. adding an order
+  // and then immediately updating it would silently undo the add.
+  const itemsRef = useRef([]);
+  const logRef = useRef([]);
 
   const load = useCallback(async () => {
     if (!shopId) {
+      itemsRef.current = [];
+      logRef.current = [];
       setItems([]);
       setLog([]);
       setLoading(false);
@@ -9977,8 +10045,12 @@ function useInventory(shopId) {
       getJSON(`inventory:${shopId}`, false, []),
       getJSON(`inventoryLog:${shopId}`, false, []),
     ]);
-    setItems(Array.isArray(itemsRes) ? itemsRes : []);
-    setLog(Array.isArray(logRes) ? logRes : []);
+    const safeItems = Array.isArray(itemsRes) ? itemsRes : [];
+    const safeLog = Array.isArray(logRes) ? logRes : [];
+    itemsRef.current = safeItems;
+    logRef.current = safeLog;
+    setItems(safeItems);
+    setLog(safeLog);
     setLoading(false);
   }, [shopId]);
 
@@ -9986,10 +10058,20 @@ function useInventory(shopId) {
     load();
   }, [load]);
 
-  const persist = useCallback(
+  const persistItems = useCallback(
     async (next) => {
+      itemsRef.current = next;
       setItems(next);
       await setJSON(`inventory:${shopId}`, next, false, { verify: true });
+    },
+    [shopId]
+  );
+
+  const persistLog = useCallback(
+    async (next) => {
+      logRef.current = next;
+      setLog(next);
+      await setJSON(`inventoryLog:${shopId}`, next, false);
     },
     [shopId]
   );
@@ -10005,18 +10087,15 @@ function useInventory(shopId) {
         lowStockThreshold: draft.lowStockThreshold === "" || draft.lowStockThreshold == null ? null : Number(draft.lowStockThreshold),
         price: Number(draft.price) || 0,
         notes: draft.notes || "",
+        linkedProductId: draft.linkedProductId || null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const next = [item, ...items];
-      setItems(next);
-      await setJSON(`inventory:${shopId}`, next, false, { verify: true });
-      const nextLog = [{ id: uid("invlog"), itemId: item.id, itemName: item.name, change: item.qty, reason: "manual", orderId: null, at: Date.now() }, ...log].slice(0, 500);
-      setLog(nextLog);
-      await setJSON(`inventoryLog:${shopId}`, nextLog, false);
+      await persistItems([item, ...itemsRef.current]);
+      await persistLog([{ id: uid("invlog"), itemId: item.id, itemName: item.name, change: item.qty, reason: "manual", orderId: null, at: Date.now() }, ...logRef.current].slice(0, 500));
       return item;
     },
-    [items, log, shopId]
+    [persistItems, persistLog]
   );
 
   const updateItem = useCallback(
@@ -10027,40 +10106,41 @@ function useInventory(shopId) {
       if (norm.lowStockThreshold !== undefined) {
         norm.lowStockThreshold = norm.lowStockThreshold === "" || norm.lowStockThreshold == null ? null : Number(norm.lowStockThreshold);
       }
-      const next = items.map((it) => (it.id === id ? { ...it, ...norm, updatedAt: Date.now() } : it));
-      await persist(next);
+      await persistItems(itemsRef.current.map((it) => (it.id === id ? { ...it, ...norm, updatedAt: Date.now() } : it)));
     },
-    [items, persist]
+    [persistItems]
   );
 
   const removeItem = useCallback(
     async (id) => {
-      await persist(items.filter((it) => it.id !== id));
+      await persistItems(itemsRef.current.filter((it) => it.id !== id));
     },
-    [items, persist]
+    [persistItems]
   );
 
-  // Every stock change — whether from a manual +/- tap or an order being
-  // checked off — funnels through one batched write, so the activity log can
-  // never drift out of sync with the quantities actually on the item, and a
-  // multi-item order only costs one storage round trip instead of one per line.
+  // Every stock change — a manual +/- tap or an order being checked off —
+  // funnels through one batched write, so a multi-item order only costs one
+  // storage round trip, and the caller (OrdersScreen) gets a callback per
+  // item that actually changed so it can flip a linked storefront listing's
+  // "Sold Out" banner without this hook needing to know about products.
   const adjustStockBatch = useCallback(
     async (deltas, reason, orderId = null) => {
       const logAdds = [];
-      const next = items.map((it) => {
+      const changed = [];
+      const next = itemsRef.current.map((it) => {
         const d = deltas.find((x) => x.id === it.id);
         if (!d) return it;
+        const prevQty = it.qty;
         const nextQty = Math.max(0, it.qty + d.delta);
         logAdds.push({ id: uid("invlog"), itemId: it.id, itemName: it.name, change: d.delta, reason, orderId, at: Date.now() });
+        changed.push({ item: it, prevQty, nextQty });
         return { ...it, qty: nextQty, updatedAt: Date.now() };
       });
-      setItems(next);
-      await setJSON(`inventory:${shopId}`, next, false, { verify: true });
-      const nextLog = [...logAdds, ...log].slice(0, 500);
-      setLog(nextLog);
-      await setJSON(`inventoryLog:${shopId}`, nextLog, false);
+      await persistItems(next);
+      await persistLog([...logAdds, ...logRef.current].slice(0, 500));
+      changed.forEach(({ item, prevQty, nextQty }) => onStockChange?.(item, prevQty, nextQty));
     },
-    [items, log, shopId]
+    [persistItems, persistLog, onStockChange]
   );
 
   const adjustStock = useCallback(
@@ -10074,15 +10154,19 @@ function useInventory(shopId) {
 function useOrders(shopId) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const ordersRef = useRef([]);
 
   const load = useCallback(async () => {
     if (!shopId) {
+      ordersRef.current = [];
       setOrders([]);
       setLoading(false);
       return;
     }
     const list = await getJSON(`orders:${shopId}`, false, []);
-    setOrders(Array.isArray(list) ? list : []);
+    const safe = Array.isArray(list) ? list : [];
+    ordersRef.current = safe;
+    setOrders(safe);
     setLoading(false);
   }, [shopId]);
 
@@ -10092,6 +10176,7 @@ function useOrders(shopId) {
 
   const persist = useCallback(
     async (next) => {
+      ordersRef.current = next;
       setOrders(next);
       await setJSON(`orders:${shopId}`, next, false, { verify: true });
     },
@@ -10112,36 +10197,36 @@ function useOrders(shopId) {
         completed: false,
         completedAt: null,
         archived: false,
-        calendarEventId: null,
+        calendarEventId: draft.calendarEventId || null,
         createdAt: Date.now(),
       };
-      await persist([order, ...orders]);
+      await persist([order, ...ordersRef.current]);
       return order;
     },
-    [orders, persist]
+    [persist]
   );
 
   const updateOrder = useCallback(
     async (id, patch) => {
       const norm = { ...patch };
       if (norm.items) norm.items = normalizeOrderItems(norm.items);
-      await persist(orders.map((o) => (o.id === id ? { ...o, ...norm } : o)));
+      await persist(ordersRef.current.map((o) => (o.id === id ? { ...o, ...norm } : o)));
     },
-    [orders, persist]
+    [persist]
   );
 
   const removeOrder = useCallback(
     async (id) => {
-      await persist(orders.filter((o) => o.id !== id));
+      await persist(ordersRef.current.filter((o) => o.id !== id));
     },
-    [orders, persist]
+    [persist]
   );
 
   const archiveOrder = useCallback(
     async (id, archived = true) => {
-      await persist(orders.map((o) => (o.id === id ? { ...o, archived } : o)));
+      await persist(ordersRef.current.map((o) => (o.id === id ? { ...o, archived } : o)));
     },
-    [orders, persist]
+    [persist]
   );
 
   return { orders, loading, addOrder, updateOrder, removeOrder, archiveOrder, reload: load };
@@ -10150,15 +10235,19 @@ function useOrders(shopId) {
 function useShopCalendar(shopId) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const eventsRef = useRef([]);
 
   const load = useCallback(async () => {
     if (!shopId) {
+      eventsRef.current = [];
       setEvents([]);
       setLoading(false);
       return;
     }
     const list = await getJSON(`calendarEvents:${shopId}`, false, []);
-    setEvents(Array.isArray(list) ? list : []);
+    const safe = Array.isArray(list) ? list : [];
+    eventsRef.current = safe;
+    setEvents(safe);
     setLoading(false);
   }, [shopId]);
 
@@ -10168,6 +10257,7 @@ function useShopCalendar(shopId) {
 
   const persist = useCallback(
     async (next) => {
+      eventsRef.current = next;
       setEvents(next);
       await setJSON(`calendarEvents:${shopId}`, next, false);
     },
@@ -10186,24 +10276,24 @@ function useShopCalendar(shopId) {
         kind: draft.kind || "note",
         createdAt: Date.now(),
       };
-      await persist([ev, ...events]);
+      await persist([ev, ...eventsRef.current]);
       return ev;
     },
-    [events, persist]
+    [persist]
   );
 
   const updateEvent = useCallback(
     async (id, patch) => {
-      await persist(events.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+      await persist(eventsRef.current.map((e) => (e.id === id ? { ...e, ...patch } : e)));
     },
-    [events, persist]
+    [persist]
   );
 
   const removeEvent = useCallback(
     async (id) => {
-      await persist(events.filter((e) => e.id !== id));
+      await persist(eventsRef.current.filter((e) => e.id !== id));
     },
-    [events, persist]
+    [persist]
   );
 
   return { events, loading, addEvent, updateEvent, removeEvent, reload: load };
@@ -10229,11 +10319,29 @@ function computeOrderTotals(orders) {
   return { pending, completed };
 }
 
+function orderTotal(order) {
+  return order.items.reduce((sum, li) => sum + Number(li.qty || 0) * Number(li.price || 0), 0);
+}
+
 function pickupLabel(order) {
   if (!order.pickupDate) return "No pickup time set";
   const d = new Date(`${order.pickupDate}T00:00:00`);
   const dateLabel = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
   return order.pickupTime ? `${dateLabel} @ ${order.pickupTime}` : dateLabel;
+}
+
+function shareTextForOrder(order) {
+  const lines = [
+    `Order for ${order.customerName}`,
+    order.pickupDate ? `Pickup: ${pickupLabel(order)}` : null,
+    order.pickupLocation ? `Location: ${order.pickupLocation}` : null,
+    "",
+    ...order.items.map((li) => `${li.qty} ${priceUnitLabel(li.unit)} ${li.name} — ${formatMoney(li.qty * li.price)}`),
+    "",
+    `Total: ${formatMoney(orderTotal(order))}`,
+    order.notes ? `Notes: ${order.notes}` : null,
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 function TotalsPanel({ title, tone, data }) {
@@ -10260,7 +10368,7 @@ function TotalsPanel({ title, tone, data }) {
 }
 
 function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDelete, onAddToCalendar }) {
-  const total = order.items.reduce((sum, li) => sum + Number(li.qty || 0) * Number(li.price || 0), 0);
+  const total = orderTotal(order);
   return (
     <div className={`rounded-2xl border p-4 ${order.completed ? "border-stone-100 bg-stone-50" : "border-stone-200 bg-white"}`}>
       <div className="flex items-start gap-3">
@@ -10289,11 +10397,11 @@ function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDel
           )}
           <div className="mt-2 space-y-0.5">
             {order.items.map((li) => (
-              <div key={li.id} className="flex items-center justify-between text-sm text-stone-600">
-                <span>
-                  {li.qty} {li.unit} {li.name}
+              <div key={li.id} className="flex items-center justify-between text-sm text-stone-600 gap-2">
+                <span className="min-w-0 truncate">
+                  {li.qty} {priceUnitLabel(li.unit)} {li.name} <span className="text-stone-400">× {formatMoney(li.price)}</span>
                 </span>
-                <span>{formatMoney(li.qty * li.price)}</span>
+                <span className="font-semibold text-stone-700 shrink-0">{formatMoney(li.qty * li.price)}</span>
               </div>
             ))}
           </div>
@@ -10357,7 +10465,7 @@ function OrdersTab({ orders, onAddOrder, onEdit, onToggleComplete, onArchive, on
   );
 }
 
-function OrderFormModal({ open, onClose, onSave, inventory, initial }) {
+function OrderFormModal({ open, onClose, onSave, inventory, products, initial }) {
   const [customerName, setCustomerName] = useState("");
   const [pickupDate, setPickupDate] = useState("");
   const [pickupTime, setPickupTime] = useState("");
@@ -10376,19 +10484,33 @@ function OrderFormModal({ open, onClose, onSave, inventory, initial }) {
     setItems(initial?.items?.length ? initial.items.map((li) => ({ ...li })) : []);
   }, [open, initial]);
 
-  const addLine = () => setItems((prev) => [...prev, { id: uid("oi"), inventoryItemId: "", name: "", qty: 1, unit: "each", price: 0 }]);
+  // A product only shows up under "From your storefront" if it isn't already
+  // tracked as an inventory item — once it's linked, the inventory entry
+  // (with real stock behind it) is the one place to pick it from.
+  const linkedProductIds = useMemo(() => new Set(inventory.items.map((it) => it.linkedProductId).filter(Boolean)), [inventory.items]);
+  const unlinkedProducts = useMemo(() => products.filter((p) => !linkedProductIds.has(p.id)), [products, linkedProductIds]);
+
+  const addLine = () => setItems((prev) => [...prev, { id: uid("oi"), inventoryItemId: "", productId: "", name: "", qty: 1, unit: "each", price: 0 }]);
   const updateLine = (id, patch) => setItems((prev) => prev.map((li) => (li.id === id ? { ...li, ...patch } : li)));
   const removeLine = (id) => setItems((prev) => prev.filter((li) => li.id !== id));
 
-  const pickInventoryItem = (lineId, invId) => {
-    const src = inventory.items.find((it) => it.id === invId);
-    if (!src) {
-      updateLine(lineId, { inventoryItemId: "" });
+  const handlePick = (lineId, val) => {
+    if (!val) {
+      updateLine(lineId, { inventoryItemId: "", productId: "" });
       return;
     }
-    updateLine(lineId, { inventoryItemId: src.id, name: src.name, unit: src.unit, price: src.price });
+    if (val.startsWith("p:")) {
+      const p = products.find((x) => x.id === val.slice(2));
+      if (!p) return;
+      updateLine(lineId, { inventoryItemId: "", productId: p.id, name: p.name, unit: p.priceUnit || "each", price: p.price });
+      return;
+    }
+    const it = inventory.items.find((x) => x.id === val);
+    if (!it) return;
+    updateLine(lineId, { inventoryItemId: it.id, productId: "", name: it.name, unit: it.unit, price: it.price });
   };
 
+  const itemsTotal = items.reduce((sum, li) => sum + (Number(li.qty) || 0) * (Number(li.price) || 0), 0);
   const canSave = customerName.trim().length > 0 && items.length > 0 && items.every((li) => (li.name || "").trim() && Number(li.qty) > 0);
 
   const handleSave = async () => {
@@ -10447,26 +10569,39 @@ function OrderFormModal({ open, onClose, onSave, inventory, initial }) {
               {items.map((li) => {
                 const src = li.inventoryItemId ? inventory.items.find((it) => it.id === li.inventoryItemId) : null;
                 const short = src && Number(li.qty) > src.qty;
+                const lineTotal = (Number(li.qty) || 0) * (Number(li.price) || 0);
+                const locked = !!li.inventoryItemId; // unit is tied to how the linked inventory item is stocked
                 return (
                   <div key={li.id} className="border border-stone-200 rounded-xl p-2.5">
                     <div className="flex items-center gap-2 mb-2">
                       <select
-                        value={li.inventoryItemId || ""}
-                        onChange={(e) => pickInventoryItem(li.id, e.target.value)}
+                        value={li.inventoryItemId || (li.productId ? `p:${li.productId}` : "")}
+                        onChange={(e) => handlePick(li.id, e.target.value)}
                         className="flex-1 border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-emerald-700"
                       >
                         <option value="">Custom item…</option>
-                        {inventory.items.map((it) => (
-                          <option key={it.id} value={it.id}>
-                            {it.name} ({it.qty} {it.unit} in stock)
-                          </option>
-                        ))}
+                        {inventory.items.length > 0 && (
+                          <optgroup label="From your inventory">
+                            {inventory.items.map((it) => (
+                              <option key={it.id} value={it.id}>
+                                {it.name} ({it.qty} {priceUnitLabel(it.unit)} in stock)
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {unlinkedProducts.length > 0 && (
+                          <optgroup label="From your storefront">
+                            {unlinkedProducts.map((p) => (
+                              <option key={p.id} value={`p:${p.id}`}>{p.name}</option>
+                            ))}
+                          </optgroup>
+                        )}
                       </select>
                       <button onClick={() => removeLine(li.id)} className="text-stone-400 hover:text-red-600 shrink-0">
                         <X size={16} />
                       </button>
                     </div>
-                    {!li.inventoryItemId && (
+                    {!li.inventoryItemId && !li.productId && (
                       <input
                         value={li.name}
                         onChange={(e) => updateLine(li.id, { name: e.target.value })}
@@ -10487,25 +10622,17 @@ function OrderFormModal({ open, onClose, onSave, inventory, initial }) {
                       </div>
                       <div>
                         <label className="cs-t9 text-stone-400">Unit</label>
-                        <input
-                          value={li.unit}
-                          onChange={(e) => updateLine(li.id, { unit: e.target.value })}
-                          className="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-emerald-700"
-                        />
+                        <UnitSelect value={li.unit} onChange={(v) => updateLine(li.id, { unit: v })} disabled={locked} />
                       </div>
                       <div>
                         <label className="cs-t9 text-stone-400">Price ea.</label>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={li.price}
-                          onChange={(e) => updateLine(li.id, { price: e.target.value })}
-                          className="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-emerald-700"
-                        />
+                        <PriceInput value={li.price} onChange={(v) => updateLine(li.id, { price: v })} />
                       </div>
                     </div>
-                    {short && <p className="cs-t10 text-amber-700 mt-1.5">Only {src.qty} {src.unit} in stock</p>}
+                    <p className="cs-t11 text-stone-500 mt-1.5 text-right">
+                      {li.qty || 0} × {formatMoney(Number(li.price) || 0)} = <span className="font-bold text-stone-800">{formatMoney(lineTotal)}</span>
+                    </p>
+                    {short && <p className="cs-t10 text-amber-700 mt-1">Only {src.qty} {priceUnitLabel(src.unit)} in stock</p>}
                   </div>
                 );
               })}
@@ -10522,6 +10649,13 @@ function OrderFormModal({ open, onClose, onSave, inventory, initial }) {
             placeholder="Optional"
             className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
           />
+
+          {items.length > 0 && (
+            <div className="flex items-center justify-between px-1 pt-1">
+              <p className="font-bold text-stone-800">Order total</p>
+              <p className="font-bold text-lg text-stone-900" style={displayFont}>{formatMoney(itemsTotal)}</p>
+            </div>
+          )}
         </div>
         <button onClick={handleSave} disabled={!canSave || saving} className="w-full mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-40">
           {saving ? "Saving…" : initial ? "Save changes" : "Add order"}
@@ -10531,10 +10665,12 @@ function OrderFormModal({ open, onClose, onSave, inventory, initial }) {
   );
 }
 
-function InventoryTab({ inventory, onAdd, onEdit }) {
+function InventoryTab({ shop, patchShop, products, inventory, onAdd, onEdit }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
   const [showLog, setShowLog] = useState(false);
+  const trackingOn = shop.inventoryEnabled !== false;
+  const autoOOS = !!shop.autoOutOfStock;
 
   const filtered = inventory.items.filter((it) => {
     if (cat && it.category !== cat) return false;
@@ -10546,102 +10682,140 @@ function InventoryTab({ inventory, onAdd, onEdit }) {
     <div>
       <div className="flex items-center justify-between mb-3">
         <p className="font-bold text-lg text-stone-800" style={displayFont}>Inventory</p>
-        <button onClick={onAdd} className="flex items-center gap-1.5 bg-emerald-800 hover:bg-emerald-700 text-white text-sm font-semibold px-3.5 py-2 rounded-full">
-          <Plus size={15} /> Add item
-        </button>
-      </div>
-      <div className="relative mb-2">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search inventory…"
-          className="w-full border border-stone-200 rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none focus:border-emerald-700"
-        />
-      </div>
-      <div className="flex gap-1.5 overflow-x-auto mb-4 pb-1">
-        <button onClick={() => setCat("")} className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${cat === "" ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-500"}`}>
-          All
-        </button>
-        {CATEGORIES.map((c) => (
-          <button
-            key={c.id}
-            onClick={() => setCat(c.id)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${cat === c.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-500"}`}
-          >
-            {c.label}
+        {trackingOn && (
+          <button onClick={onAdd} className="flex items-center gap-1.5 bg-emerald-800 hover:bg-emerald-700 text-white text-sm font-semibold px-3.5 py-2 rounded-full">
+            <Plus size={15} /> Add item
           </button>
-        ))}
+        )}
       </div>
 
-      {filtered.length === 0 ? (
+      <div className="border border-stone-200 rounded-2xl p-3.5 mb-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-stone-800">Track inventory</p>
+            <p className="cs-t11 text-stone-400">Deduct stock automatically when you check off an order — turn it off if you'd rather not track stock at all.</p>
+          </div>
+          <ToggleSwitch checked={trackingOn} onChange={(v) => patchShop({ inventoryEnabled: v })} />
+        </div>
+        {trackingOn && (
+          <div className="flex items-center justify-between gap-3 pt-3 mt-3 border-t border-stone-100">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-stone-800">Auto-mark out of stock</p>
+              <p className="cs-t11 text-stone-400">Add a "Sold Out" banner to a linked storefront listing the moment its stock hits 0, and remove it when restocked.</p>
+            </div>
+            <ToggleSwitch checked={autoOOS} onChange={(v) => patchShop({ autoOutOfStock: v })} />
+          </div>
+        )}
+      </div>
+
+      {!trackingOn ? (
         <EmptyState
           icon={Boxes}
-          title="No items yet"
-          body="Add what you stock so orders can pull straight from it."
-          action={<button onClick={onAdd} className="text-sm font-semibold text-emerald-800">Add an item</button>}
+          title="Inventory tracking is off"
+          body="Turn it back on above to stock items here and have completed orders deduct from them automatically."
         />
       ) : (
-        <div className="space-y-2 mb-6">
-          {filtered.map((it) => {
-            const catInfo = CATEGORIES.find((c) => c.id === it.category) || CATEGORIES[CATEGORIES.length - 1];
-            const low = it.lowStockThreshold != null && it.qty <= it.lowStockThreshold;
-            return (
-              <div key={it.id} className="flex items-center gap-3 border border-stone-200 rounded-2xl p-3 flex-wrap sm:flex-nowrap">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: catInfo.tint }} />
-                <div className="flex-1 min-w-[120px]">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <p className="font-semibold text-stone-800 truncate">{it.name}</p>
-                    {low && (
-                      <span className="cs-t9 font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
-                        <AlertCircle size={9} /> Low
-                      </span>
-                    )}
-                  </div>
-                  <p className="cs-t11 text-stone-400">
-                    {formatMoney(it.price)} / {it.unit} · {catInfo.label}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <IconButton icon={Minus} label="Decrease stock" size={14} onClick={() => inventory.adjustStock(it.id, -1, "manual")} />
-                  <span className="w-10 text-center text-sm font-bold text-stone-800">{it.qty}</span>
-                  <IconButton icon={Plus} label="Increase stock" size={14} onClick={() => inventory.adjustStock(it.id, 1, "manual")} />
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <IconButton icon={Pencil} label="Edit item" size={14} onClick={() => onEdit(it)} />
-                  <IconButton icon={Trash2} label="Delete item" size={14} onClick={() => inventory.removeItem(it.id)} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+        <>
+          <div className="relative mb-2">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search inventory…"
+              className="w-full border border-stone-200 rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+            />
+          </div>
+          <div className="flex gap-1.5 overflow-x-auto mb-4 pb-1">
+            <button onClick={() => setCat("")} className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${cat === "" ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-500"}`}>
+              All
+            </button>
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => setCat(c.id)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${cat === c.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-500"}`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
 
-      <button onClick={() => setShowLog((s) => !s)} className="text-sm font-semibold text-stone-500 flex items-center gap-1 mb-2">
-        <ChevronRight size={14} className={`transition-transform ${showLog ? "rotate-90" : ""}`} /> Activity log
-      </button>
-      {showLog && (
-        <div className="space-y-1.5">
-          {inventory.log.length === 0 && <p className="cs-t11 text-stone-400">No activity yet.</p>}
-          {inventory.log.slice(0, 40).map((entry) => (
-            <div key={entry.id} className="flex items-center justify-between text-sm px-1 gap-2">
-              <span className="text-stone-600 min-w-0 truncate">
-                <span className={`font-semibold ${entry.change < 0 ? "text-red-600" : "text-emerald-700"}`}>{entry.change > 0 ? `+${entry.change}` : entry.change}</span> {entry.itemName}
-                <span className="text-stone-400">
-                  {" "}
-                  · {entry.reason === "order" ? "order fulfilled" : entry.reason === "order-reverted" ? "order reopened" : entry.reason === "restock" ? "restock" : "manual edit"}
-                </span>
-              </span>
-              <span className="cs-t10 text-stone-400 shrink-0">{new Date(entry.at).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+          {filtered.length === 0 ? (
+            <EmptyState
+              icon={Boxes}
+              title="No items yet"
+              body="Add what you stock — pull it straight from your storefront listings, or enter something custom."
+              action={<button onClick={onAdd} className="text-sm font-semibold text-emerald-800">Add an item</button>}
+            />
+          ) : (
+            <div className="space-y-2 mb-6">
+              {filtered.map((it) => {
+                const catInfo = CATEGORIES.find((c) => c.id === it.category) || CATEGORIES[CATEGORIES.length - 1];
+                const low = it.lowStockThreshold != null && it.qty <= it.lowStockThreshold;
+                return (
+                  <div key={it.id} className="flex items-center gap-3 border border-stone-200 rounded-2xl p-3 flex-wrap sm:flex-nowrap">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: catInfo.tint }} />
+                    <div className="flex-1 min-w-[120px]">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-semibold text-stone-800 truncate">{it.name}</p>
+                        {low && (
+                          <span className="cs-t9 font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                            <AlertCircle size={9} /> Low
+                          </span>
+                        )}
+                        {it.linkedProductId && (
+                          <span className="cs-t9 font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                            <Store size={9} /> Linked
+                          </span>
+                        )}
+                      </div>
+                      <p className="cs-t11 text-stone-400">
+                        {formatMoney(it.price)} / {priceUnitLabel(it.unit)} · {catInfo.label}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <IconButton icon={Minus} label="Decrease stock" size={14} onClick={() => inventory.adjustStock(it.id, -1, "manual")} />
+                      <span className="w-10 text-center text-sm font-bold text-stone-800">{it.qty}</span>
+                      <IconButton icon={Plus} label="Increase stock" size={14} onClick={() => inventory.adjustStock(it.id, 1, "manual")} />
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <IconButton icon={Pencil} label="Edit item" size={14} onClick={() => onEdit(it)} />
+                      <IconButton icon={Trash2} label="Delete item" size={14} onClick={() => inventory.removeItem(it.id)} />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
+          )}
+
+          <button onClick={() => setShowLog((s) => !s)} className="text-sm font-semibold text-stone-500 flex items-center gap-1 mb-2">
+            <ChevronRight size={14} className={`transition-transform ${showLog ? "rotate-90" : ""}`} /> Activity log
+          </button>
+          {showLog && (
+            <div className="space-y-1.5">
+              {inventory.log.length === 0 && <p className="cs-t11 text-stone-400">No activity yet.</p>}
+              {inventory.log.slice(0, 40).map((entry) => (
+                <div key={entry.id} className="flex items-center justify-between text-sm px-1 gap-2">
+                  <span className="text-stone-600 min-w-0 truncate">
+                    <span className={`font-semibold ${entry.change < 0 ? "text-red-600" : "text-emerald-700"}`}>{entry.change > 0 ? `+${entry.change}` : entry.change}</span> {entry.itemName}
+                    <span className="text-stone-400">
+                      {" "}
+                      · {entry.reason === "order" ? "order fulfilled" : entry.reason === "order-reverted" ? "order reopened" : entry.reason === "restock" ? "restock" : "manual edit"}
+                    </span>
+                  </span>
+                  <span className="cs-t10 text-stone-400 shrink-0">{new Date(entry.at).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-function InventoryItemModal({ open, onClose, onSave, initial }) {
+function InventoryItemModal({ open, onClose, onSave, initial, products }) {
+  const [linkedProductId, setLinkedProductId] = useState("");
   const [name, setName] = useState("");
   const [category, setCategory] = useState("Other");
   const [unit, setUnit] = useState("each");
@@ -10653,6 +10827,7 @@ function InventoryItemModal({ open, onClose, onSave, initial }) {
 
   useEffect(() => {
     if (!open) return;
+    setLinkedProductId(initial?.linkedProductId || "");
     setName(initial?.name || "");
     setCategory(initial?.category || "Other");
     setUnit(initial?.unit || "each");
@@ -10662,12 +10837,23 @@ function InventoryItemModal({ open, onClose, onSave, initial }) {
     setNotes(initial?.notes || "");
   }, [open, initial]);
 
+  const pickProduct = (productId) => {
+    setLinkedProductId(productId);
+    if (!productId) return;
+    const p = products.find((pr) => pr.id === productId);
+    if (!p) return;
+    setName(p.name);
+    setCategory(p.category || "Other");
+    setUnit(p.priceUnit || "each");
+    setPrice(String(p.price ?? 0));
+  };
+
   const canSave = name.trim().length > 0;
 
   const handleSave = async () => {
     if (!canSave) return;
     setSaving(true);
-    await onSave({ name, category, unit, qty, lowStockThreshold: threshold, price, notes });
+    await onSave({ name, category, unit, qty, lowStockThreshold: threshold, price, notes, linkedProductId: linkedProductId || null });
     setSaving(false);
     onClose();
   };
@@ -10684,6 +10870,22 @@ function InventoryItemModal({ open, onClose, onSave, initial }) {
           </button>
         </div>
         <div className="space-y-3">
+          <div>
+            <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Add from your storefront</label>
+            <select
+              value={linkedProductId}
+              onChange={(e) => pickProduct(e.target.value)}
+              className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+            >
+              <option value="">Custom item — I'll fill this in myself</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {linkedProductId && (
+              <p className="cs-t10 text-emerald-700 mt-1 flex items-center gap-1"><Store size={10} /> Linked — stock changes here can auto-update that listing's Sold Out banner.</p>
+            )}
+          </div>
           <TextField
             label="Item name"
             value={name}
@@ -10712,13 +10914,13 @@ function InventoryItemModal({ open, onClose, onSave, initial }) {
             </div>
             <div>
               <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Unit</label>
-              <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="lb, each, dozen…" className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+              <UnitSelect value={unit} onChange={setUnit} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Price per unit</label>
-              <input type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+              <PriceInput value={price} onChange={setPrice} />
             </div>
             <div>
               <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Low-stock alert at</label>
@@ -10753,7 +10955,7 @@ function ymd(year, month, day) {
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function CalendarTab({ calendar, onAddNote, onOpenOrder }) {
+function CalendarTab({ calendar, onAddNote, onOpenEvent }) {
   const today = new Date();
   const [cursor, setCursor] = useState({ year: today.getFullYear(), month: today.getMonth() });
   const [selectedDate, setSelectedDate] = useState(null);
@@ -10819,7 +11021,14 @@ function CalendarTab({ calendar, onAddNote, onOpenOrder }) {
               <span className={`cs-t11 font-bold ${isToday ? "text-emerald-800" : "text-stone-600"}`}>{day}</span>
               <div className="flex flex-col gap-0.5 w-full">
                 {evs.slice(0, 2).map((ev) => (
-                  <span key={ev.id} className={`cs-t9 truncate w-full rounded px-1 ${ev.kind === "order" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                  <span
+                    key={ev.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenEvent(ev);
+                    }}
+                    className={`cs-t9 truncate w-full rounded px-1 cursor-pointer ${ev.kind === "order" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}
+                  >
                     {ev.title}
                   </span>
                 ))}
@@ -10843,7 +11052,7 @@ function CalendarTab({ calendar, onAddNote, onOpenOrder }) {
           {dayEvents.length === 0 && <p className="text-sm text-stone-400">Nothing scheduled.</p>}
           <div className="space-y-2">
             {dayEvents.map((ev) => (
-              <div key={ev.id} className="flex items-start justify-between gap-2 bg-stone-50 rounded-xl px-3 py-2">
+              <div key={ev.id} onClick={() => onOpenEvent(ev)} className="flex items-start justify-between gap-2 bg-stone-50 hover:bg-stone-100 rounded-xl px-3 py-2 cursor-pointer transition">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-stone-800 truncate">{ev.title}</p>
                   {ev.time && <p className="cs-t11 text-stone-500">{ev.time}</p>}
@@ -10851,11 +11060,15 @@ function CalendarTab({ calendar, onAddNote, onOpenOrder }) {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {ev.kind === "order" ? (
-                    <button onClick={() => onOpenOrder(ev.orderId)} className="cs-t11 font-semibold text-emerald-800 whitespace-nowrap">
-                      View order
-                    </button>
+                    <span className="cs-t11 font-semibold text-emerald-800 whitespace-nowrap">View</span>
                   ) : (
-                    <button onClick={() => calendar.removeEvent(ev.id)} className="text-stone-400 hover:text-red-600">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        calendar.removeEvent(ev.id);
+                      }}
+                      className="text-stone-400 hover:text-red-600"
+                    >
                       <Trash2 size={14} />
                     </button>
                   )}
@@ -10866,6 +11079,98 @@ function CalendarTab({ calendar, onAddNote, onOpenOrder }) {
         </div>
       )}
     </div>
+  );
+}
+
+// A big, share-ready detail card — deliberately roomier than the app's usual
+// small sheets, since the point is to hand someone (or yourself) the whole
+// picture of a pickup in one glance: who, what, how much, and any notes.
+function EventDetailModal({ open, onClose, event, order, onManageOrder }) {
+  if (!event) return null;
+  const isOrder = event.kind === "order" && !!order;
+  const total = isOrder ? orderTotal(order) : 0;
+  const shareSubject = isOrder ? `Order for ${order.customerName}` : event.title;
+  const shareText = isOrder
+    ? shareTextForOrder(order)
+    : [event.title, `${event.date}${event.time ? ` @ ${event.time}` : ""}`, event.notes].filter(Boolean).join("\n");
+
+  const shareEmail = () => window.open(`mailto:?subject=${encodeURIComponent(shareSubject)}&body=${encodeURIComponent(shareText)}`, "_blank");
+  const shareTextMsg = () => window.open(`sms:?&body=${encodeURIComponent(shareText)}`, "_blank");
+  const shareMore = () => shareContent({ title: shareSubject, text: shareText });
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="event-detail-title" size="lg">
+      <div className="p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 id="event-detail-title" className="font-bold text-xl text-stone-800" style={displayFont}>
+            {isOrder ? order.customerName : event.title}
+          </h2>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-600">
+            <X size={22} />
+          </button>
+        </div>
+
+        {isOrder ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm text-stone-600">
+              <span className="flex items-center gap-1.5"><Clock size={14} /> {pickupLabel(order)}</span>
+              {order.pickupLocation && <span className="flex items-center gap-1.5"><MapPin size={14} /> {order.pickupLocation}</span>}
+            </div>
+            <div className="border border-stone-200 rounded-2xl divide-y divide-stone-100">
+              {order.items.map((li) => (
+                <div key={li.id} className="flex items-center justify-between px-4 py-3 gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-stone-800 truncate">{li.name}</p>
+                    <p className="cs-t11 text-stone-400">{li.qty} {priceUnitLabel(li.unit)} × {formatMoney(li.price)}</p>
+                  </div>
+                  <p className="font-semibold text-stone-800 shrink-0">{formatMoney(li.qty * li.price)}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between px-1">
+              <p className="font-bold text-lg text-stone-900" style={displayFont}>Total</p>
+              <p className="font-bold text-lg text-stone-900" style={displayFont}>{formatMoney(total)}</p>
+            </div>
+            {order.notes && (
+              <div className="bg-stone-50 rounded-xl p-3">
+                <p className="cs-t11 font-bold text-stone-400 uppercase tracking-wide mb-1">Notes</p>
+                <p className="text-sm text-stone-600 whitespace-pre-wrap">{order.notes}</p>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${order.completed ? "bg-emerald-600" : "bg-amber-500"}`} />
+                <span className="text-sm font-semibold text-stone-600">{order.completed ? "Completed" : "Not yet fulfilled"}</span>
+              </div>
+              {onManageOrder && (
+                <button onClick={() => onManageOrder(order)} className="text-sm font-semibold text-emerald-800">
+                  Edit this order →
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-stone-600 flex items-center gap-1.5">
+              <Clock size={14} /> {event.date}{event.time ? ` @ ${event.time}` : ""}
+            </p>
+            {event.notes && <p className="text-sm text-stone-600 whitespace-pre-wrap">{event.notes}</p>}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 mt-6 pt-4 border-t border-stone-100">
+          <button onClick={shareEmail} className="flex-1 flex items-center justify-center gap-1.5 border border-stone-200 rounded-xl py-2.5 text-sm font-semibold text-stone-700">
+            <Mail size={15} /> Email
+          </button>
+          <button onClick={shareTextMsg} className="flex-1 flex items-center justify-center gap-1.5 border border-stone-200 rounded-xl py-2.5 text-sm font-semibold text-stone-700">
+            <MessageCircle size={15} /> Text
+          </button>
+          <button onClick={shareMore} className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl py-2.5 text-sm font-semibold">
+            <Share2 size={15} /> Share
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -10927,7 +11232,7 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate }) {
             onChange={setNotes}
             multiline
             rows={2}
-            placeholder="Optional"
+            placeholder="Note"
             className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
           />
         </div>
@@ -10998,20 +11303,41 @@ function ArchiveTab({ orders, onRestore, onDelete }) {
 }
 
 function OrdersScreen({ navigate }) {
-  const { me, shopsById, showToast } = useApp();
+  const { me, shopsById, showToast, products, updateShop, updateProduct } = useApp();
   const [tab, setTab] = useState("orders");
   const shop = me?.shopId ? shopsById[me.shopId] : null;
+  const shopProducts = useMemo(() => products.filter((p) => p.shopId === shop?.id), [products, shop?.id]);
+
+  // When a linked inventory item crosses the zero line, flip (or un-flip) the
+  // matching storefront listing's Sold Out banner — but only clear it back
+  // automatically if it's still exactly the banner this feature set, so a
+  // vendor's own manual banner choice is never silently overwritten.
+  const handleStockChange = useCallback(
+    (item, prevQty, nextQty) => {
+      if (!shop?.autoOutOfStock || !item.linkedProductId) return;
+      if (prevQty > 0 && nextQty <= 0) {
+        updateProduct(shop.id, item.linkedProductId, { bannerId: "sold_out", status: "sold_out" });
+      } else if (prevQty <= 0 && nextQty > 0) {
+        const product = products.find((p) => p.id === item.linkedProductId);
+        if (product?.bannerId === "sold_out") {
+          updateProduct(shop.id, item.linkedProductId, { bannerId: null, status: "available" });
+        }
+      }
+    },
+    [shop?.autoOutOfStock, shop?.id, products, updateProduct]
+  );
 
   // Hooks always run, regardless of the gates below — a conditional early
   // return before these would break the rules of hooks the moment a vendor
   // without a shop, or a non-Premium vendor, opens this screen.
-  const inventory = useInventory(shop?.id || null);
+  const inventory = useInventory(shop?.id || null, { onStockChange: handleStockChange });
   const orders = useOrders(shop?.id || null);
   const calendar = useShopCalendar(shop?.id || null);
 
   const [orderModal, setOrderModal] = useState(null);
   const [itemModal, setItemModal] = useState(null);
   const [noteModal, setNoteModal] = useState(null);
+  const [eventDetail, setEventDetail] = useState(null);
 
   if (!me.isVendor || !me.shopId) {
     return (
@@ -11042,6 +11368,8 @@ function OrdersScreen({ navigate }) {
       </div>
     );
   }
+
+  const patchShop = (partial) => updateShop(shop.id, partial);
 
   const linkOrderToCalendar = async (order, draft) => {
     const ev = await calendar.addEvent({
@@ -11096,10 +11424,13 @@ function OrdersScreen({ navigate }) {
 
   const handleToggleComplete = async (order) => {
     const nowCompleting = !order.completed;
-    const deltas = order.items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: nowCompleting ? -li.qty : li.qty }));
+    const trackingOn = shop.inventoryEnabled !== false;
+    const deltas = trackingOn
+      ? order.items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: nowCompleting ? -li.qty : li.qty }))
+      : [];
     if (deltas.length) await inventory.adjustStockBatch(deltas, nowCompleting ? "order" : "order-reverted", order.id);
     await orders.updateOrder(order.id, { completed: nowCompleting, completedAt: nowCompleting ? Date.now() : null });
-    showToast(nowCompleting ? "Order complete — inventory updated" : "Order reopened — inventory restored");
+    showToast(nowCompleting ? (trackingOn ? "Order complete — inventory updated" : "Order marked complete") : "Order reopened");
   };
 
   const handleArchive = async (id, archived) => {
@@ -11149,8 +11480,10 @@ function OrdersScreen({ navigate }) {
             onAddToCalendar={handleAddOrderToCalendar}
           />
         )}
-        {tab === "calendar" && <CalendarTab calendar={calendar} onAddNote={(date) => setNoteModal({ date })} onOpenOrder={() => setTab("orders")} />}
-        {tab === "inventory" && <InventoryTab inventory={inventory} onAdd={() => setItemModal({ mode: "add" })} onEdit={(it) => setItemModal({ mode: "edit", item: it })} />}
+        {tab === "calendar" && <CalendarTab calendar={calendar} onAddNote={(date) => setNoteModal({ date })} onOpenEvent={(ev) => setEventDetail(ev)} />}
+        {tab === "inventory" && (
+          <InventoryTab shop={shop} patchShop={patchShop} products={shopProducts} inventory={inventory} onAdd={() => setItemModal({ mode: "add" })} onEdit={(it) => setItemModal({ mode: "edit", item: it })} />
+        )}
         {tab === "archive" && <ArchiveTab orders={orders} onRestore={(id) => handleArchive(id, false)} onDelete={handleDeleteOrder} />}
       </div>
 
@@ -11159,6 +11492,7 @@ function OrdersScreen({ navigate }) {
           open
           onClose={() => setOrderModal(null)}
           inventory={inventory}
+          products={shopProducts}
           initial={orderModal.mode === "edit" ? orderModal.order : null}
           onSave={(draft) => (orderModal.mode === "edit" ? handleUpdateOrder(orderModal.order, draft) : handleCreateOrder(draft))}
         />
@@ -11168,10 +11502,24 @@ function OrdersScreen({ navigate }) {
           open
           onClose={() => setItemModal(null)}
           initial={itemModal.mode === "edit" ? itemModal.item : null}
+          products={shopProducts}
           onSave={(draft) => (itemModal.mode === "edit" ? inventory.updateItem(itemModal.item.id, draft) : inventory.addItem(draft))}
         />
       )}
       {noteModal && <CalendarNoteModal open onClose={() => setNoteModal(null)} initialDate={noteModal.date} onSave={(draft) => calendar.addEvent(draft)} />}
+      {eventDetail && (
+        <EventDetailModal
+          open
+          onClose={() => setEventDetail(null)}
+          event={eventDetail}
+          order={eventDetail.kind === "order" ? orders.orders.find((o) => o.id === eventDetail.orderId) : null}
+          onManageOrder={(order) => {
+            setEventDetail(null);
+            setTab("orders");
+            setOrderModal({ mode: "edit", order });
+          }}
+        />
+      )}
     </div>
   );
 }
