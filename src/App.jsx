@@ -7,6 +7,7 @@ import {
   LayoutGrid, UserPlus, ShoppingBag, Sparkles, ShieldAlert, Bookmark,
   Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
   Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check, ChevronUp,
+  AlertTriangle, Image as ImageIcon, Video, PlayCircle,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -1999,6 +2000,195 @@ async function savePhoto(dataUrl) {
   return ok ? id : null;
 }
 
+/* ---- Review media (photos + short video clips) ----------------------------
+   Stored the same way as savePhoto — one key per item, referenced by id from
+   the review record — but under its own `media:` prefix and tagged with a
+   `type` since a review attachment can be either a photo or a video. Videos
+   can't be resized/compressed client-side the way photos are, so they're kept
+   under a hard size cap instead. */
+const REVIEW_VIDEO_MAX_BYTES = 20 * 1024 * 1024; // ~20MB raw, before base64 inflation
+const REVIEW_MEDIA_MAX_ITEMS = 4;
+
+function isSupportedVideo(file) {
+  const type = (file.type || "").toLowerCase();
+  if (type.startsWith("video/")) return true;
+  if (type) return false;
+  return /\.(mp4|mov|webm|m4v)$/i.test(file.name || "");
+}
+
+function readVideoFile(file, { maxBytes = REVIEW_VIDEO_MAX_BYTES } = {}) {
+  return new Promise((resolve, reject) => {
+    if (!isSupportedVideo(file)) {
+      reject(new Error("That file doesn't look like a video."));
+      return;
+    }
+    if (file.size > maxBytes) {
+      reject(new Error(`That video is too large — keep clips under ${Math.round(maxBytes / (1024 * 1024))}MB.`));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn't read that video."));
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function saveReviewMedia(dataUrl, type) {
+  const id = uid("revmedia");
+  const ok = await setJSON(`media:${id}`, { dataUrl, type, createdAt: Date.now() }, true, { verify: true });
+  return ok ? id : null;
+}
+
+const reviewMediaUrlCache = new Map();
+function useReviewMediaUrl(id) {
+  const [url, setUrl] = useState(() => (id ? reviewMediaUrlCache.get(id) || null : null));
+  useEffect(() => {
+    if (!id || reviewMediaUrlCache.has(id)) return;
+    let cancelled = false;
+    readJSON(`media:${id}`, true, null).then((res) => {
+      if (cancelled) return;
+      if (res.ok && res.value?.dataUrl) {
+        reviewMediaUrlCache.set(id, res.value.dataUrl);
+        setUrl(res.value.dataUrl);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+  return url;
+}
+
+// A single review attachment — a small square thumbnail that opens a full
+// lightbox on click, or (in the composer, before posting) shows a remove
+// button instead.
+function ReviewMediaThumb({ item, onOpen, onRemove }) {
+  const url = useReviewMediaUrl(item.id);
+  return (
+    <div className="relative w-16 h-16 rounded-lg overflow-hidden bg-stone-100 border border-stone-200 shrink-0">
+      {url ? (
+        item.type === "video" ? (
+          <button type="button" onClick={() => onOpen?.(item)} className="w-full h-full relative">
+            <video src={url} className="w-full h-full object-cover" muted />
+            <span className="absolute inset-0 flex items-center justify-center bg-black/20">
+              <PlayCircle size={20} className="text-white" />
+            </span>
+          </button>
+        ) : (
+          <button type="button" onClick={() => onOpen?.(item)} className="w-full h-full">
+            <img src={url} alt="Review attachment" className="w-full h-full object-cover" />
+          </button>
+        )
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <Loader2 size={14} className="animate-spin text-stone-400" />
+        </div>
+      )}
+      {onRemove && (
+        <button
+          type="button"
+          onClick={() => onRemove(item)}
+          aria-label="Remove attachment"
+          className="absolute top-0.5 right-0.5 bg-black/60 hover:bg-black/80 text-white rounded-full w-4 h-4 flex items-center justify-center"
+        >
+          <X size={10} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Full-size lightbox for a tapped review photo/video.
+function ReviewMediaLightbox({ item, onClose }) {
+  const url = useReviewMediaUrl(item?.id);
+  if (!item) return null;
+  return (
+    <Modal open onClose={onClose} labelledBy="review-media-title">
+      <div className="p-3">
+        <div className="flex items-center justify-between mb-2">
+          <span id="review-media-title" className="sr-only">Review attachment</span>
+          <button onClick={onClose} className="ml-auto text-stone-400 hover:text-stone-600"><X size={20} /></button>
+        </div>
+        <div className="rounded-xl overflow-hidden bg-black flex items-center justify-center min-h-[200px]">
+          {!url ? (
+            <Loader2 size={24} className="animate-spin text-white my-16" />
+          ) : item.type === "video" ? (
+            <video src={url} controls autoPlay className="max-h-[70vh] w-full" />
+          ) : (
+            <img src={url} alt="Review attachment" className="max-h-[70vh] w-full object-contain" />
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// The "add photos or video" control used in the review composer — up to
+// REVIEW_MEDIA_MAX_ITEMS attachments, each uploaded (and, for photos,
+// resized/compressed the same way any other listing photo is) the moment
+// it's picked, so the composer never has to hold raw files in memory.
+function ReviewMediaPicker({ media, onChange }) {
+  const { showToast } = useApp();
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef(null);
+
+  const handleFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    const room = REVIEW_MEDIA_MAX_ITEMS - media.length;
+    if (room <= 0) {
+      showToast(`You can attach up to ${REVIEW_MEDIA_MAX_ITEMS} photos/videos per review.`);
+      return;
+    }
+    setBusy(true);
+    const additions = [];
+    for (const file of files.slice(0, room)) {
+      try {
+        if (isSupportedVideo(file)) {
+          const dataUrl = await readVideoFile(file);
+          const id = await saveReviewMedia(dataUrl, "video");
+          if (id) additions.push({ id, type: "video" });
+        } else {
+          const dataUrl = await processImageFile(file);
+          const id = await saveReviewMedia(dataUrl, "image");
+          if (id) additions.push({ id, type: "image" });
+        }
+      } catch (err) {
+        showToast(err.message || "Couldn't attach that file.");
+      }
+    }
+    if (additions.length) onChange([...media, ...additions]);
+    setBusy(false);
+  };
+
+  return (
+    <div className="mt-2">
+      <input ref={inputRef} type="file" accept="image/*,video/*" multiple className="hidden" onChange={handleFiles} />
+      <div className="flex items-center gap-2 flex-wrap">
+        {media.map((item) => (
+          <ReviewMediaThumb key={item.id} item={item} onRemove={(it) => onChange(media.filter((m) => m.id !== it.id))} />
+        ))}
+        {media.length < REVIEW_MEDIA_MAX_ITEMS && (
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+            className="w-16 h-16 rounded-lg border-2 border-dashed border-stone-300 text-stone-400 hover:text-emerald-700 hover:border-emerald-300 flex flex-col items-center justify-center gap-0.5 shrink-0"
+          >
+            {busy ? <Loader2 size={16} className="animate-spin" /> : (
+              <>
+                <span className="flex items-center gap-0.5"><ImageIcon size={13} /><Video size={13} /></span>
+                <span className="cs-t9 font-semibold">Add</span>
+              </>
+            )}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ============================================================================
    SECTION 6B: PHOTO EDITOR — crop / zoom / pan / filters, entirely on canvas.
    Sits between "file picked" and "photo saved": every upload passes through
@@ -3027,7 +3217,7 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
   // written straight away, so posting never depends on a read succeeding. It is
   // stored as "pending", visible only to its author, until screening clears it.
   const submitReview = useCallback(
-    async (author, { rating, body }, opts = {}) => {
+    async (author, { rating, body, media }, opts = {}) => {
       setSubmitting(true);
       const review = {
         id: uid("rev"),
@@ -3036,6 +3226,7 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
         authorAvatar: author.avatar,
         rating,
         body,
+        media: Array.isArray(media) ? media : [],
         createdAt: Date.now(),
         status: "pending",
         moderation: null,
@@ -3095,8 +3286,9 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
   // through the same "post first, screen second" moderation pipeline as a
   // brand-new review, so an edit can't be used to slip past the screener.
   const editReview = useCallback(
-    async (reviewId, { rating, body }) => {
+    async (reviewId, { rating, body, media }) => {
       const patch = { rating, body, status: "pending", moderation: null, editedAt: Date.now() };
+      if (Array.isArray(media)) patch.media = media;
       await commitList(listRef.current.map((r) => (r.id === reviewId ? { ...r, ...patch } : r)));
       if (patchMyReview) await patchMyReview(key, reviewId, patch);
 
@@ -4454,6 +4646,15 @@ function ProductCard({ product, onEdit, onDelete }) {
             onToggle={() => toggleFavorite("product", product)}
           />
         </div>
+        {product.showStock && product.stockQty != null && (
+          <span
+            className={`absolute bottom-2 right-2 cs-t10 font-bold px-2 py-1 rounded-full shadow-sm ${
+              product.stockQty > 0 ? "bg-white/90 text-emerald-800" : "bg-stone-800/90 text-white"
+            }`}
+          >
+            {product.stockQty > 0 ? `${product.stockQty} ${priceUnitLabel(product.priceUnit)} left` : "Out of stock"}
+          </span>
+        )}
       </div>
       <div className="p-3.5 flex flex-col flex-1">
         <h3 className="font-semibold text-stone-900 leading-snug truncate" style={displayFont}>{product.name}</h3>
@@ -4462,11 +4663,6 @@ function ProductCard({ product, onEdit, onDelete }) {
           <span className="cs-t17 font-semibold text-stone-900" style={displayFont}>{formatPrice(product.price, product.priceUnit)}</span>
           {dist != null && <span className="cs-t10 text-stone-400 font-medium uppercase tracking-wider">{formatDistance(dist)}</span>}
         </div>
-        {product.showStock && product.stockQty != null && (
-          <p className={`cs-t10 font-semibold mt-1 ${product.stockQty > 0 ? "text-emerald-700" : "text-rose-600"}`}>
-            {product.stockQty > 0 ? `${product.stockQty} ${priceUnitLabel(product.priceUnit)} left in stock` : "0 left in stock"}
-          </p>
-        )}
       </div>
     </div>
   );
@@ -4835,7 +5031,7 @@ function Sidebar({ route, navigate }) {
     { id: "messages", label: "Messages", icon: MessageCircle, screen: "messages" },
     { id: "favorites", label: "Favorites", icon: Heart, screen: "favorites" },
     { id: "dashboard", label: "Dashboard", icon: TrendingUp, screen: "dashboard" },
-    { id: "orders", label: "Orders", icon: ClipboardList, screen: "orders" },
+    { id: "orders", label: "Orders", icon: ClipboardList, screen: "orders", tab: "orders" },
     { id: "orders-calendar", label: "Calendar", icon: Calendar, screen: "orders", tab: "calendar" },
     { id: "orders-inventory", label: "Inventory", icon: Boxes, screen: "orders", tab: "inventory" },
     { id: "places", label: "Places", icon: MapPin, screen: "places" },
@@ -5897,9 +6093,12 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
   const [writing, setWriting] = useState(false);
   const [draftRating, setDraftRating] = useState(0);
   const [draftBody, setDraftBody] = useState("");
+  const [draftMedia, setDraftMedia] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [editRating, setEditRating] = useState(0);
   const [editBody, setEditBody] = useState("");
+  const [editMedia, setEditMedia] = useState([]);
+  const [lightboxItem, setLightboxItem] = useState(null);
   const [editBusy, setEditBusy] = useState(false);
   const [lastResult, setLastResult] = useState(null);
   const [flagState, setFlagState] = useState({});
@@ -5997,12 +6196,14 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
     setEditingId(review.id);
     setEditRating(review.rating);
     setEditBody(review.body);
+    setEditMedia(review.media || []);
   };
 
   const cancelEditReview = () => {
     setEditingId(null);
     setEditRating(0);
     setEditBody("");
+    setEditMedia([]);
   };
 
   const submitEditReview = async (reviewId) => {
@@ -6012,11 +6213,12 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
       return;
     }
     setEditBusy(true);
-    await editReview(reviewId, { rating: editRating, body: editBody.trim() });
+    await editReview(reviewId, { rating: editRating, body: editBody.trim(), media: editMedia });
     setEditBusy(false);
     setEditingId(null);
     setEditRating(0);
     setEditBody("");
+    setEditMedia([]);
     showToast("Review updated — pending re-screening");
   };
 
@@ -6058,7 +6260,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
     const targetShop = entityType === "shop" ? shopsById[entityId] : shopsById[shopId];
     const result = await submitReview(
       me,
-      { rating: draftRating, body: draftBody.trim() },
+      { rating: draftRating, body: draftBody.trim(), media: draftMedia },
       {
         // Fires when background screening finishes.
         onScreened: (status) => {
@@ -6077,6 +6279,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
     setWriting(false);
     setDraftRating(0);
     setDraftBody("");
+    setDraftMedia([]);
     showToast("Review posted — pending review");
   };
 
@@ -6118,6 +6321,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
                 rows={5}
                 className="w-full mt-2 border border-stone-200 rounded-xl p-2.5 text-sm outline-none focus:border-emerald-700"
               />
+              <ReviewMediaPicker media={draftMedia} onChange={setDraftMedia} />
               {lastResult?.status === "removed" && (
                 <p className="text-xs text-rose-600 mt-2 flex items-start gap-1.5"><ShieldAlert size={14} className="shrink-0 mt-0.5" /> This review couldn't be published — our automatic screener flagged it for inappropriate content. Feel free to revise it.</p>
               )}
@@ -6172,6 +6376,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
                       rows={4}
                       className="w-full mt-2 border border-stone-200 rounded-xl p-2.5 text-sm outline-none focus:border-emerald-700"
                     />
+                    <ReviewMediaPicker media={editMedia} onChange={setEditMedia} />
                     <div className="flex gap-2 mt-2.5">
                       <button onClick={cancelEditReview} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-stone-500">Cancel</button>
                       <button
@@ -6187,6 +6392,13 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
                   <>
                     <StarRating value={r.rating} size="sm" />
                     <p className="text-sm text-stone-600 mt-1">{r.body}</p>
+                    {r.media?.length > 0 && (
+                      <div className="flex items-center gap-2 flex-wrap mt-2">
+                        {r.media.map((item) => (
+                          <ReviewMediaThumb key={item.id} item={item} onOpen={setLightboxItem} />
+                        ))}
+                      </div>
+                    )}
                   </>
                 )}
                 {r.status === "pending" && me && r.authorId === me.id && editingId !== r.id && (
@@ -6318,6 +6530,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
         onReportContent={() => handleReportContent(reportTarget)}
         onReportSuspicious={() => handleReportSuspicious(reportTarget)}
       />
+      {lightboxItem && <ReviewMediaLightbox item={lightboxItem} onClose={() => setLightboxItem(null)} />}
     </div>
   );
 }
@@ -6359,6 +6572,15 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
           <ProductImage src={product.image} photoId={product.photoId} credit={product.credit} artKey={product.art} category={product.category} emoji={product.emoji} alt={product.name} className="w-full h-full" />
           <button onClick={onClose} className="absolute top-3 right-3 bg-white/90 rounded-full w-8 h-8 flex items-center justify-center"><X size={16} /></button>
           {product.bannerId && <div className="absolute top-3 left-3"><BannerRibbon bannerId={product.bannerId} customText={product.customBannerText} /></div>}
+          {product.showStock && product.stockQty != null && (
+            <span
+              className={`absolute bottom-3 right-3 cs-t11 font-bold px-2.5 py-1 rounded-full shadow-sm ${
+                product.stockQty > 0 ? "bg-white/90 text-emerald-800" : "bg-stone-800/90 text-white"
+              }`}
+            >
+              {product.stockQty > 0 ? `${product.stockQty} ${priceUnitLabel(product.priceUnit)} left in stock` : "Out of stock"}
+            </span>
+          )}
         </div>
         <div className="p-5">
           <div className="flex items-start justify-between gap-3">
@@ -6403,12 +6625,6 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
             <PriceTag tone="white"><span className="inline-flex items-center gap-1"><CategoryMark id={cat.id} size={11} /> {cat.label}</span></PriceTag>
             {product.status === "sold_out" && <PriceTag tone="stone">Sold out</PriceTag>}
           </div>
-
-          {product.showStock && product.stockQty != null && (
-            <p className={`cs-t11 font-semibold mt-2 ${product.stockQty > 0 ? "text-emerald-700" : "text-rose-600"}`}>
-              {product.stockQty > 0 ? `${product.stockQty} ${priceUnitLabel(product.priceUnit)} left in stock` : "0 left in stock"}
-            </p>
-          )}
 
           <p className="text-sm text-stone-600 mt-4 leading-relaxed">{product.desc}</p>
 
@@ -6627,7 +6843,7 @@ function ShopProfileView({ shopId, navigate }) {
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "orders" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+            <button onClick={() => navigate({ screen: "orders", tab: "orders" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
               <ClipboardList size={15} /> Orders
             </button>
           )}
@@ -10361,6 +10577,24 @@ function pickupLabel(order) {
   return order.pickupTime ? `${dateLabel} @ ${order.pickupTime}` : dateLabel;
 }
 
+// Shared "how urgent is this" check for anything with a date/time — orders
+// (via pickupDate/pickupTime) and calendar events (via date/time) both funnel
+// through this. `null` = nothing to flag, "soon" = due within 6 hours,
+// "overdue" = the date/time has already passed and it's still open.
+function urgencyFor(dateStr, timeStr, done, now = Date.now()) {
+  if (done || !dateStr) return null;
+  const dt = new Date(`${dateStr}T${timeStr || "09:00"}:00`).getTime();
+  if (Number.isNaN(dt)) return null;
+  const ms = dt - now;
+  if (ms < 0) return "overdue";
+  if (ms <= 6 * 3600000) return "soon";
+  return null;
+}
+
+function orderUrgency(order, now) {
+  return urgencyFor(order.pickupDate, order.pickupTime, order.completed || order.archived, now);
+}
+
 function shareTextForOrder(order) {
   const lines = [
     `Order for ${order.customerName}`,
@@ -10398,10 +10632,12 @@ function TotalsPanel({ title, tone, data }) {
   );
 }
 
-function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDelete, onAddToCalendar }) {
+function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDelete, onAddToCalendar, now }) {
   const total = orderTotal(order);
+  const urgency = orderUrgency(order, now);
+  const urgencyBorder = urgency === "overdue" ? "border-l-4 border-l-red-500" : urgency === "soon" ? "border-l-4 border-l-orange-400" : "";
   return (
-    <div className={`rounded-2xl border p-4 ${order.completed ? "border-stone-100 bg-stone-50" : "border-stone-200 bg-white"}`}>
+    <div className={`rounded-2xl border p-4 ${order.completed ? "border-stone-100 bg-stone-50" : "border-stone-200 bg-white"} ${urgencyBorder}`}>
       <div className="flex items-start gap-3">
         {!readOnly && (
           <button
@@ -10421,6 +10657,11 @@ function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDel
               <Clock size={11} /> {pickupLabel(order)}
             </p>
           </div>
+          {urgency && (
+            <p className={`cs-t10 font-bold mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full ${urgency === "overdue" ? "bg-red-100 text-red-700" : "bg-orange-100 text-orange-700"}`}>
+              <AlertTriangle size={10} /> {urgency === "overdue" ? "Overdue" : "Due within 6 hours"}
+            </p>
+          )}
           {order.pickupLocation && (
             <p className="cs-t11 text-stone-500 flex items-center gap-1 mt-0.5">
               <MapPin size={11} /> {order.pickupLocation}
@@ -10453,9 +10694,17 @@ function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDel
   );
 }
 
-function OrdersTab({ orders, onAddOrder, onEdit, onToggleComplete, onArchive, onDelete, onAddToCalendar }) {
+function OrdersTab({ orders, onAddOrder, onEdit, onToggleComplete, onArchive, onDelete, onAddToCalendar, now }) {
   const active = orders.orders.filter((o) => !o.archived);
-  const sorted = active.slice().sort((a, b) => (a.completed === b.completed ? b.createdAt - a.createdAt : a.completed ? 1 : -1));
+  const sorted = active
+    .slice()
+    .sort((a, b) => {
+      if (a.completed !== b.completed) return a.completed ? 1 : -1;
+      const ua = orderUrgency(a, now) ? 0 : 1;
+      const ub = orderUrgency(b, now) ? 0 : 1;
+      if (ua !== ub) return ua - ub;
+      return b.createdAt - a.createdAt;
+    });
   const totals = computeOrderTotals(orders.orders);
 
   return (
@@ -10479,6 +10728,7 @@ function OrdersTab({ orders, onAddOrder, onEdit, onToggleComplete, onArchive, on
             <OrderCard
               key={o.id}
               order={o}
+              now={now}
               onToggleComplete={() => onToggleComplete(o)}
               onEdit={() => onEdit(o)}
               onArchive={() => onArchive(o.id)}
@@ -11075,7 +11325,7 @@ function googleCalendarUrl(ev) {
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
-function CalendarTab({ calendar, onAddNote, onOpenEvent, onOpenDay }) {
+function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now }) {
   const { showToast } = useApp();
   const today = new Date();
   const [cursor, setCursor] = useState({ year: today.getFullYear(), month: today.getMonth() });
@@ -11151,18 +11401,28 @@ function CalendarTab({ calendar, onAddNote, onOpenEvent, onOpenDay }) {
             >
               <span className={`cs-t11 font-bold ${isToday ? "text-emerald-800" : "text-stone-600"}`}>{day}</span>
               <div className="flex flex-col gap-0.5 w-full">
-                {evs.slice(0, 2).map((ev) => (
-                  <span
-                    key={ev.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenEvent(ev);
-                    }}
-                    className={`cs-t9 truncate w-full rounded px-1 cursor-pointer ${ev.kind === "order" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}
-                  >
-                    {ev.title}
-                  </span>
-                ))}
+                {evs.slice(0, 2).map((ev) => {
+                  const linkedOrder = ev.kind === "order" ? orders?.orders.find((o) => o.id === ev.orderId) : null;
+                  const urgency = urgencyFor(ev.date, ev.time, ev.kind === "order" ? !!linkedOrder?.completed : false, now);
+                  return (
+                    <span
+                      key={ev.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenEvent(ev);
+                      }}
+                      className={`cs-t9 truncate w-full rounded px-1 cursor-pointer border-l-2 ${
+                        urgency === "overdue"
+                          ? "border-l-red-500 bg-red-100 text-red-700"
+                          : urgency === "soon"
+                          ? "border-l-orange-400 bg-orange-100 text-orange-700"
+                          : `border-l-transparent ${ev.kind === "order" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`
+                      }`}
+                    >
+                      {ev.title}
+                    </span>
+                  );
+                })}
                 {evs.length > 2 && <span className="cs-t9 text-stone-400">+{evs.length - 2} more</span>}
               </div>
             </button>
@@ -11560,6 +11820,14 @@ function OrdersScreen({ navigate, initialTab }) {
   // vendor's own manual banner choice is never silently overwritten.
   const handleStockChange = useCallback(
     (item, prevQty, nextQty) => {
+      // Low-stock / out-of-stock alerts apply to every tracked item, linked
+      // to a storefront listing or not — a vendor still wants to know their
+      // own-only "compost bin liners" item just ran out.
+      if (nextQty <= 0 && prevQty > 0) {
+        showToast(`Out of stock: ${item.name}`);
+      } else if (item.lowStockThreshold != null && nextQty > 0 && nextQty <= item.lowStockThreshold && prevQty > item.lowStockThreshold) {
+        showToast(`Low stock: ${item.name} is down to ${nextQty} ${priceUnitLabel(item.unit)}`);
+      }
       if (!item.linkedProductId || !shop?.id) return;
       const product = products.find((p) => p.id === item.linkedProductId);
       // "Show stock count" is independent of the sold-out-banner toggle — a
@@ -11577,7 +11845,7 @@ function OrdersScreen({ navigate, initialTab }) {
         }
       }
     },
-    [shop?.autoOutOfStock, shop?.id, products, updateProduct]
+    [shop?.autoOutOfStock, shop?.id, products, updateProduct, showToast]
   );
 
   // Hooks always run, regardless of the gates below — a conditional early
@@ -11594,10 +11862,15 @@ function OrdersScreen({ navigate, initialTab }) {
   const [dayView, setDayView] = useState(null);
 
   // In-app reminders: while this screen is open, checks once a minute for
-  // any calendar event whose reminder window has just been entered. This is
-  // a real, working alert — but it only fires in this browser tab, not as a
-  // phone push notification, since there's no notification backend wired up.
+  // any calendar event whose reminder window has just been entered, plus
+  // orders crossing into "due within 6 hours" or "overdue". This is a real,
+  // working alert — but it only fires in this browser tab, not as a phone
+  // push notification, since there's no notification backend wired up.
+  // `nowTick` re-renders the Orders/Calendar tabs every minute so their
+  // orange/red urgency bars stay current without needing a page action.
+  const [nowTick, setNowTick] = useState(Date.now());
   const remindedRef = useRef(new Set());
+  const orderAlertedRef = useRef(new Set());
   useEffect(() => {
     const check = () => {
       const now = Date.now();
@@ -11611,11 +11884,25 @@ function OrdersScreen({ navigate, initialTab }) {
           showToast(`Reminder: ${ev.title}${ev.time ? ` @ ${ev.time}` : ""}`);
         }
       });
+      orders.orders.forEach((o) => {
+        if (o.completed || o.archived) return;
+        const urgency = orderUrgency(o, now);
+        if (!urgency) return;
+        const key = `${o.id}:${urgency}`;
+        if (orderAlertedRef.current.has(key)) return;
+        orderAlertedRef.current.add(key);
+        showToast(
+          urgency === "overdue"
+            ? `Overdue: ${o.customerName}'s pickup was ${pickupLabel(o)}`
+            : `Due soon: ${o.customerName}'s pickup is ${pickupLabel(o)}`
+        );
+      });
+      setNowTick(now);
     };
     check();
     const iv = setInterval(check, 60000);
     return () => clearInterval(iv);
-  }, [calendar.events, showToast]);
+  }, [calendar.events, orders.orders, showToast]);
 
   if (!me.isVendor || !me.shopId) {
     return (
@@ -11795,6 +12082,7 @@ function OrdersScreen({ navigate, initialTab }) {
         {tab === "orders" && (
           <OrdersTab
             orders={orders}
+            now={nowTick}
             onAddOrder={() => setOrderModal({ mode: "add" })}
             onEdit={(o) => setOrderModal({ mode: "edit", order: o })}
             onToggleComplete={handleToggleComplete}
@@ -11806,6 +12094,8 @@ function OrdersScreen({ navigate, initialTab }) {
         {tab === "calendar" && (
           <CalendarTab
             calendar={calendar}
+            orders={orders}
+            now={nowTick}
             onAddNote={(date) => setNoteModal({ mode: "add", date })}
             onOpenEvent={(ev) => setEventDetail(ev)}
             onOpenDay={(date) => setDayView(date)}
