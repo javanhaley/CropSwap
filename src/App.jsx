@@ -4825,25 +4825,35 @@ function BottomNav({ route, navigate }) {
 function Sidebar({ route, navigate }) {
   const { me } = useApp();
   const items = [
-    { id: "explore", label: "Explore", icon: Home },
-    { id: "store", label: me?.isVendor ? "My Store" : "Start Selling", icon: Store },
-    { id: "messages", label: "Messages", icon: MessageCircle },
-    { id: "favorites", label: "Favorites", icon: Heart },
-    { id: "dashboard", label: "Dashboard", icon: TrendingUp },
-    { id: "orders", label: "Orders", icon: ClipboardList },
-    { id: "places", label: "Places", icon: MapPin },
+    { id: "explore", label: "Explore", icon: Home, screen: "explore" },
+    { id: "store", label: me?.isVendor ? "My Store" : "Start Selling", icon: Store, screen: "store" },
+    { id: "messages", label: "Messages", icon: MessageCircle, screen: "messages" },
+    { id: "favorites", label: "Favorites", icon: Heart, screen: "favorites" },
+    { id: "dashboard", label: "Dashboard", icon: TrendingUp, screen: "dashboard" },
+    { id: "orders", label: "Orders", icon: ClipboardList, screen: "orders" },
+    { id: "orders-calendar", label: "Calendar", icon: Calendar, screen: "orders", tab: "calendar" },
+    { id: "orders-inventory", label: "Inventory", icon: Boxes, screen: "orders", tab: "inventory" },
+    { id: "places", label: "Places", icon: MapPin, screen: "places" },
   ];
+  // Orders/Calendar/Inventory all point at the same "orders" screen and are
+  // told apart only by which tab they ask for, so the plain screen === id
+  // check every other item uses isn't enough to tell which one is "active".
+  const isItemActive = (it) => {
+    if (it.screen !== route.screen) return it.screen === "store" && route.screen === "storeEditor";
+    if (it.screen === "orders") return it.tab ? route.tab === it.tab : !route.tab;
+    return true;
+  };
   return (
     <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-stone-200 p-5 gap-1">
       <div className="flex items-center gap-2 text-emerald-800 font-bold text-xl mb-8 px-2" style={displayFont}>
         <Sparkles size={22} /> CropSwap
       </div>
       {items.map((it) => {
-        const isActive = route.screen === it.id || (it.id === "store" && route.screen === "storeEditor");
+        const isActive = isItemActive(it);
         return (
           <button
             key={it.id}
-            onClick={() => navigate({ screen: it.id })}
+            onClick={() => navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen })}
             className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
           >
             <it.icon size={18} /> {it.label}
@@ -6608,6 +6618,16 @@ function ShopProfileView({ shopId, navigate }) {
           {isOwner && (
             <button onClick={() => navigate({ screen: "orders" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
               <ClipboardList size={15} /> Orders
+            </button>
+          )}
+          {isOwner && (
+            <button onClick={() => navigate({ screen: "orders", tab: "calendar" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+              <Calendar size={15} /> Calendar
+            </button>
+          )}
+          {isOwner && (
+            <button onClick={() => navigate({ screen: "orders", tab: "inventory" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+              <Boxes size={15} /> Inventory
             </button>
           )}
           {isOwner && (
@@ -10646,7 +10666,7 @@ function OrderFormModal({ open, onClose, onSave, inventory, products, initial })
             onChange={setNotes}
             multiline
             rows={2}
-            placeholder="Optional"
+            placeholder="Note"
             className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
           />
 
@@ -10933,7 +10953,7 @@ function InventoryItemModal({ open, onClose, onSave, initial, products }) {
             onChange={setNotes}
             multiline
             rows={2}
-            placeholder="Optional"
+            placeholder="Note"
             className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
           />
         </div>
@@ -10955,10 +10975,71 @@ function ymd(year, month, day) {
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function CalendarTab({ calendar, onAddNote, onOpenEvent }) {
+const REMINDER_OPTIONS = [
+  { value: "", label: "No reminder" },
+  { value: "0", label: "At the time" },
+  { value: "15", label: "15 minutes before" },
+  { value: "60", label: "1 hour before" },
+  { value: "1440", label: "1 day before" },
+];
+
+// ---- Calendar export: a real, no-login way to get a pickup onto whatever
+// calendar app someone actually uses. There's no live two-way sync here (that
+// would need a Google/Outlook OAuth integration this app doesn't have) — just
+// a standard .ics file any calendar can import, plus Google's own one-click
+// "quick add" link for a single event.
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+function icsDateTime(dateStr, timeStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const [hh, mm] = (timeStr || "09:00").split(":").map(Number);
+  return `${y}${pad2(m)}${pad2(d)}T${pad2(hh)}${pad2(mm)}00`;
+}
+function icsEscape(s) {
+  return String(s || "").replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
+}
+function buildIcsForEvents(events, calendarName = "CropSwap Orders") {
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//CropSwap//Orders//EN", `X-WR-CALNAME:${icsEscape(calendarName)}`];
+  events
+    .filter((ev) => ev.date)
+    .forEach((ev) => {
+      lines.push(
+        "BEGIN:VEVENT",
+        `UID:${ev.id}@cropswap`,
+        `DTSTAMP:${icsDateTime(ev.date, ev.time)}`,
+        `DTSTART:${icsDateTime(ev.date, ev.time)}`,
+        `SUMMARY:${icsEscape(ev.title)}`,
+        ev.notes ? `DESCRIPTION:${icsEscape(ev.notes)}` : null,
+        "END:VEVENT"
+      );
+    });
+  lines.push("END:VCALENDAR");
+  return lines.filter(Boolean).join("\r\n");
+}
+function downloadIcs(filename, icsText) {
+  const blob = new Blob([icsText], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+function googleCalendarUrl(ev) {
+  const startDate = new Date(`${ev.date}T${ev.time || "09:00"}:00`);
+  const endDate = new Date(startDate.getTime() + 60 * 60000);
+  const fmt = (d) => `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}T${pad2(d.getHours())}${pad2(d.getMinutes())}00`;
+  const params = new URLSearchParams({ action: "TEMPLATE", text: ev.title, dates: `${fmt(startDate)}/${fmt(endDate)}`, details: ev.notes || "" });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+function CalendarTab({ calendar, onAddNote, onOpenEvent, onOpenDay }) {
+  const { showToast } = useApp();
   const today = new Date();
   const [cursor, setCursor] = useState({ year: today.getFullYear(), month: today.getMonth() });
-  const [selectedDate, setSelectedDate] = useState(null);
 
   const eventsByDate = useMemo(() => {
     const map = {};
@@ -10985,7 +11066,17 @@ function CalendarTab({ calendar, onAddNote, onOpenEvent }) {
     });
   };
 
-  const dayEvents = selectedDate ? eventsByDate[selectedDate] || [] : [];
+  const handleExport = (e) => {
+    const val = e.target.value;
+    e.target.value = "";
+    if (!val) return;
+    if (!calendar.events.length) {
+      showToast("Nothing on your calendar yet to export.");
+      return;
+    }
+    downloadIcs("cropswap-calendar.ics", buildIcsForEvents(calendar.events));
+    showToast(val === "google" ? "Downloaded — open Google Calendar's Settings → Import & export to add it." : "Calendar file downloaded — open it, or import it into your calendar app.");
+  };
 
   return (
     <div>
@@ -11003,19 +11094,20 @@ function CalendarTab({ calendar, onAddNote, onOpenEvent }) {
           <div key={i} className="text-center cs-t10 font-bold text-stone-400 py-1">{d}</div>
         ))}
       </div>
+      {/* Outlook-style: tapping the day itself (not an event) opens a full
+          day view; tapping an event chip jumps straight to that event. */}
       <div className="grid grid-cols-7 gap-1">
         {cells.map((day, i) => {
           if (day == null) return <div key={i} />;
           const dateStr = ymd(cursor.year, cursor.month, day);
           const evs = eventsByDate[dateStr] || [];
           const isToday = dateStr === todayStr;
-          const isSelected = dateStr === selectedDate;
           return (
             <button
               key={i}
-              onClick={() => setSelectedDate(dateStr === selectedDate ? null : dateStr)}
+              onClick={() => onOpenDay(dateStr)}
               className={`aspect-square rounded-xl border p-1 flex flex-col items-start gap-0.5 overflow-hidden text-left transition ${
-                isSelected ? "border-emerald-700 bg-emerald-50" : isToday ? "border-emerald-300" : "border-stone-100 hover:border-stone-200"
+                isToday ? "border-emerald-300" : "border-stone-100 hover:border-stone-200"
               }`}
             >
               <span className={`cs-t11 font-bold ${isToday ? "text-emerald-800" : "text-stone-600"}`}>{day}</span>
@@ -11039,46 +11131,85 @@ function CalendarTab({ calendar, onAddNote, onOpenEvent }) {
         })}
       </div>
 
-      {selectedDate && (
-        <div className="mt-4 border border-stone-200 rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <p className="font-semibold text-stone-800">
-              {new Date(`${selectedDate}T00:00:00`).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
-            </p>
-            <button onClick={() => onAddNote(selectedDate)} className="text-xs font-semibold text-emerald-800 flex items-center gap-1">
-              <Plus size={13} /> Add note
-            </button>
-          </div>
-          {dayEvents.length === 0 && <p className="text-sm text-stone-400">Nothing scheduled.</p>}
+      <div className="mt-5 flex items-center gap-2 flex-wrap">
+        <label className="cs-t11 font-semibold text-stone-500 shrink-0">Sync to your calendar app</label>
+        <select onChange={handleExport} defaultValue="" className="flex-1 min-w-[180px] border border-stone-200 rounded-xl px-2 py-2 text-xs outline-none focus:border-emerald-700">
+          <option value="">Choose an option…</option>
+          <option value="ics">Download .ics (Google, Outlook, Apple)</option>
+          <option value="google">Import into Google Calendar</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+
+// The Outlook-style "click a day, see everything in it" card — every event
+// on that date with its time, plus edit/delete for your own notes (orders
+// route back to the Orders tab to be managed) and a per-event reminder.
+function DayViewModal({ open, onClose, date, events, onAddNote, onOpenEvent, onEditNote, onDeleteNote, onSetReminder }) {
+  if (!date) return null;
+  const dayEvents = events.slice().sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99"));
+  const dateLabel = new Date(`${date}T00:00:00`).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="day-view-title" size="lg">
+      <div className="p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 id="day-view-title" className="font-bold text-xl text-stone-800" style={displayFont}>{dateLabel}</h2>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-600">
+            <X size={22} />
+          </button>
+        </div>
+        <button onClick={() => onAddNote(date)} className="flex items-center gap-1.5 text-sm font-semibold text-emerald-800 mb-4">
+          <Plus size={14} /> Add event to this day
+        </button>
+        {dayEvents.length === 0 ? (
+          <EmptyState icon={Calendar} title="Nothing scheduled" body="This day is wide open." />
+        ) : (
           <div className="space-y-2">
             {dayEvents.map((ev) => (
-              <div key={ev.id} onClick={() => onOpenEvent(ev)} className="flex items-start justify-between gap-2 bg-stone-50 hover:bg-stone-100 rounded-xl px-3 py-2 cursor-pointer transition">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-stone-800 truncate">{ev.title}</p>
-                  {ev.time && <p className="cs-t11 text-stone-500">{ev.time}</p>}
-                  {ev.notes && <p className="cs-t11 text-stone-500 truncate">{ev.notes}</p>}
+              <div key={ev.id} className="border border-stone-200 rounded-2xl p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <button onClick={() => onOpenEvent(ev)} className="flex-1 min-w-0 text-left">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="cs-t11 font-bold text-stone-500 shrink-0">{ev.time || "All day"}</span>
+                      <span className={`cs-t9 font-bold px-1.5 py-0.5 rounded-full ${ev.kind === "order" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                        {ev.kind === "order" ? "Order" : "Note"}
+                      </span>
+                      {ev.reminderMinutesBefore != null && <Bell size={11} className="text-stone-400" />}
+                    </div>
+                    <p className="font-semibold text-stone-800 truncate mt-0.5">{ev.title}</p>
+                    {ev.notes && <p className="cs-t11 text-stone-400 truncate">{ev.notes}</p>}
+                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {ev.kind === "note" ? (
+                      <>
+                        <IconButton icon={Pencil} label="Edit" size={13} onClick={() => onEditNote(ev)} />
+                        <IconButton icon={Trash2} label="Delete" size={13} onClick={() => onDeleteNote(ev.id)} />
+                      </>
+                    ) : (
+                      <span className="cs-t11 font-semibold text-emerald-800 whitespace-nowrap">View</span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {ev.kind === "order" ? (
-                    <span className="cs-t11 font-semibold text-emerald-800 whitespace-nowrap">View</span>
-                  ) : (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        calendar.removeEvent(ev.id);
-                      }}
-                      className="text-stone-400 hover:text-red-600"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
+                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-stone-100">
+                  <Bell size={12} className="text-stone-400 shrink-0" />
+                  <select
+                    value={ev.reminderMinutesBefore == null ? "" : String(ev.reminderMinutesBefore)}
+                    onChange={(e) => onSetReminder(ev.id, e.target.value === "" ? null : Number(e.target.value))}
+                    className="text-xs border border-stone-200 rounded-lg px-2 py-1 outline-none focus:border-emerald-700"
+                  >
+                    {REMINDER_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             ))}
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -11169,32 +11300,47 @@ function EventDetailModal({ open, onClose, event, order, onManageOrder }) {
             <Share2 size={15} /> Share
           </button>
         </div>
+        {event.date && (
+          <div className="flex items-center justify-center gap-4 mt-3">
+            <button
+              onClick={() => downloadIcs(`${(isOrder ? order.customerName : event.title).replace(/[^a-z0-9]+/gi, "-")}.ics`, buildIcsForEvents([event]))}
+              className="cs-t11 font-semibold text-stone-500 hover:text-emerald-700 flex items-center gap-1"
+            >
+              <Calendar size={12} /> Download .ics
+            </button>
+            <a href={googleCalendarUrl(event)} target="_blank" rel="noreferrer" className="cs-t11 font-semibold text-stone-500 hover:text-emerald-700 flex items-center gap-1">
+              <Calendar size={12} /> Add to Google Calendar
+            </a>
+          </div>
+        )}
       </div>
     </Modal>
   );
 }
 
-function CalendarNoteModal({ open, onClose, onSave, initialDate }) {
+function CalendarNoteModal({ open, onClose, onSave, initialDate, initial }) {
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [notes, setNotes] = useState("");
+  const [reminder, setReminder] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setTitle("");
-    setDate(initialDate || "");
-    setTime("");
-    setNotes("");
-  }, [open, initialDate]);
+    setTitle(initial?.title || "");
+    setDate(initial?.date || initialDate || "");
+    setTime(initial?.time || "");
+    setNotes(initial?.notes || "");
+    setReminder(initial?.reminderMinutesBefore == null ? "" : String(initial.reminderMinutesBefore));
+  }, [open, initial, initialDate]);
 
   const canSave = title.trim().length > 0 && !!date;
 
   const handleSave = async () => {
     if (!canSave) return;
     setSaving(true);
-    await onSave({ title, date, time, notes, kind: "note" });
+    await onSave({ title, date, time, notes, kind: "note", reminderMinutesBefore: reminder === "" ? null : Number(reminder) });
     setSaving(false);
     onClose();
   };
@@ -11203,7 +11349,7 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate }) {
     <Modal open={open} onClose={onClose} labelledBy="cal-note-title">
       <div className="p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 id="cal-note-title" className="font-bold text-lg text-stone-800" style={displayFont}>Add calendar note</h2>
+          <h2 id="cal-note-title" className="font-bold text-lg text-stone-800" style={displayFont}>{initial ? "Edit note" : "Add calendar note"}</h2>
           <button onClick={onClose} className="text-stone-400 hover:text-stone-600">
             <X size={20} />
           </button>
@@ -11226,6 +11372,14 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate }) {
               <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
             </div>
           </div>
+          <div>
+            <label className="cs-t11 font-semibold text-stone-500 mb-1 block flex items-center gap-1"><Bell size={11} /> Remind me</label>
+            <select value={reminder} onChange={(e) => setReminder(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700">
+              {REMINDER_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
           <TextField
             label="Notes"
             value={notes}
@@ -11237,7 +11391,7 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate }) {
           />
         </div>
         <button onClick={handleSave} disabled={!canSave || saving} className="w-full mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-40">
-          {saving ? "Saving…" : "Add note"}
+          {saving ? "Saving…" : initial ? "Save changes" : "Add note"}
         </button>
       </div>
     </Modal>
@@ -11302,9 +11456,26 @@ function ArchiveTab({ orders, onRestore, onDelete }) {
   );
 }
 
-function OrdersScreen({ navigate }) {
+// Remembers which Orders tab was last open across mounts within the same
+// browser session — otherwise switching to another screen and back always
+// dumped you back on Orders, even if you'd been sitting on Inventory.
+let ordersScreenLastTab = "orders";
+
+function OrdersScreen({ navigate, initialTab }) {
   const { me, shopsById, showToast, products, updateShop, updateProduct } = useApp();
-  const [tab, setTab] = useState("orders");
+  const [tab, setTabState] = useState(initialTab || ordersScreenLastTab);
+  const setTab = (t) => {
+    ordersScreenLastTab = t;
+    setTabState(t);
+  };
+  // A Sidebar/My-Store link to "Calendar" or "Inventory" passes an explicit
+  // tab even when this screen is already mounted (no remount to re-run
+  // useState's initializer), so an explicit request still needs to win here.
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab]);
+
   const shop = me?.shopId ? shopsById[me.shopId] : null;
   const shopProducts = useMemo(() => products.filter((p) => p.shopId === shop?.id), [products, shop?.id]);
 
@@ -11338,6 +11509,31 @@ function OrdersScreen({ navigate }) {
   const [itemModal, setItemModal] = useState(null);
   const [noteModal, setNoteModal] = useState(null);
   const [eventDetail, setEventDetail] = useState(null);
+  const [dayView, setDayView] = useState(null);
+
+  // In-app reminders: while this screen is open, checks once a minute for
+  // any calendar event whose reminder window has just been entered. This is
+  // a real, working alert — but it only fires in this browser tab, not as a
+  // phone push notification, since there's no notification backend wired up.
+  const remindedRef = useRef(new Set());
+  useEffect(() => {
+    const check = () => {
+      const now = Date.now();
+      calendar.events.forEach((ev) => {
+        if (ev.reminderMinutesBefore == null || !ev.date) return;
+        if (remindedRef.current.has(ev.id)) return;
+        const when = new Date(`${ev.date}T${ev.time || "09:00"}:00`).getTime();
+        const triggerAt = when - ev.reminderMinutesBefore * 60000;
+        if (now >= triggerAt && now - triggerAt < 6 * 3600000) {
+          remindedRef.current.add(ev.id);
+          showToast(`Reminder: ${ev.title}${ev.time ? ` @ ${ev.time}` : ""}`);
+        }
+      });
+    };
+    check();
+    const iv = setInterval(check, 60000);
+    return () => clearInterval(iv);
+  }, [calendar.events, showToast]);
 
   if (!me.isVendor || !me.shopId) {
     return (
@@ -11480,7 +11676,14 @@ function OrdersScreen({ navigate }) {
             onAddToCalendar={handleAddOrderToCalendar}
           />
         )}
-        {tab === "calendar" && <CalendarTab calendar={calendar} onAddNote={(date) => setNoteModal({ date })} onOpenEvent={(ev) => setEventDetail(ev)} />}
+        {tab === "calendar" && (
+          <CalendarTab
+            calendar={calendar}
+            onAddNote={(date) => setNoteModal({ mode: "add", date })}
+            onOpenEvent={(ev) => setEventDetail(ev)}
+            onOpenDay={(date) => setDayView(date)}
+          />
+        )}
         {tab === "inventory" && (
           <InventoryTab shop={shop} patchShop={patchShop} products={shopProducts} inventory={inventory} onAdd={() => setItemModal({ mode: "add" })} onEdit={(it) => setItemModal({ mode: "edit", item: it })} />
         )}
@@ -11506,7 +11709,15 @@ function OrdersScreen({ navigate }) {
           onSave={(draft) => (itemModal.mode === "edit" ? inventory.updateItem(itemModal.item.id, draft) : inventory.addItem(draft))}
         />
       )}
-      {noteModal && <CalendarNoteModal open onClose={() => setNoteModal(null)} initialDate={noteModal.date} onSave={(draft) => calendar.addEvent(draft)} />}
+      {noteModal && (
+        <CalendarNoteModal
+          open
+          onClose={() => setNoteModal(null)}
+          initialDate={noteModal.mode === "add" ? noteModal.date : null}
+          initial={noteModal.mode === "edit" ? noteModal.event : null}
+          onSave={(draft) => (noteModal.mode === "edit" ? calendar.updateEvent(noteModal.event.id, draft) : calendar.addEvent(draft))}
+        />
+      )}
       {eventDetail && (
         <EventDetailModal
           open
@@ -11518,6 +11729,28 @@ function OrdersScreen({ navigate }) {
             setTab("orders");
             setOrderModal({ mode: "edit", order });
           }}
+        />
+      )}
+      {dayView && (
+        <DayViewModal
+          open
+          onClose={() => setDayView(null)}
+          date={dayView}
+          events={calendar.events.filter((e) => e.date === dayView)}
+          onAddNote={(date) => {
+            setDayView(null);
+            setNoteModal({ mode: "add", date });
+          }}
+          onOpenEvent={(ev) => {
+            setDayView(null);
+            setEventDetail(ev);
+          }}
+          onEditNote={(ev) => {
+            setDayView(null);
+            setNoteModal({ mode: "edit", event: ev });
+          }}
+          onDeleteNote={(id) => calendar.removeEvent(id)}
+          onSetReminder={(id, mins) => calendar.updateEvent(id, { reminderMinutesBefore: mins })}
         />
       )}
     </div>
@@ -12996,7 +13229,7 @@ function RootShell() {
               />
             )}
             {route.screen === "dashboard" && <VendorDashboard navigate={navigate} />}
-            {route.screen === "orders" && <OrdersScreen navigate={navigate} />}
+            {route.screen === "orders" && <OrdersScreen navigate={navigate} initialTab={route.tab} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
