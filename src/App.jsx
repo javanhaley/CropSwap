@@ -1750,6 +1750,7 @@ function sortProducts(products, sortBy, shopsById, userLoc) {
     price_low: (a, b) => a.price - b.price,
     price_high: (a, b) => b.price - a.price,
     favorited: (a, b) => (b.favoriteCount || 0) - (a.favoriteCount || 0),
+    name: (a, b) => String(a.name).localeCompare(String(b.name)),
   };
   return withDist.sort(sorters[sortBy] || sorters.distance);
 }
@@ -5122,7 +5123,7 @@ function BottomNav({ route, navigate }) {
 }
 
 function Sidebar({ route, navigate }) {
-  const { me } = useApp();
+  const { me, exploreView, setExploreView } = useApp();
   const items = [
     { id: "explore", label: "Explore", icon: Home, screen: "explore" },
     { id: "store", label: me?.isVendor ? "My Store" : "Start Selling", icon: Store, screen: "store" },
@@ -5133,12 +5134,17 @@ function Sidebar({ route, navigate }) {
     { id: "orders-calendar", label: "Calendar", icon: Calendar, screen: "orders", tab: "calendar" },
     { id: "orders-inventory", label: "Inventory", icon: Boxes, screen: "orders", tab: "inventory" },
     { id: "ads", label: "Sponsored Ads", icon: Megaphone, screen: "ads" },
-    { id: "places", label: "Places", icon: MapPin, screen: "places" },
+    // A quick jump straight to the Map view of Explore, not the separate
+    // saved-Places screen this used to point to.
+    { id: "map", label: "Map", icon: MapPin, screen: "explore" },
   ];
   // Orders/Calendar/Inventory all point at the same "orders" screen and are
   // told apart only by which tab they ask for, so the plain screen === id
   // check every other item uses isn't enough to tell which one is "active".
+  // Explore/Map share a screen too, told apart by the exploreView toggle.
   const isItemActive = (it) => {
+    if (it.id === "map") return route.screen === "explore" && exploreView === "map";
+    if (it.id === "explore") return route.screen === "explore" && exploreView !== "map";
     if (it.screen !== route.screen) return it.screen === "store" && route.screen === "storeEditor";
     if (it.screen === "orders") return it.tab ? route.tab === it.tab : !route.tab;
     return true;
@@ -5153,7 +5159,10 @@ function Sidebar({ route, navigate }) {
         return (
           <button
             key={it.id}
-            onClick={() => navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen })}
+            onClick={() => {
+              if (it.id === "map") setExploreView("map");
+              navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen });
+            }}
             className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
           >
             <it.icon size={18} /> {it.label}
@@ -5347,6 +5356,7 @@ function FilterPanel({ open, onClose, filters, setFilters, mode = "products", on
               <option value="newest">Newest listed</option>
               <option value="price_low">Price: low to high</option>
               <option value="price_high">Price: high to low</option>
+              <option value="name">Name A–Z</option>
             </>
           )}
         </select>
@@ -5569,20 +5579,48 @@ function ExploreView({ navigate }) {
 
         <p className="text-xs text-stone-400 font-medium mb-3">{sorted.length} listing{sorted.length === 1 ? "" : "s"}{userLoc ? ` near ${userLoc.label}` : ""}</p>
 
-        <div className="flex gap-1 mb-4 bg-stone-100 rounded-full p-1 w-fit">
-          {[
-            { id: "grid", label: "Listings" },
-            { id: "shops", label: "Shops" },
-            { id: "map", label: "Map" },
-          ].map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setView(m.id)}
-              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition ${view === m.id ? "bg-white shadow text-stone-900" : "text-stone-500"}`}
-            >
-              {m.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 flex-wrap mb-4">
+          <div className="flex gap-1 bg-stone-100 rounded-full p-1 shrink-0">
+            {[
+              { id: "grid", label: "Listings" },
+              { id: "shops", label: "Shops" },
+              { id: "map", label: "Map" },
+            ].map((m) => (
+              <button
+                key={m.id}
+                onClick={() => setView(m.id)}
+                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition ${view === m.id ? "bg-white shadow text-stone-900" : "text-stone-500"}`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+          {/* Quick jumps to a vendor's other screens — plain nav, not part of
+              the Listings/Shops/Map view toggle above. */}
+          <button
+            onClick={() => navigate({ screen: "favorites" })}
+            className="shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-600 hover:bg-stone-50 transition flex items-center gap-1.5"
+          >
+            <Heart size={13} /> Favorites
+          </button>
+          <button
+            onClick={() => navigate({ screen: "dashboard" })}
+            className="shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-600 hover:bg-stone-50 transition flex items-center gap-1.5"
+          >
+            <TrendingUp size={13} /> Dashboard
+          </button>
+          <button
+            onClick={() => navigate({ screen: "store" })}
+            className="shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-600 hover:bg-stone-50 transition flex items-center gap-1.5"
+          >
+            <Store size={13} /> {me?.isVendor ? "My Store" : "Start Selling"}
+          </button>
+          <button
+            onClick={() => navigate({ screen: "plans" })}
+            className="shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-600 hover:bg-stone-50 transition flex items-center gap-1.5"
+          >
+            <Crown size={13} /> My Plan
+          </button>
         </div>
 
         {view === "shops" ? (
@@ -8490,9 +8528,12 @@ function ShopToolsTab({ shop }) {
 ============================================================================ */
 function FavoritesView() {
   const { products, shops, favProducts, favShops, shopsById, userLoc } = useApp();
-  const [tab, setTab] = useState("products");
+  const [tab, setTab] = useState("shops");
   const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  // Alphabetical by default (per name, not distance) — search and the full
+  // Sort by / category filters below still work the same as everywhere else
+  // in the app, just starting from a name-sorted list instead of nearest-first.
+  const [filters, setFilters] = useState({ ...DEFAULT_FILTERS, sortBy: "name" });
   const [filterOpen, setFilterOpen] = useState(false);
 
   const favProductsRaw = useMemo(() => products.filter((p) => favProducts[p.id]), [products, favProducts]);
@@ -8549,13 +8590,13 @@ function FavoritesView() {
           <button onClick={() => setFilterOpen(true)}><IconButton icon={Filter} label="Filters" /></button>
         </div>
         <div className="flex gap-1 mb-5 bg-stone-100 rounded-full p-1 w-fit">
-          <button onClick={() => setTab("products")} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${tab === "products" ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>Products ({filteredProducts.length})</button>
-          <button onClick={() => setTab("shops")} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${tab === "shops" ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>Shops ({favShopList.length})</button>
+          <button onClick={() => setTab("shops")} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${tab === "shops" ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>Favorite Shops ({favShopList.length})</button>
+          <button onClick={() => setTab("products")} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${tab === "products" ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>Favorite Items ({filteredProducts.length})</button>
         </div>
 
         {tab === "products" &&
           (filteredProducts.length === 0 ? (
-            <EmptyState icon={Heart} title="No favorite products yet" body="Tap the heart on any listing to save it here." />
+            <EmptyState icon={Heart} title="No favorite items yet" body="Tap the heart on any listing to save it here." />
           ) : (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
               {filteredProducts.map((p) => (
@@ -10006,7 +10047,7 @@ function PublicProfileView({ userId, navigate }) {
 }
 
 function AccountModal({ open, onClose }) {
-  const { me, updateMe, signOut, navigate, userLoc, setUserLoc, showToast, openProfileCard } = useApp();
+  const { me, updateMe, signOut, navigate, showToast, openProfileCard } = useApp();
   const [tab, setTab] = useState("profile");
   const [name, setName] = useState(me?.name || "");
   const [blockedUsers, setBlockedUsers] = useState([]);
@@ -10132,7 +10173,7 @@ function AccountModal({ open, onClose }) {
     { id: "subscription", label: "My Plan", icon: Sparkles, link: true, linkScreen: "plans" },
     { id: "notifications", label: "Alerts", icon: Bell },
     { id: "dashboard", label: "Dashboard", icon: TrendingUp, link: true },
-    { id: "places", label: "Places", icon: MapPin },
+    { id: "favorites", label: "Favorites", icon: Heart, link: true },
     { id: "blocked", label: "Blocked", icon: AlertCircle },
     { id: "data", label: "Data", icon: Package },
   ];
@@ -10226,34 +10267,6 @@ function AccountModal({ open, onClose }) {
                 <ToggleSwitch checked={!!me.notificationPrefs?.[row.key]} onChange={(v) => updateMe({ notificationPrefs: { ...me.notificationPrefs, [row.key]: v } })} />
               </div>
             ))}
-          </div>
-        )}
-
-        {tab === "places" && (
-          <div>
-            <p className="text-sm text-stone-500 mb-3">Save the places you shop from — handy if you split time between towns.</p>
-            <div className="flex flex-col gap-2 mb-4">
-              {(me.savedPlaces || []).map((pl) => (
-                <div key={pl.label} className="flex items-center gap-2 border border-stone-200 rounded-xl px-3 py-2.5">
-                  <MapPin size={14} className="text-emerald-700 shrink-0" />
-                  <span className="flex-1 text-sm font-medium text-stone-700">{pl.label}</span>
-                  <button onClick={() => { setUserLoc(pl); onClose(); showToast(`Now browsing near ${pl.label}`); }} className="text-xs font-semibold text-emerald-800">Use</button>
-                  <button onClick={() => updateMe({ savedPlaces: (me.savedPlaces || []).filter((x) => x.label !== pl.label) })} className="text-stone-300 hover:text-rose-600" aria-label="Remove"><X size={14} /></button>
-                </div>
-              ))}
-              {(me.savedPlaces || []).length === 0 && <p className="text-sm text-stone-400">No saved places yet.</p>}
-            </div>
-            <button
-              onClick={() => {
-                const exists = (me.savedPlaces || []).some((p) => p.label === userLoc.label);
-                if (exists) { showToast("Already saved"); return; }
-                updateMe({ savedPlaces: [...(me.savedPlaces || []), userLoc] });
-                showToast(`Saved ${userLoc.label}`);
-              }}
-              className="w-full border border-stone-200 font-semibold py-2.5 rounded-xl text-stone-700 text-sm"
-            >
-              Save current location ({userLoc.label})
-            </button>
           </div>
         )}
 
