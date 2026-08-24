@@ -8,6 +8,7 @@ import {
   Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
   Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check, ChevronUp,
   AlertTriangle, Image as ImageIcon, Video, PlayCircle,
+  DollarSign, Receipt, Repeat, UserCheck, Percent,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -3080,6 +3081,86 @@ function useRestockWatch(me) {
   return { restockWatches: watches, toggleRestockWatch: toggle };
 }
 
+/* ---- Sponsored listings ----------------------------------------------------
+   A shop pays a flat rate to feature one of its own listings in the
+   "Sponsored" rail at the top of the homepage for a fixed real-world window.
+   One shared list (every shopper needs to see everyone's active campaigns,
+   not just their own), each entry a self-contained record of what was
+   bought and when it actually expires — expiry is just startedAt/endsAt
+   compared against the clock at render time, no server-side job required. */
+const SPONSOR_RATES = [
+  { id: "daily", label: "1 day", days: 1, price: 1 },
+  { id: "weekly", label: "7 days", days: 7, price: 5 },
+  { id: "monthly", label: "30 days", days: 30, price: 10 },
+  { id: "annual", label: "365 days", days: 365, price: 100 },
+];
+function sponsorRate(id) {
+  return SPONSOR_RATES.find((r) => r.id === id) || SPONSOR_RATES[0];
+}
+function sponsorIsLive(c, now = Date.now()) {
+  return c.status === "active" && c.endsAt > now;
+}
+
+function useSponsorships() {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const listRef = useRef([]);
+
+  const load = useCallback(async () => {
+    const stored = await getJSON("sponsorships:list", true, []);
+    const safe = Array.isArray(stored) ? stored : [];
+    listRef.current = safe;
+    setList(safe);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const persist = useCallback(async (next) => {
+    listRef.current = next;
+    setList(next);
+    await setJSON("sponsorships:list", next, true, { verify: true });
+  }, []);
+
+  const createCampaign = useCallback(
+    async ({ shopId, productId, objective, rateId, tagline, cardLast4 }) => {
+      const rate = sponsorRate(rateId);
+      const now = Date.now();
+      const campaign = {
+        id: uid("spon"),
+        shopId,
+        productId,
+        objective: objective || "reach",
+        rateId,
+        days: rate.days,
+        amount: rate.price,
+        tagline: (tagline || "").trim().slice(0, 60),
+        cardLast4: cardLast4 || "",
+        status: "active",
+        startedAt: now,
+        endsAt: now + rate.days * 86400000,
+        createdAt: now,
+      };
+      await persist([campaign, ...listRef.current]);
+      return campaign;
+    },
+    [persist]
+  );
+
+  const cancelCampaign = useCallback(
+    async (id) => {
+      await persist(
+        listRef.current.map((c) => (c.id === id ? { ...c, status: "cancelled", endsAt: Math.min(c.endsAt, Date.now()) } : c))
+      );
+    },
+    [persist]
+  );
+
+  return { list, loading, createCampaign, cancelCampaign, reload: load };
+}
+
 function useMyReviews(me) {
   const [byKey, setByKey] = useState({});
   const recordRef = useRef({});
@@ -4603,7 +4684,7 @@ function ProductImage({ src, photoId, artKey, category, emoji, alt, className = 
   );
 }
 
-function ProductCard({ product, onEdit, onDelete }) {
+function ProductCard({ product, onEdit, onDelete, sponsored }) {
   const { shopsById, favProducts, toggleFavorite, me, userLoc, openProduct } = useApp();
   const shop = shopsById[product.shopId];
   const cat = catInfo(product.category);
@@ -4625,6 +4706,11 @@ function ProductCard({ product, onEdit, onDelete }) {
         {onEdit && (
           <span className="absolute top-2 left-2 bg-white/90 rounded-full px-2 py-1 cs-t10 font-bold text-emerald-800 shadow-sm inline-flex items-center gap-1">
             <Pencil size={11} /> Edit
+          </span>
+        )}
+        {sponsored && !onDelete && (
+          <span className="absolute bottom-2 left-2 bg-white/90 rounded-full px-2 py-1 cs-t10 font-bold text-stone-500 shadow-sm inline-flex items-center gap-1">
+            <Megaphone size={10} /> Sponsored
           </span>
         )}
         {onDelete && (
@@ -4660,7 +4746,11 @@ function ProductCard({ product, onEdit, onDelete }) {
         <h3 className="font-semibold text-stone-900 leading-snug truncate" style={displayFont}>{product.name}</h3>
         {shop && <p className="cs-t11 text-stone-500 mt-0.5 truncate tracking-wide">{shop.name} · {shop.city}, {shop.state}</p>}
         <div className="mt-2.5 pt-2.5 border-t border-stone-100 flex items-baseline justify-between">
-          <span className="cs-t17 font-semibold text-stone-900" style={displayFont}>{formatPrice(product.price, product.priceUnit)}</span>
+          {product.hidePrice ? (
+            <span className="cs-t11 font-semibold text-stone-400 italic">See listing for price</span>
+          ) : (
+            <span className="cs-t17 font-semibold text-stone-900" style={displayFont}>{formatPrice(product.price, product.priceUnit)}</span>
+          )}
           {dist != null && <span className="cs-t10 text-stone-400 font-medium uppercase tracking-wider">{formatDistance(dist)}</span>}
         </div>
       </div>
@@ -5042,6 +5132,7 @@ function Sidebar({ route, navigate }) {
     { id: "orders", label: "Orders", icon: ClipboardList, screen: "orders", tab: "orders" },
     { id: "orders-calendar", label: "Calendar", icon: Calendar, screen: "orders", tab: "calendar" },
     { id: "orders-inventory", label: "Inventory", icon: Boxes, screen: "orders", tab: "inventory" },
+    { id: "ads", label: "Sponsored Ads", icon: Megaphone, screen: "ads" },
     { id: "places", label: "Places", icon: MapPin, screen: "places" },
   ];
   // Orders/Calendar/Inventory all point at the same "orders" screen and are
@@ -5297,7 +5388,7 @@ function ToggleSwitch({ checked, onChange }) {
    SECTION 15: EXPLORE VIEW
 ============================================================================ */
 function ExploreView({ navigate }) {
-  const { products: allProducts, shops: allShops, shopsById, userLoc, favShops, me, showToast, globalSearch, setGlobalSearch, requireAuth } = useApp();
+  const { products: allProducts, shops: allShops, shopsById, userLoc, me, showToast, globalSearch, setGlobalSearch, requireAuth, sponsorships } = useApp();
   const { filters, setFilters, filterOpen, setFilterOpen, exploreView: view, setExploreView: setView, registerSaveSearch } = useApp();
   const searchDraft = globalSearch;
   const setSearchDraft = setGlobalSearch;
@@ -5386,11 +5477,18 @@ function ExploreView({ navigate }) {
     return Object.values(shopsById).filter((s) => ids.has(s.id));
   }, [sorted, shopsById]);
 
-  const followedShopIds = Object.keys(favShops);
-  const followingFeed = useMemo(
-    () => products.filter((pr) => followedShopIds.includes(pr.shopId)).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 8),
-    [products, favShops]
-  );
+  // Live, paid-for campaigns, newest first, capped so the rail can't grow
+  // unbounded — each one resolved back to its actual (still-browsable)
+  // listing, since a sponsored product could since have been deleted or its
+  // shop could have gone unbrowsable.
+  const sponsoredNow = useMemo(() => {
+    const productsById = Object.fromEntries(products.map((p) => [p.id, p]));
+    return (sponsorships || [])
+      .filter((c) => sponsorIsLive(c) && productsById[c.productId])
+      .sort((a, b) => b.startedAt - a.startedAt)
+      .slice(0, 10)
+      .map((c) => ({ campaign: c, product: productsById[c.productId] }));
+  }, [sponsorships, products]);
 
   const activeFilterCount =
     filters.categories.length + (filters.maxDistance !== null ? 1 : 0) + (filters.minRating > 0 ? 1 : 0) + (filters.inSeasonOnly ? 1 : 0) + (filters.verifiedOnly ? 1 : 0) + (filters.minPrice ? 1 : 0) + (filters.maxPrice ? 1 : 0);
@@ -5434,13 +5532,14 @@ function ExploreView({ navigate }) {
           })}
         </div>
 
-        {followingFeed.length > 0 && (
+        {sponsoredNow.length > 0 && (
           <div className="mb-6">
-            <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><TrendingUp size={13} /> New from shops you follow</p>
+            <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><Megaphone size={13} /> Sponsored</p>
             <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4" style={{ scrollbarWidth: "none" }}>
-              {followingFeed.map((pr) => (
-                <div key={pr.id} className="w-40 shrink-0">
-                  <ProductCard product={pr} />
+              {sponsoredNow.map(({ campaign, product: pr }) => (
+                <div key={campaign.id} className="w-40 shrink-0">
+                  <ProductCard product={pr} sponsored />
+                  {campaign.tagline && <p className="cs-t10 text-stone-500 mt-1 truncate">{campaign.tagline}</p>}
                 </div>
               ))}
             </div>
@@ -6832,7 +6931,7 @@ function ShopProfileView({ shopId, navigate }) {
           )}
         </div>
 
-        <div className="flex items-center gap-2 mt-4">
+        <div className="flex items-center gap-2 flex-wrap mt-4">
           <FavoriteHeart active={isFav} count={shop.favoriteCount || 0} onToggle={() => toggleFavorite("shop", shop)} size="lg" />
           <button onClick={handleShare} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
             <Share2 size={15} /> Share{shop.shareCount > 0 ? ` · ${shop.shareCount}` : ""}
@@ -6863,6 +6962,11 @@ function ShopProfileView({ shopId, navigate }) {
           {isOwner && (
             <button onClick={() => navigate({ screen: "orders", tab: "inventory" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
               <Boxes size={15} /> Inventory
+            </button>
+          )}
+          {isOwner && (
+            <button onClick={() => navigate({ screen: "ads" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+              <Megaphone size={15} /> Sponsored Ads
             </button>
           )}
           {isOwner && (
@@ -7726,6 +7830,28 @@ function ProductEditRow({ product, shop, onEditDetails }) {
               className="w-full mt-2 border border-stone-200 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-emerald-700"
             />
           )}
+          <div className="mt-3 pt-3 border-t border-stone-100 flex flex-col gap-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-stone-700">Auto out-of-stock banner</p>
+                <p className="cs-t10 text-stone-400">When this listing is linked to an inventory item, follow its stock level automatically.</p>
+              </div>
+              <ToggleSwitch
+                checked={product.autoStockBanner !== false}
+                onChange={(v) => updateProduct(shop.id, product.id, { autoStockBanner: v })}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-stone-700">Show price on card</p>
+                <p className="cs-t10 text-stone-400">Turn off to hide the price on browse cards — shoppers still see it if they open the listing.</p>
+              </div>
+              <ToggleSwitch
+                checked={!product.hidePrice}
+                onChange={(v) => updateProduct(shop.id, product.id, { hidePrice: !v })}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -9253,6 +9379,406 @@ function CheckoutScreen({ navigate, tier, billing }) {
   );
 }
 
+/* ============================================================================
+   SECTION 24C: SPONSORED ADS — a small self-serve ad manager, styled after
+   the familiar "campaign → ad set → ad → review" flow of the big ad
+   platforms. A shop pays a flat rate to feature one listing in the homepage's
+   Sponsored rail for a fixed real-world window; payment is a fake test-mode
+   card, same honesty convention as the rest of checkout in this app.
+============================================================================ */
+const AD_OBJECTIVES = [
+  { id: "reach", label: "Reach more shoppers", icon: Eye, blurb: "Show this listing to more people browsing nearby." },
+  { id: "messages", label: "Get more messages", icon: MessageCircle, blurb: "Put this listing in front of shoppers likely to reach out." },
+  { id: "sales", label: "Sell it faster", icon: Zap, blurb: "Prioritize shoppers who are ready to buy this week." },
+];
+
+// A countdown like "18h left" / "3d left", or "Ending soon" once under a
+// minute — used anywhere an active campaign's remaining time is shown.
+function sponsorCountdown(endsAt, now = Date.now()) {
+  const ms = endsAt - now;
+  if (ms <= 0) return "Ended";
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return mins <= 1 ? "Ending soon" : `${mins}m left`;
+  const hours = Math.round(ms / 3600000);
+  if (hours < 48) return `${hours}h left`;
+  return `${Math.round(hours / 24)}d left`;
+}
+
+// Fake credit-card entry, same TEST MODE honesty convention as the rest of
+// checkout in this app — nothing here touches a real payment processor.
+function FakeCardModal({ open, amount, onClose, onPay }) {
+  const [name, setName] = useState("");
+  const [number, setNumber] = useState("");
+  const [exp, setExp] = useState("");
+  const [cvc, setCvc] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setName("");
+    setNumber("");
+    setExp("");
+    setCvc("");
+    setError("");
+    setSubmitting(false);
+  }, [open]);
+
+  const digits = number.replace(/\D/g, "").slice(0, 16);
+  const formattedNumber = digits.replace(/(.{4})(?=.)/g, "$1 ");
+  const expDigits = exp.replace(/\D/g, "").slice(0, 4);
+  const formattedExp = expDigits.length > 2 ? `${expDigits.slice(0, 2)}/${expDigits.slice(2)}` : expDigits;
+  const expValid = expDigits.length === 4 && Number(expDigits.slice(0, 2)) >= 1 && Number(expDigits.slice(0, 2)) <= 12;
+  const valid = name.trim().length > 1 && digits.length >= 15 && expValid && cvc.length >= 3;
+
+  const submit = () => {
+    if (!valid) {
+      setError("Check your card details — every field is required.");
+      return;
+    }
+    setError("");
+    setSubmitting(true);
+    // Simulated processing delay, same pattern as the phone-verification
+    // "send code" flow elsewhere in checkout — nothing is actually charged.
+    setTimeout(() => {
+      onPay({ last4: digits.slice(-4) });
+    }, 700);
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="card-modal-title">
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 id="card-modal-title" className="font-bold text-lg text-stone-800" style={displayFont}>Payment</h2>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-600" aria-label="Close">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2 mb-4 flex items-center gap-2">
+          <AlertCircle size={14} className="text-amber-700 shrink-0" />
+          <p className="text-xs font-semibold text-amber-900">TEST MODE — any card number works, nothing is charged.</p>
+        </div>
+        <label className="block mb-3">
+          <span className="block text-xs font-semibold text-stone-500 mb-1">Name on card</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
+        </label>
+        <label className="block mb-3">
+          <span className="block text-xs font-semibold text-stone-500 mb-1">Card number</span>
+          <input
+            value={formattedNumber}
+            onChange={(e) => setNumber(e.target.value)}
+            placeholder="4242 4242 4242 4242"
+            inputMode="numeric"
+            className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700 tracking-wider"
+          />
+        </label>
+        <div className="flex gap-3">
+          <label className="flex-1 block">
+            <span className="block text-xs font-semibold text-stone-500 mb-1">Expiry (MM/YY)</span>
+            <input value={formattedExp} onChange={(e) => setExp(e.target.value)} placeholder="12/29" inputMode="numeric" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
+          </label>
+          <label className="w-24 block">
+            <span className="block text-xs font-semibold text-stone-500 mb-1">CVC</span>
+            <input value={cvc} onChange={(e) => setCvc(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="123" inputMode="numeric" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
+          </label>
+        </div>
+        {error && <p className="text-xs text-rose-600 mt-3">{error}</p>}
+        <button
+          onClick={submit}
+          disabled={submitting}
+          className="w-full mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {submitting && <Loader2 size={16} className="animate-spin" />}
+          {submitting ? "Processing…" : `Pay ${formatMoney(amount)} (test mode)`}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// The 4-step wizard: Campaign (objective) → Ad set (duration/placement) →
+// Ad (optional tagline + live preview) → Review & pay. Deliberately modeled
+// on the familiar shape of the big ad platforms' campaign builders so it
+// feels familiar, without pretending to do real audience targeting.
+function SponsorWizard({ shop, product, onClose, onDone }) {
+  const { createSponsorCampaign, showToast } = useApp();
+  const [state, setState] = useState({ step: 1, objective: "reach", rateId: "daily", tagline: "" });
+  const [payOpen, setPayOpen] = useState(false);
+  const rate = sponsorRate(state.rateId);
+  const STEPS = ["Campaign", "Ad set", "Ad", "Review"];
+
+  const goStep = (n) => setState((s) => ({ ...s, step: Math.min(4, Math.max(1, n)) }));
+
+  const handlePaid = async ({ last4 }) => {
+    await createSponsorCampaign({
+      shopId: shop.id,
+      productId: product.id,
+      objective: state.objective,
+      rateId: state.rateId,
+      tagline: state.tagline,
+      cardLast4: last4,
+    });
+    setPayOpen(false);
+    showToast(`Sponsored — live now for ${rate.label.toLowerCase()}`);
+    onDone();
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-lg mx-auto p-4">
+        <button onClick={onClose} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+          <ArrowLeft size={15} /> Cancel
+        </button>
+
+        <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+          {STEPS.map((label, i) => (
+            <span
+              key={label}
+              className={`cs-t10 font-bold px-2 py-1 rounded-full ${
+                i + 1 === state.step ? "bg-emerald-800 text-white" : i + 1 < state.step ? "bg-emerald-50 text-emerald-700" : "bg-stone-100 text-stone-400"
+              }`}
+            >
+              {i + 1}. {label}
+            </span>
+          ))}
+        </div>
+        <p className="cs-t11 text-stone-400 mb-5">Step {state.step} of {STEPS.length}</p>
+
+        {state.step === 1 && (
+          <div>
+            <p className="font-bold text-stone-800 mb-1" style={displayFont}>What's the goal for this ad?</p>
+            <p className="text-sm text-stone-500 mb-4">Sponsoring "{product.name}" — this just changes how the campaign is described, delivery works the same either way.</p>
+            <div className="flex flex-col gap-2">
+              {AD_OBJECTIVES.map((o) => (
+                <button
+                  key={o.id}
+                  onClick={() => setState((s) => ({ ...s, objective: o.id }))}
+                  className={`text-left border rounded-xl p-3 flex items-start gap-3 transition ${state.objective === o.id ? "border-emerald-700 bg-emerald-50" : "border-stone-200"}`}
+                >
+                  <span className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${state.objective === o.id ? "bg-emerald-800 text-white" : "bg-stone-100 text-stone-500"}`}>
+                    <o.icon size={16} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block font-semibold text-sm text-stone-800">{o.label}</span>
+                    <span className="block cs-t11 text-stone-500 mt-0.5">{o.blurb}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {state.step === 2 && (
+          <div>
+            <p className="font-bold text-stone-800 mb-1" style={displayFont}>Ad set</p>
+            <p className="text-sm text-stone-500 mb-4">Choose how long this listing stays in the Sponsored rail.</p>
+            <div className="border border-stone-200 rounded-xl p-3 flex items-center gap-3 mb-4">
+              <ProductImage src={product.image} photoId={product.photoId} artKey={product.art} category={product.category} emoji={product.emoji} alt="" className="w-11 h-11 shrink-0" rounded="rounded-lg" showCredit={false} />
+              <div className="min-w-0">
+                <p className="font-semibold text-sm text-stone-800 truncate">{product.name}</p>
+                <p className="cs-t11 text-stone-400">{formatPrice(product.price, product.priceUnit)}</p>
+              </div>
+            </div>
+            <p className="cs-t11 font-bold text-stone-400 uppercase mb-2">Placement</p>
+            <div className="border border-stone-200 rounded-xl p-3 mb-4 flex items-center gap-2 text-sm text-stone-600">
+              <Home size={15} className="text-emerald-700 shrink-0" /> Sponsored rail, top of the homepage — automatic, the only placement available
+            </div>
+            <p className="cs-t11 font-bold text-stone-400 uppercase mb-2">Duration</p>
+            <div className="flex flex-col gap-2">
+              {SPONSOR_RATES.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => setState((s) => ({ ...s, rateId: r.id }))}
+                  className={`flex items-center justify-between border rounded-xl px-3.5 py-2.5 transition ${state.rateId === r.id ? "border-emerald-700 bg-emerald-50" : "border-stone-200"}`}
+                >
+                  <span className="text-sm font-semibold text-stone-800">{r.label}</span>
+                  <span className="text-sm font-bold text-stone-900">
+                    {formatMoney(r.price)} <span className="cs-t10 font-normal text-stone-400">({formatMoney(r.price / r.days)}/day)</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {state.step === 3 && (
+          <div>
+            <p className="font-bold text-stone-800 mb-1" style={displayFont}>Ad</p>
+            <p className="text-sm text-stone-500 mb-4">Optionally add a short line that shows underneath the listing while it's sponsored.</p>
+            <TextField
+              value={state.tagline}
+              onChange={(v) => setState((s) => ({ ...s, tagline: v.slice(0, 60) }))}
+              placeholder="e.g. Fresh restock today!"
+              label="Sponsored tagline (optional)"
+              className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700"
+            />
+            <p className="cs-t10 text-stone-400 mt-1 mb-4">{(state.tagline || "").length}/60</p>
+            <p className="cs-t11 font-bold text-stone-400 uppercase mb-2">Preview — how it'll look in the Sponsored rail</p>
+            <div className="w-40">
+              <ProductCard product={product} sponsored />
+              {state.tagline && <p className="cs-t10 text-stone-500 mt-1">{state.tagline}</p>}
+            </div>
+          </div>
+        )}
+
+        {state.step === 4 && (
+          <div>
+            <p className="font-bold text-stone-800 mb-1" style={displayFont}>Review & pay</p>
+            <p className="text-sm text-stone-500 mb-4">Your ad goes live the moment payment is confirmed.</p>
+            <div className="bg-white border border-stone-200 rounded-2xl p-4 mb-4">
+              <div className="flex items-center justify-between mb-1.5 gap-3">
+                <span className="text-sm text-stone-600 shrink-0">Listing</span>
+                <span className="text-sm font-semibold text-stone-800 truncate text-right">{product.name}</span>
+              </div>
+              <div className="flex items-center justify-between mb-1.5 gap-3">
+                <span className="text-sm text-stone-600 shrink-0">Goal</span>
+                <span className="text-sm font-semibold text-stone-800 text-right">{AD_OBJECTIVES.find((o) => o.id === state.objective)?.label}</span>
+              </div>
+              <div className="flex items-center justify-between mb-1.5 gap-3">
+                <span className="text-sm text-stone-600 shrink-0">Duration</span>
+                <span className="text-sm font-semibold text-stone-800 text-right">{rate.label}</span>
+              </div>
+              <div className="border-t border-stone-100 mt-2 pt-2 flex items-center justify-between">
+                <span className="text-sm font-bold text-stone-900">Total</span>
+                <span className="text-sm font-bold text-stone-900">{formatMoney(rate.price)}</span>
+              </div>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 mb-4 flex items-center gap-2">
+              <AlertCircle size={15} className="text-amber-700 shrink-0" />
+              <p className="text-xs font-semibold text-amber-900">TEST MODE — this uses a fake payment card, no real charge is made.</p>
+            </div>
+            <button onClick={() => setPayOpen(true)} className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl">
+              Enter payment — {formatMoney(rate.price)}
+            </button>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 mt-6">
+          {state.step > 1 && (
+            <button onClick={() => goStep(state.step - 1)} className="px-4 py-2.5 rounded-xl text-sm font-semibold text-stone-600 border border-stone-200">
+              Back
+            </button>
+          )}
+          {state.step < 4 && (
+            <button onClick={() => goStep(state.step + 1)} className="flex-1 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl text-sm">
+              Next
+            </button>
+          )}
+        </div>
+      </div>
+
+      <FakeCardModal open={payOpen} amount={rate.price} onClose={() => setPayOpen(false)} onPay={handlePaid} />
+    </div>
+  );
+}
+
+function AdsScreen({ navigate }) {
+  const { me, shopsById, products, sponsorships, cancelSponsorCampaign, showToast } = useApp();
+  const shop = me?.shopId ? shopsById[me.shopId] : null;
+  const shopProducts = useMemo(() => products.filter((p) => p.shopId === shop?.id), [products, shop?.id]);
+  const [wizardProductId, setWizardProductId] = useState(null);
+
+  if (!me.isVendor || !me.shopId) {
+    return (
+      <EmptyState
+        icon={Store}
+        title="No storefront yet"
+        body="Become a vendor first to sponsor a listing."
+        action={<button onClick={() => navigate({ screen: "store" })} className="text-sm font-semibold text-emerald-800">Start selling</button>}
+      />
+    );
+  }
+  if (!shop) return <LoadingScreen inline />;
+
+  const wizardProduct = wizardProductId ? shopProducts.find((p) => p.id === wizardProductId) : null;
+  if (wizardProduct) {
+    return (
+      <SponsorWizard
+        shop={shop}
+        product={wizardProduct}
+        onClose={() => setWizardProductId(null)}
+        onDone={() => setWizardProductId(null)}
+      />
+    );
+  }
+
+  const myCampaigns = sponsorships.filter((c) => c.shopId === shop.id).sort((a, b) => b.createdAt - a.createdAt);
+  const activeByProduct = {};
+  myCampaigns.forEach((c) => {
+    if (sponsorIsLive(c)) activeByProduct[c.productId] = c;
+  });
+
+  const handleStop = async (id) => {
+    await cancelSponsorCampaign(id);
+    showToast("Campaign stopped");
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-2xl mx-auto p-4">
+        <button onClick={() => navigate({ screen: "store" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+          <ArrowLeft size={15} /> Back to My Store
+        </button>
+        <div className="flex items-center gap-2 text-emerald-800 font-bold text-lg mb-1" style={displayFont}>
+          <Megaphone size={20} /> Sponsored Ads
+        </div>
+        <p className="text-sm text-stone-500 mb-5">Feature one of your listings in the Sponsored rail at the top of the homepage for a set number of days.</p>
+
+        <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Your listings</p>
+        <div className="flex flex-col gap-2 mb-6">
+          {shopProducts.map((pr) => {
+            const live = activeByProduct[pr.id];
+            return (
+              <div key={pr.id} className="border border-stone-200 rounded-xl p-3 flex items-center gap-3">
+                <ProductImage src={pr.image} photoId={pr.photoId} artKey={pr.art} category={pr.category} emoji={pr.emoji} alt="" className="w-11 h-11 shrink-0" rounded="rounded-lg" showCredit={false} />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-stone-800 truncate">{pr.name}</p>
+                  {live ? (
+                    <p className="cs-t11 text-emerald-700 font-semibold flex items-center gap-1"><Megaphone size={11} /> Sponsored — {sponsorCountdown(live.endsAt)}</p>
+                  ) : (
+                    <p className="cs-t11 text-stone-400">{formatPrice(pr.price, pr.priceUnit)}</p>
+                  )}
+                </div>
+                {live ? (
+                  <button onClick={() => handleStop(live.id)} className="cs-t11 font-semibold text-rose-600 shrink-0">Stop</button>
+                ) : (
+                  <button onClick={() => setWizardProductId(pr.id)} className="cs-t11 font-semibold text-emerald-800 shrink-0 flex items-center gap-1">
+                    <Megaphone size={12} /> Sponsor
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {shopProducts.length === 0 && <p className="text-sm text-stone-400">Add a listing first — then you can sponsor it.</p>}
+        </div>
+
+        {myCampaigns.length > 0 && (
+          <>
+            <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Campaign history</p>
+            <div className="flex flex-col gap-2">
+              {myCampaigns.map((c) => {
+                const pr = products.find((p) => p.id === c.productId);
+                const live = sponsorIsLive(c);
+                return (
+                  <div key={c.id} className="border border-stone-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-stone-800 truncate">{pr?.name || "Listing removed"}</p>
+                      <p className="cs-t11 text-stone-400">{sponsorRate(c.rateId).label} · {formatMoney(c.amount)} · card •••• {c.cardLast4}</p>
+                    </div>
+                    <span className={`cs-t10 font-bold px-2 py-0.5 rounded-full shrink-0 ${live ? "bg-emerald-50 text-emerald-700" : c.status === "cancelled" ? "bg-stone-100 text-stone-500" : "bg-stone-100 text-stone-400"}`}>
+                      {live ? "Active" : c.status === "cancelled" ? "Stopped" : "Ended"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Standalone version of the "Places" list that also lives inside the account
 // modal's Places tab — promoted to its own route so it's reachable straight
 // from the desktop sidebar instead of only through the account menu.
@@ -9919,6 +10445,37 @@ function bucketSeries(events, granularity, sinceMs, nowMs) {
   });
   return buckets;
 }
+// Same even-slice bucketing as bucketSeries, but sums a numeric value per
+// item (e.g. order revenue) instead of just counting — used for the sales
+// chart. getTime/getValue let it work on plain order records, not just
+// analytics_events rows.
+function bucketValueSeries(items, granularity, sinceMs, nowMs, getTime, getValue) {
+  const stepMs = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 }[granularity] || 86400000;
+  const bucketCount = Math.max(1, Math.ceil((nowMs - sinceMs) / stepMs));
+  const buckets = Array.from({ length: bucketCount }, (_, i) => {
+    const at = sinceMs + i * stepMs;
+    return { key: i, label: bucketLabelFor(at, granularity), value: 0, at };
+  });
+  items.forEach((it) => {
+    const t = getTime(it);
+    if (t == null) return;
+    const idx = clamp(Math.floor((t - sinceMs) / stepMs), 0, bucketCount - 1);
+    buckets[idx].value += getValue(it) || 0;
+  });
+  return buckets;
+}
+// Dollar total for one order — sum of each line item's price × qty.
+function orderRevenue(order) {
+  return (order?.items || []).reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
+}
+// A stable per-shopper identity for an order even when the shopper wasn't
+// signed in (falls back to the typed customer name) — good enough for
+// new-vs-returning and repeat-purchase analytics, not a hard identity system.
+function orderCustomerKey(order) {
+  if (order?.customerUserId) return order.customerUserId;
+  const name = (order?.customerName || "").trim().toLowerCase();
+  return name ? `name:${name}` : "unknown";
+}
 async function fetchAnalyticsEvents({ types, shopId, sinceMs, limit = 4000 }) {
   try {
     let q = supabase
@@ -10361,9 +10918,20 @@ function useInventory(shopId, { onStockChange } = {}) {
       if (norm.lowStockThreshold !== undefined) {
         norm.lowStockThreshold = norm.lowStockThreshold === "" || norm.lowStockThreshold == null ? null : Number(norm.lowStockThreshold);
       }
-      await persistItems(itemsRef.current.map((it) => (it.id === id ? { ...it, ...norm, updatedAt: Date.now() } : it)));
+      const prev = itemsRef.current.find((it) => it.id === id);
+      const next = itemsRef.current.map((it) => (it.id === id ? { ...it, ...norm, updatedAt: Date.now() } : it));
+      await persistItems(next);
+      // A vendor typing a new quantity straight into the edit form (rather
+      // than using the +/- stepper) is just as much a real stock change —
+      // without this, the Sold Out banner / low-stock alerts only ever fired
+      // for stepper taps and silently missed every quantity someone typed.
+      if (prev && norm.qty !== undefined && norm.qty !== prev.qty) {
+        const updated = next.find((it) => it.id === id);
+        onStockChange?.(updated, prev.qty, norm.qty);
+      }
+      return next.find((it) => it.id === id);
     },
-    [persistItems]
+    [persistItems, onStockChange]
   );
 
   const removeItem = useCallback(
@@ -11844,7 +12412,10 @@ function OrdersScreen({ navigate, initialTab }) {
       if (product?.showStock) {
         updateProduct(shop.id, item.linkedProductId, { stockQty: nextQty });
       }
-      if (!shop.autoOutOfStock) return;
+      // A listing can opt out of the shop-wide auto-banner behavior (see the
+      // "Auto out-of-stock banner" toggle on the listing itself) — that
+      // listing's Sold Out banner is then only ever set/cleared by hand.
+      if (!shop.autoOutOfStock || product?.autoStockBanner === false) return;
       if (prevQty > 0 && nextQty <= 0) {
         updateProduct(shop.id, item.linkedProductId, { bannerId: "sold_out", status: "sold_out" });
       } else if (prevQty <= 0 && nextQty > 0) {
@@ -12195,11 +12766,12 @@ function OrdersScreen({ navigate, initialTab }) {
 
 
 function VendorDashboard({ navigate }) {
-  const { me, shopsById, shops, products, conversations, showToast } = useApp();
+  const { me, shopsById, shops, products, conversations, showToast, sponsorships } = useApp();
   const shop = me?.shopId ? shopsById[me.shopId] : null;
   const { reviews: shopReviews, avgRating, count } = useReviews("shop", shop?.id || "none");
   const premium = isPremiumPlan(me);
   const mailing = useMailingList(shop?.ownerId || null);
+  const shopOrders = useOrders(shop?.id || null);
 
   const [rangeId, setRangeId] = useState("days");
   const range = DASHBOARD_RANGES.find((r) => r.id === rangeId) || DASHBOARD_RANGES[1];
@@ -12442,6 +13014,136 @@ function VendorDashboard({ navigate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [digestEvents, publishedReviews, trendingSearches]);
 
+  /* -------------------------------------------------------------------
+     SALES, CUSTOMERS & SPONSORED-ADS ANALYTICS
+     Built from the shop's own real order history (all-time, loaded once
+     via useOrders) and its real sponsorship campaigns — nothing simulated
+     here either. "Sales" = completed orders only, timed off completedAt
+     (falling back to createdAt for older records that predate that field
+     being reliably set). New-vs-returning and CAC/LTV are computed from
+     every completed order ever placed with this shop, not just the ones
+     inside the selected range, so a customer's very first purchase is
+     correctly recognized as "new" even if it happened outside the window.
+  ------------------------------------------------------------------- */
+  const allOrders = shopOrders.orders || [];
+  const completedOrders = useMemo(() => allOrders.filter((o) => o.completed), [allOrders]);
+  const ordersInRange = useMemo(
+    () => completedOrders.filter((o) => {
+      const t = o.completedAt || o.createdAt || 0;
+      return t >= sinceMs && t <= nowMs;
+    }),
+    [completedOrders, sinceMs, nowMs]
+  );
+
+  const totalRevenue = useMemo(() => ordersInRange.reduce((sum, o) => sum + orderRevenue(o), 0), [ordersInRange]);
+  const orderCountInRange = ordersInRange.length;
+  const aov = orderCountInRange ? totalRevenue / orderCountInRange : 0;
+
+  const revenueDelta = useMemo(() => {
+    const mid = sinceMs + range.ms / 2;
+    let firstSum = 0;
+    let secondSum = 0;
+    ordersInRange.forEach((o) => {
+      const t = o.completedAt || o.createdAt || 0;
+      if (t < mid) firstSum += orderRevenue(o);
+      else secondSum += orderRevenue(o);
+    });
+    if (!firstSum) return secondSum > 0 ? 100 : null;
+    return Math.round(((secondSum - firstSum) / firstSum) * 100);
+  }, [ordersInRange, sinceMs, range.ms]);
+
+  const salesSeries = useMemo(
+    () => bucketValueSeries(ordersInRange, range.granularity, sinceMs, nowMs, (o) => o.completedAt || o.createdAt || null, orderRevenue),
+    [ordersInRange, range, sinceMs, nowMs]
+  );
+
+  const bestSellers = useMemo(() => {
+    const counts = new Map();
+    ordersInRange.forEach((o) => {
+      (o.items || []).forEach((it) => {
+        const key = it.productId || it.inventoryItemId || it.name;
+        if (!key) return;
+        const prev = counts.get(key) || { name: it.name || "Item", qty: 0, revenue: 0 };
+        prev.qty += Number(it.qty) || 0;
+        prev.revenue += (Number(it.price) || 0) * (Number(it.qty) || 0);
+        counts.set(key, prev);
+      });
+    });
+    return [...counts.values()].sort((a, b) => b.qty - a.qty).slice(0, 5);
+  }, [ordersInRange]);
+
+  // Every unique customer's very first-ever completed order, all-time —
+  // the anchor for deciding "new" vs "returning" inside any range.
+  const customerFirstPurchase = useMemo(() => {
+    const sorted = [...completedOrders].sort((a, b) => (a.completedAt || a.createdAt || 0) - (b.completedAt || b.createdAt || 0));
+    const map = new Map();
+    sorted.forEach((o) => {
+      const key = orderCustomerKey(o);
+      if (!map.has(key)) map.set(key, o.completedAt || o.createdAt || 0);
+    });
+    return map;
+  }, [completedOrders]);
+
+  const customerBreakdown = useMemo(() => {
+    const seen = new Set();
+    let newCount = 0;
+    let returningCount = 0;
+    ordersInRange.forEach((o) => {
+      const key = orderCustomerKey(o);
+      if (seen.has(key)) return;
+      seen.add(key);
+      const firstEver = customerFirstPurchase.get(key);
+      if (firstEver != null && firstEver >= sinceMs) newCount += 1;
+      else returningCount += 1;
+    });
+    return { newCount, returningCount, total: newCount + returningCount };
+  }, [ordersInRange, customerFirstPurchase, sinceMs]);
+
+  // All-time repeat-purchase rate — the share of every customer who has
+  // ever bought from this shop who came back and bought a second time.
+  const repeatStats2 = useMemo(() => {
+    const byCustomer = new Map();
+    completedOrders.forEach((o) => {
+      const key = orderCustomerKey(o);
+      byCustomer.set(key, (byCustomer.get(key) || 0) + 1);
+    });
+    const total = byCustomer.size;
+    const repeat = [...byCustomer.values()].filter((n) => n > 1).length;
+    return { total, repeat, pct: total ? Math.round((repeat / total) * 100) : 0 };
+  }, [completedOrders]);
+
+  // Average all-time revenue per unique customer — a simple, honest LTV
+  // proxy (not a cohort-decayed model, just total spend ÷ headcount).
+  const avgCustomerLTV = useMemo(() => {
+    const byCustomer = new Map();
+    completedOrders.forEach((o) => {
+      const key = orderCustomerKey(o);
+      byCustomer.set(key, (byCustomer.get(key) || 0) + orderRevenue(o));
+    });
+    const total = byCustomer.size;
+    if (!total) return 0;
+    return [...byCustomer.values()].reduce((a, b) => a + b, 0) / total;
+  }, [completedOrders]);
+
+  const myCampaigns = useMemo(() => (sponsorships || []).filter((c) => c.shopId === shop?.id), [sponsorships, shop]);
+  const campaignsInRange = useMemo(
+    () => myCampaigns.filter((c) => {
+      const t = c.startedAt || c.createdAt || 0;
+      return t >= sinceMs && t <= nowMs;
+    }),
+    [myCampaigns, sinceMs, nowMs]
+  );
+  const adSpend = useMemo(() => campaignsInRange.reduce((sum, c) => sum + (Number(c.amount) || 0), 0), [campaignsInRange]);
+  const adSpendAllTime = useMemo(() => myCampaigns.reduce((sum, c) => sum + (Number(c.amount) || 0), 0), [myCampaigns]);
+  const activeCampaignsNow = useMemo(() => myCampaigns.filter((c) => sponsorIsLive(c, nowMs)), [myCampaigns, nowMs]);
+  // Blended metrics, not last-click attribution — CropSwap doesn't track
+  // ad-click-to-purchase paths, so this is spend vs. overall shop
+  // performance in the same window, same honest caveat the funnel/heatmap
+  // panels already carry.
+  const blendedRoas = adSpend > 0 ? totalRevenue / adSpend : null;
+  const blendedCac = adSpend > 0 && customerBreakdown.newCount > 0 ? adSpend / customerBreakdown.newCount : null;
+  const ltvToCac = blendedCac && avgCustomerLTV ? avgCustomerLTV / blendedCac : null;
+
   if (!shop) {
     return (
       <EmptyState
@@ -12574,6 +13276,121 @@ function VendorDashboard({ navigate }) {
             info="The share of your viewers this range who came back and viewed you again on a different day — a loyalty signal."
           />
         </div>
+
+        <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><DollarSign size={13} /> Sales</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <DashStat
+            icon={DollarSign}
+            tint="emerald"
+            label="Revenue"
+            value={formatMoney(totalRevenue)}
+            delta={revenueDelta}
+            info="Total from completed orders in this date range, based on each order's line-item prices and quantities."
+          />
+          <DashStat
+            icon={ShoppingBag}
+            tint="blue"
+            label="Orders"
+            value={orderCountInRange.toLocaleString()}
+            info="Completed orders in this date range. Orders still open or awaiting pickup aren't counted until they're marked done."
+          />
+          <DashStat
+            icon={Receipt}
+            tint="violet"
+            label="Avg order value"
+            value={formatMoney(aov)}
+            info="Revenue ÷ orders in this range — how much a typical completed order is worth."
+          />
+          <DashStat
+            icon={Award}
+            tint="amber"
+            label="Best seller"
+            value={bestSellers[0] ? bestSellers[0].name : "—"}
+            sub={bestSellers[0] ? `${bestSellers[0].qty} sold · ${formatMoney(bestSellers[0].revenue)}` : "No sales yet"}
+            info="Your top-selling item by quantity sold, in this date range."
+          />
+        </div>
+
+        <DashPanel title="Sales over time" icon={TrendingUp} className="mb-4" info="Revenue from completed orders, plotted across the date range you picked above.">
+          {salesSeries.every((b) => b.value === 0) ? (
+            <p className="text-sm text-stone-400 py-6 text-center">No completed sales in this range yet.</p>
+          ) : (
+            <div style={{ width: "100%", height: 190 }}>
+              <ResponsiveContainer>
+                <BarChart data={salesSeries}>
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(salesSeries.length / 8))} />
+                  <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={40} tickFormatter={(v) => `$${v}`} />
+                  <Tooltip formatter={(v) => formatMoney(v)} />
+                  <Bar dataKey="value" fill="#059669" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </DashPanel>
+
+        <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <DashPanel title="Best sellers" icon={Award} info="Your top 5 items by units sold in this date range, with the revenue each one brought in.">
+            {bestSellers.length === 0 ? (
+              <p className="text-sm text-stone-400 py-4 text-center">No completed sales in this range yet.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {bestSellers.map((p, i) => (
+                  <div key={p.name + i} className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2 flex-1 truncate">
+                      <span className="cs-t11 text-stone-400 w-4">{i + 1}</span>
+                      <span className="truncate">{p.name}</span>
+                    </span>
+                    <span className="cs-t11 font-mono text-stone-600 shrink-0">{p.qty} sold · {formatMoney(p.revenue)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </DashPanel>
+
+          <DashPanel title="New vs. returning customers" icon={UserCheck} info="A customer counts as 'new' the first time their very first-ever completed order with you falls inside this date range — otherwise they're 'returning'. Based on every completed order ever, not just this range.">
+            <div className="grid grid-cols-2 gap-2.5 mb-3">
+              <DigestChip tint="blue" icon={UserPlus} label="New customers" value={customerBreakdown.newCount} />
+              <DigestChip tint="teal" icon={Repeat} label="Returning" value={customerBreakdown.returningCount} />
+            </div>
+            {customerBreakdown.total > 0 && (
+              <div className="h-2 rounded-full bg-stone-100 overflow-hidden flex mb-3">
+                <div className="h-full bg-blue-500" style={{ width: `${Math.round((customerBreakdown.newCount / customerBreakdown.total) * 100)}%` }} />
+                <div className="h-full bg-teal-500" style={{ width: `${Math.round((customerBreakdown.returningCount / customerBreakdown.total) * 100)}%` }} />
+              </div>
+            )}
+            <p className="text-sm text-stone-600">
+              All-time repeat-purchase rate: <span className="font-bold text-stone-900">{repeatStats2.pct}%</span>
+              <span className="cs-t11 text-stone-400"> ({repeatStats2.repeat} of {repeatStats2.total} customers have bought more than once)</span>
+            </p>
+            <p className="text-sm text-stone-600 mt-1">
+              Avg. lifetime value per customer: <span className="font-bold text-stone-900">{formatMoney(avgCustomerLTV)}</span>
+            </p>
+          </DashPanel>
+        </div>
+
+        <DashPanel
+          title="Sponsored ads performance"
+          icon={Megaphone}
+          className="mb-4"
+          info="Blended performance for your Sponsored Ads spend — not last-click attribution (CropSwap doesn't track ad-click-to-purchase paths), just ad spend measured against overall shop performance in the same window. Directionally useful, not a precise per-ad number."
+          right={
+            <button onClick={() => navigate({ screen: "ads" })} className="text-xs font-bold text-emerald-800 shrink-0">
+              Manage ads →
+            </button>
+          }
+        >
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 mb-3">
+            <DigestChip tint="violet" icon={Megaphone} label="Active campaigns" value={activeCampaignsNow.length} />
+            <DigestChip tint="amber" icon={DollarSign} label="Ad spend (range)" value={formatMoney(adSpend)} />
+            <DigestChip tint="emerald" icon={Percent} label="Blended ROAS" value={blendedRoas != null ? `${blendedRoas.toFixed(2)}×` : "—"} />
+            <DigestChip tint="rose" icon={UserPlus} label="Blended CAC" value={blendedCac != null ? formatMoney(blendedCac) : "—"} />
+          </div>
+          <p className="text-sm text-stone-600">
+            LTV : CAC ratio: <span className="font-bold text-stone-900">{ltvToCac != null ? `${ltvToCac.toFixed(1)}:1` : "—"}</span>
+            <span className="cs-t11 text-stone-400"> — {ltvToCac != null ? (ltvToCac >= 3 ? "healthy, a customer is worth several times what they cost to acquire" : "worth watching — spend is close to what a customer is worth") : "not enough ad spend + new customers yet to calculate"}</span>
+          </p>
+          <p className="cs-t11 text-stone-400 mt-2">Ad spend all-time: {formatMoney(adSpendAllTime)} across {myCampaigns.length} campaign{myCampaigns.length === 1 ? "" : "s"}.</p>
+        </DashPanel>
 
         <DashPanel title="This week's digest" icon={Calendar} className="mb-4" info="A data-rich recap of the last 7 days vs. the 7 days before — views, favorites, messages, reviews, whichever metric moved the most, and the top search terms shoppers are typing right now.">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
@@ -13177,7 +13994,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
    one. Centralizing the list here means the sidebar, bottom nav, and every
    "go to X" button all get the same gate for free just by calling navigate().
 ============================================================================ */
-const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "dashboard", "store", "storeEditor", "places", "checkout", "orders"]);
+const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "dashboard", "store", "storeEditor", "places", "checkout", "orders", "ads"]);
 const AUTH_REASON_BY_SCREEN = {
   favorites: "see your favorites",
   messages: "send and receive messages",
@@ -13187,6 +14004,7 @@ const AUTH_REASON_BY_SCREEN = {
   places: "save your places",
   checkout: "subscribe to a plan",
   orders: "manage your orders",
+  ads: "sponsor a listing",
 };
 
 // A small card next to whatever the guest just tapped — "Create a free
@@ -13272,6 +14090,7 @@ function RootShell() {
   const helpful = useHelpfulMarks(me);
   const mineReviews = useMyReviews(me);
   const restock = useRestockWatch(me);
+  const sponsor = useSponsorships();
   const photos = usePhotoLibrary();
 
   const viewportHeight = useViewportHeight();
@@ -13550,6 +14369,10 @@ function RootShell() {
     incrementShare,
     purchasePlan,
     cancelPlan,
+    sponsorships: sponsor.list,
+    sponsorshipsLoading: sponsor.loading,
+    createSponsorCampaign: sponsor.createCampaign,
+    cancelSponsorCampaign: sponsor.cancelCampaign,
     notifications: notif.notifications,
     unreadCount: notif.unreadCount,
     markAllRead: notif.markAllRead,
@@ -13671,6 +14494,7 @@ function RootShell() {
             )}
             {route.screen === "dashboard" && <VendorDashboard navigate={navigate} />}
             {route.screen === "orders" && <OrdersScreen navigate={navigate} initialTab={route.tab} />}
+            {route.screen === "ads" && <AdsScreen navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
