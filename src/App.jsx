@@ -8,7 +8,7 @@ import {
   Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
   Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check, ChevronUp,
   AlertTriangle, Image as ImageIcon, Video, PlayCircle,
-  DollarSign, Receipt, Repeat, UserCheck, Percent,
+  DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -3126,7 +3126,7 @@ function useSponsorships() {
   }, []);
 
   const createCampaign = useCallback(
-    async ({ shopId, productId, objective, rateId, tagline, cardLast4 }) => {
+    async ({ shopId, productId, objective, rateId, tagline, cardLast4, paymentType }) => {
       const rate = sponsorRate(rateId);
       const now = Date.now();
       const campaign = {
@@ -3139,6 +3139,7 @@ function useSponsorships() {
         amount: rate.price,
         tagline: (tagline || "").trim().slice(0, 60),
         cardLast4: cardLast4 || "",
+        paymentType: paymentType === "eft" ? "eft" : "card",
         status: "active",
         startedAt: now,
         endsAt: now + rate.days * 86400000,
@@ -5123,7 +5124,7 @@ function BottomNav({ route, navigate }) {
 }
 
 function Sidebar({ route, navigate }) {
-  const { me, exploreView, setExploreView } = useApp();
+  const { me, exploreView, setExploreView, signOut } = useApp();
   const items = [
     { id: "explore", label: "Explore", icon: Home, screen: "explore" },
     { id: "store", label: me?.isVendor ? "My Store" : "Start Selling", icon: Store, screen: "store" },
@@ -5150,25 +5151,41 @@ function Sidebar({ route, navigate }) {
     return true;
   };
   return (
-    <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-stone-200 p-5 gap-1 overflow-y-auto">
+    <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-stone-200 p-5 overflow-y-auto">
       <div className="flex items-center gap-2 text-emerald-800 font-bold text-xl mb-8 px-2" style={displayFont}>
         <Sparkles size={22} /> CropSwap
       </div>
-      {items.map((it) => {
-        const isActive = isItemActive(it);
-        return (
-          <button
-            key={it.id}
-            onClick={() => {
-              if (it.id === "map") setExploreView("map");
-              navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen });
-            }}
-            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
-          >
-            <it.icon size={18} /> {it.label}
-          </button>
-        );
-      })}
+      <nav className="flex-1 flex flex-col gap-1">
+        {items.map((it) => {
+          const isActive = isItemActive(it);
+          return (
+            <button
+              key={it.id}
+              onClick={() => {
+                if (it.id === "map") setExploreView("map");
+                navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen });
+              }}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
+            >
+              <it.icon size={18} /> {it.label}
+            </button>
+          );
+        })}
+      </nav>
+      {/* Pinned footer — sits at the bottom of the sidebar's own scroll area,
+          so it stays put on a tall list of nav items instead of getting
+          swept in with everything else above. */}
+      <div className="flex flex-col gap-1 pt-3 mt-3 border-t border-stone-100 shrink-0">
+        <button
+          onClick={() => navigate({ screen: "plans" })}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition text-stone-500 hover:bg-stone-50"
+        >
+          <Crown size={18} /> My Plan
+        </button>
+        <button onClick={signOut} className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition text-stone-500 hover:bg-stone-50">
+          <LogOut size={18} /> Sign Out
+        </button>
+      </div>
     </aside>
   );
 }
@@ -5563,7 +5580,7 @@ function ExploreView({ navigate }) {
           })}
         </div>
 
-        {sponsoredNow.length > 0 && (
+        {sponsoredNow.length > 0 && view !== "map" && (
           <div className="mb-6">
             <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><Megaphone size={13} /> Sponsored</p>
             <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4" style={{ scrollbarWidth: "none" }}>
@@ -9466,36 +9483,51 @@ function sponsorCountdown(endsAt, now = Date.now()) {
   return `${Math.round(hours / 24)}d left`;
 }
 
-// Fake credit-card entry, same TEST MODE honesty convention as the rest of
-// checkout in this app — nothing here touches a real payment processor.
-function FakeCardModal({ open, amount, onClose, onPay }) {
+/* ============================================================================
+   SECTION 24B2: SAVED PAYMENT METHODS — a small wallet of fake test-mode
+   payment methods (card or bank account/EFT), stored on the user's own
+   profile (me.paymentMethods) so any payment flow in the app — Sponsored
+   Ads today — can reuse one on file instead of re-entering it every time.
+   Same TEST MODE honesty convention as the rest of checkout: nothing here
+   ever touches a real payment processor or moves real money.
+============================================================================ */
+function paymentMethodLabel(m) {
+  if (!m) return "";
+  return m.type === "eft" ? `Bank •••• ${m.last4}` : `Card •••• ${m.last4}`;
+}
+
+// The actual entry form for one new method — used both standalone (Account
+// > Payment methods, always saved) and inside a live payment flow (only
+// saved if the "Save for future payments" toggle is left on).
+function PaymentMethodForm({ onSaved, submitLabel, busyLabel = "Processing…", showSaveToggle = true }) {
+  const { me, updateMe } = useApp();
+  const [type, setType] = useState("card");
   const [name, setName] = useState("");
   const [number, setNumber] = useState("");
   const [exp, setExp] = useState("");
   const [cvc, setCvc] = useState("");
+  const [routing, setRouting] = useState("");
+  const [account, setAccount] = useState("");
+  const [acctType, setAcctType] = useState("checking");
+  const [save, setSave] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    setName("");
-    setNumber("");
-    setExp("");
-    setCvc("");
-    setError("");
-    setSubmitting(false);
-  }, [open]);
-
-  const digits = number.replace(/\D/g, "").slice(0, 16);
-  const formattedNumber = digits.replace(/(.{4})(?=.)/g, "$1 ");
+  const cardDigits = number.replace(/\D/g, "").slice(0, 16);
+  const formattedNumber = cardDigits.replace(/(.{4})(?=.)/g, "$1 ");
   const expDigits = exp.replace(/\D/g, "").slice(0, 4);
   const formattedExp = expDigits.length > 2 ? `${expDigits.slice(0, 2)}/${expDigits.slice(2)}` : expDigits;
   const expValid = expDigits.length === 4 && Number(expDigits.slice(0, 2)) >= 1 && Number(expDigits.slice(0, 2)) <= 12;
-  const valid = name.trim().length > 1 && digits.length >= 15 && expValid && cvc.length >= 3;
+  const routingDigits = routing.replace(/\D/g, "").slice(0, 9);
+  const accountDigits = account.replace(/\D/g, "").slice(0, 17);
+
+  const cardValid = name.trim().length > 1 && cardDigits.length >= 15 && expValid && cvc.length >= 3;
+  const eftValid = name.trim().length > 1 && routingDigits.length === 9 && accountDigits.length >= 4;
+  const valid = type === "card" ? cardValid : eftValid;
 
   const submit = () => {
     if (!valid) {
-      setError("Check your card details — every field is required.");
+      setError(type === "card" ? "Check your card details — every field is required." : "Check your bank details — routing number is 9 digits, account number is required.");
       return;
     }
     setError("");
@@ -9503,56 +9535,288 @@ function FakeCardModal({ open, amount, onClose, onPay }) {
     // Simulated processing delay, same pattern as the phone-verification
     // "send code" flow elsewhere in checkout — nothing is actually charged.
     setTimeout(() => {
-      onPay({ last4: digits.slice(-4) });
+      const method =
+        type === "card"
+          ? { id: uid("pm"), type: "card", name: name.trim(), last4: cardDigits.slice(-4), expiry: formattedExp, createdAt: Date.now() }
+          : { id: uid("pm"), type: "eft", name: name.trim(), last4: accountDigits.slice(-4), acctType, routingLast4: routingDigits.slice(-4), createdAt: Date.now() };
+      if (save) {
+        const existing = me?.paymentMethods || [];
+        updateMe({ paymentMethods: [...existing, { ...method, isDefault: existing.length === 0 }] });
+      }
+      setSubmitting(false);
+      onSaved(method);
     }, 700);
   };
 
   return (
-    <Modal open={open} onClose={onClose} labelledBy="card-modal-title">
+    <div>
+      <div className="flex mb-4 bg-stone-100 rounded-xl p-1">
+        <button
+          type="button"
+          onClick={() => setType("card")}
+          className={`flex-1 py-2 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-1.5 ${type === "card" ? "bg-white text-emerald-800 shadow-sm" : "text-stone-500"}`}
+        >
+          <CreditCard size={14} /> Card
+        </button>
+        <button
+          type="button"
+          onClick={() => setType("eft")}
+          className={`flex-1 py-2 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-1.5 ${type === "eft" ? "bg-white text-emerald-800 shadow-sm" : "text-stone-500"}`}
+        >
+          <Landmark size={14} /> Bank (EFT)
+        </button>
+      </div>
+
+      {type === "card" ? (
+        <>
+          <label className="block mb-3">
+            <span className="block text-xs font-semibold text-stone-500 mb-1">Name on card</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
+          </label>
+          <label className="block mb-3">
+            <span className="block text-xs font-semibold text-stone-500 mb-1">Card number</span>
+            <input
+              value={formattedNumber}
+              onChange={(e) => setNumber(e.target.value)}
+              placeholder="4242 4242 4242 4242"
+              inputMode="numeric"
+              className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700 tracking-wider"
+            />
+          </label>
+          <div className="flex gap-3">
+            <label className="flex-1 block">
+              <span className="block text-xs font-semibold text-stone-500 mb-1">Expiry (MM/YY)</span>
+              <input value={formattedExp} onChange={(e) => setExp(e.target.value)} placeholder="12/29" inputMode="numeric" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </label>
+            <label className="w-24 block">
+              <span className="block text-xs font-semibold text-stone-500 mb-1">CVC</span>
+              <input value={cvc} onChange={(e) => setCvc(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="123" inputMode="numeric" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </label>
+          </div>
+        </>
+      ) : (
+        <>
+          <label className="block mb-3">
+            <span className="block text-xs font-semibold text-stone-500 mb-1">Name on account</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
+          </label>
+          <label className="block mb-3">
+            <span className="block text-xs font-semibold text-stone-500 mb-1">Routing number</span>
+            <input value={routingDigits} onChange={(e) => setRouting(e.target.value)} placeholder="123456789" inputMode="numeric" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
+          </label>
+          <div className="flex gap-3">
+            <label className="flex-1 block">
+              <span className="block text-xs font-semibold text-stone-500 mb-1">Account number</span>
+              <input value={accountDigits} onChange={(e) => setAccount(e.target.value)} placeholder="000123456789" inputMode="numeric" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
+            </label>
+            <label className="w-32 block">
+              <span className="block text-xs font-semibold text-stone-500 mb-1">Type</span>
+              <select value={acctType} onChange={(e) => setAcctType(e.target.value)} className="w-full border border-stone-200 rounded-xl px-2.5 py-2.5 text-sm outline-none focus:border-emerald-700 bg-white">
+                <option value="checking">Checking</option>
+                <option value="savings">Savings</option>
+              </select>
+            </label>
+          </div>
+        </>
+      )}
+
+      {showSaveToggle && (
+        <div className="flex items-center justify-between py-2.5 mt-1">
+          <span className="text-sm font-medium text-stone-700">Save for future payments</span>
+          <ToggleSwitch checked={save} onChange={setSave} />
+        </div>
+      )}
+
+      {error && <p className="text-xs text-rose-600 mt-2">{error}</p>}
+      <button
+        onClick={submit}
+        disabled={submitting}
+        className="w-full mt-3 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {submitting && <Loader2 size={16} className="animate-spin" />}
+        {submitting ? busyLabel : submitLabel}
+      </button>
+    </div>
+  );
+}
+
+// One saved method — either a plain manage-it row (Account > Payment
+// methods) or, when `selectable`, a pickable radio-style card used inside a
+// live payment flow.
+function PaymentMethodRow({ m, onSetDefault, onRemove, selectable, selected, onSelect }) {
+  const Icon = m.type === "eft" ? Landmark : CreditCard;
+  return (
+    <div
+      onClick={selectable ? onSelect : undefined}
+      className={`flex items-center gap-3 border rounded-xl px-3.5 py-3 transition ${selectable ? "cursor-pointer" : ""} ${selected ? "border-emerald-700 bg-emerald-50" : "border-stone-200"}`}
+    >
+      <span className="w-9 h-9 rounded-full bg-stone-100 text-stone-600 flex items-center justify-center shrink-0">
+        <Icon size={16} />
+      </span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-stone-800 flex items-center gap-1.5 flex-wrap">
+          {paymentMethodLabel(m)}
+          {m.isDefault && <span className="cs-t9 font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full">Default</span>}
+        </p>
+        <p className="cs-t11 text-stone-400 truncate">
+          {m.name}
+          {m.type === "card" && m.expiry ? ` · exp ${m.expiry}` : ""}
+          {m.type === "eft" ? ` · ${m.acctType === "savings" ? "Savings" : "Checking"}` : ""}
+        </p>
+      </div>
+      {!selectable && (
+        <div className="flex items-center gap-1 shrink-0">
+          {!m.isDefault && onSetDefault && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSetDefault(m.id);
+              }}
+              className="cs-t10 font-semibold text-emerald-800 whitespace-nowrap"
+            >
+              Make default
+            </button>
+          )}
+          {onRemove && (
+            <IconButton
+              icon={Trash2}
+              label="Remove payment method"
+              size={14}
+              onClick={(e) => {
+                e?.stopPropagation?.();
+                onRemove(m.id);
+              }}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The full "wallet" management UI — list of saved methods with set-default
+// and remove, plus an add-new form. Used inline inside Account > Payment
+// methods (no wrapping modal needed, it's already inside one).
+function PaymentMethodsManager() {
+  const { me, updateMe, showToast } = useApp();
+  const [adding, setAdding] = useState(false);
+  const methods = me?.paymentMethods || [];
+
+  const setDefault = (id) => updateMe({ paymentMethods: methods.map((m) => ({ ...m, isDefault: m.id === id })) });
+  const remove = (id) => {
+    const next = methods.filter((m) => m.id !== id);
+    if (next.length && !next.some((m) => m.isDefault)) next[0] = { ...next[0], isDefault: true };
+    updateMe({ paymentMethods: next });
+    showToast("Payment method removed");
+  };
+
+  if (adding) {
+    return (
+      <div>
+        <button onClick={() => setAdding(false)} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-3">
+          <ArrowLeft size={14} /> Back
+        </button>
+        <PaymentMethodForm
+          showSaveToggle={false}
+          submitLabel="Save payment method"
+          busyLabel="Saving…"
+          onSaved={() => {
+            setAdding(false);
+            showToast("Payment method saved");
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="text-sm text-stone-500 mb-3">
+        Saved once, reusable anywhere CropSwap asks for payment — like Sponsored Ads — without retyping it. TEST MODE only, nothing is ever actually charged.
+      </p>
+      <div className="flex flex-col gap-2 mb-3">
+        {methods.map((m) => (
+          <PaymentMethodRow key={m.id} m={m} onSetDefault={setDefault} onRemove={remove} />
+        ))}
+        {methods.length === 0 && <p className="text-sm text-stone-400">No payment methods saved yet.</p>}
+      </div>
+      <button onClick={() => setAdding(true)} className="w-full border border-stone-200 font-semibold py-2.5 rounded-xl text-stone-700 text-sm flex items-center justify-center gap-1.5">
+        <Plus size={15} /> Add a payment method
+      </button>
+    </div>
+  );
+}
+
+// The picker shown inside a live payment flow (Sponsored Ads today) — pick
+// a saved method or add a new one, same TEST MODE honesty convention.
+function PaymentPickerModal({ open, amount, onClose, onPay }) {
+  const { me } = useApp();
+  const methods = me?.paymentMethods || [];
+  const [mode, setMode] = useState(methods.length ? "list" : "form");
+  const [selectedId, setSelectedId] = useState(null);
+  const [paying, setPaying] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setMode(methods.length ? "list" : "form");
+    setSelectedId((methods.find((m) => m.isDefault) || methods[0])?.id || null);
+    setPaying(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const payWithSaved = () => {
+    const m = methods.find((x) => x.id === selectedId);
+    if (!m) return;
+    setPaying(true);
+    setTimeout(() => {
+      setPaying(false);
+      onPay({ methodId: m.id, last4: m.last4, type: m.type });
+    }, 700);
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="pay-modal-title">
       <div className="p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 id="card-modal-title" className="font-bold text-lg text-stone-800" style={displayFont}>Payment</h2>
+          <h2 id="pay-modal-title" className="font-bold text-lg text-stone-800" style={displayFont}>Payment</h2>
           <button onClick={onClose} className="text-stone-400 hover:text-stone-600" aria-label="Close">
             <X size={20} />
           </button>
         </div>
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2 mb-4 flex items-center gap-2">
           <AlertCircle size={14} className="text-amber-700 shrink-0" />
-          <p className="text-xs font-semibold text-amber-900">TEST MODE — any card number works, nothing is charged.</p>
+          <p className="text-xs font-semibold text-amber-900">TEST MODE — any card or bank details work, nothing is charged.</p>
         </div>
-        <label className="block mb-3">
-          <span className="block text-xs font-semibold text-stone-500 mb-1">Name on card</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
-        </label>
-        <label className="block mb-3">
-          <span className="block text-xs font-semibold text-stone-500 mb-1">Card number</span>
-          <input
-            value={formattedNumber}
-            onChange={(e) => setNumber(e.target.value)}
-            placeholder="4242 4242 4242 4242"
-            inputMode="numeric"
-            className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700 tracking-wider"
-          />
-        </label>
-        <div className="flex gap-3">
-          <label className="flex-1 block">
-            <span className="block text-xs font-semibold text-stone-500 mb-1">Expiry (MM/YY)</span>
-            <input value={formattedExp} onChange={(e) => setExp(e.target.value)} placeholder="12/29" inputMode="numeric" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
-          </label>
-          <label className="w-24 block">
-            <span className="block text-xs font-semibold text-stone-500 mb-1">CVC</span>
-            <input value={cvc} onChange={(e) => setCvc(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="123" inputMode="numeric" className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700" />
-          </label>
-        </div>
-        {error && <p className="text-xs text-rose-600 mt-3">{error}</p>}
-        <button
-          onClick={submit}
-          disabled={submitting}
-          className="w-full mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {submitting && <Loader2 size={16} className="animate-spin" />}
-          {submitting ? "Processing…" : `Pay ${formatMoney(amount)} (test mode)`}
-        </button>
+
+        {mode === "list" ? (
+          <div>
+            <div className="flex flex-col gap-2 mb-3">
+              {methods.map((m) => (
+                <PaymentMethodRow key={m.id} m={m} selectable selected={selectedId === m.id} onSelect={() => setSelectedId(m.id)} />
+              ))}
+            </div>
+            <button onClick={() => setMode("form")} className="w-full border border-stone-200 font-semibold py-2.5 rounded-xl text-stone-700 text-sm mb-3 flex items-center justify-center gap-1.5">
+              <Plus size={15} /> Use a different payment method
+            </button>
+            <button
+              onClick={payWithSaved}
+              disabled={!selectedId || paying}
+              className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {paying && <Loader2 size={16} className="animate-spin" />}
+              {paying ? "Processing…" : `Pay ${formatMoney(amount)} (test mode)`}
+            </button>
+          </div>
+        ) : (
+          <>
+            {methods.length > 0 && (
+              <button onClick={() => setMode("list")} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-3">
+                <ArrowLeft size={14} /> Use a saved method instead
+              </button>
+            )}
+            <PaymentMethodForm submitLabel={`Pay ${formatMoney(amount)} (test mode)`} onSaved={(method) => onPay({ methodId: method.id, last4: method.last4, type: method.type })} />
+          </>
+        )}
       </div>
     </Modal>
   );
@@ -9571,7 +9835,7 @@ function SponsorWizard({ shop, product, onClose, onDone }) {
 
   const goStep = (n) => setState((s) => ({ ...s, step: Math.min(4, Math.max(1, n)) }));
 
-  const handlePaid = async ({ last4 }) => {
+  const handlePaid = async ({ last4, type }) => {
     await createSponsorCampaign({
       shopId: shop.id,
       productId: product.id,
@@ -9579,6 +9843,7 @@ function SponsorWizard({ shop, product, onClose, onDone }) {
       rateId: state.rateId,
       tagline: state.tagline,
       cardLast4: last4,
+      paymentType: type,
     });
     setPayOpen(false);
     showToast(`Sponsored — live now for ${rate.label.toLowerCase()}`);
@@ -9707,10 +9972,10 @@ function SponsorWizard({ shop, product, onClose, onDone }) {
             </div>
             <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 mb-4 flex items-center gap-2">
               <AlertCircle size={15} className="text-amber-700 shrink-0" />
-              <p className="text-xs font-semibold text-amber-900">TEST MODE — this uses a fake payment card, no real charge is made.</p>
+              <p className="text-xs font-semibold text-amber-900">TEST MODE — pay with a saved method, a fake card, or fake bank details. No real charge is made.</p>
             </div>
             <button onClick={() => setPayOpen(true)} className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl">
-              Enter payment — {formatMoney(rate.price)}
+              Pay — {formatMoney(rate.price)}
             </button>
           </div>
         )}
@@ -9729,7 +9994,7 @@ function SponsorWizard({ shop, product, onClose, onDone }) {
         </div>
       </div>
 
-      <FakeCardModal open={payOpen} amount={rate.price} onClose={() => setPayOpen(false)} onPay={handlePaid} />
+      <PaymentPickerModal open={payOpen} amount={rate.price} onClose={() => setPayOpen(false)} onPay={handlePaid} />
     </div>
   );
 }
@@ -9825,7 +10090,7 @@ function AdsScreen({ navigate }) {
                   <div key={c.id} className="border border-stone-200 rounded-xl p-3 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-stone-800 truncate">{pr?.name || "Listing removed"}</p>
-                      <p className="cs-t11 text-stone-400">{sponsorRate(c.rateId).label} · {formatMoney(c.amount)} · card •••• {c.cardLast4}</p>
+                      <p className="cs-t11 text-stone-400">{sponsorRate(c.rateId).label} · {formatMoney(c.amount)} · {c.paymentType === "eft" ? "bank" : "card"} •••• {c.cardLast4}</p>
                     </div>
                     <span className={`cs-t10 font-bold px-2 py-0.5 rounded-full shrink-0 ${live ? "bg-emerald-50 text-emerald-700" : c.status === "cancelled" ? "bg-stone-100 text-stone-500" : "bg-stone-100 text-stone-400"}`}>
                       {live ? "Active" : c.status === "cancelled" ? "Stopped" : "Ended"}
@@ -10047,7 +10312,7 @@ function PublicProfileView({ userId, navigate }) {
 }
 
 function AccountModal({ open, onClose }) {
-  const { me, updateMe, signOut, navigate, showToast, openProfileCard } = useApp();
+  const { me, updateMe, signOut, navigate, showToast, openProfileCard, setExploreView } = useApp();
   const [tab, setTab] = useState("profile");
   const [name, setName] = useState(me?.name || "");
   const [blockedUsers, setBlockedUsers] = useState([]);
@@ -10167,6 +10432,10 @@ function AccountModal({ open, onClose }) {
   }, [tab, me]);
 
   if (!me) return null;
+  // "Especially needed on mobile, since it doesn't have the sidebar" — these
+  // link tabs mirror the desktop sidebar's nav (Orders/Calendar/Inventory/
+  // Sponsored Ads/Map) so every screen the sidebar reaches is also reachable
+  // from the account popover on a phone.
   const tabs = [
     { id: "profile", label: "Profile", icon: User },
     { id: "vendor", label: "My Store", icon: Store, link: true, linkScreen: "store" },
@@ -10174,6 +10443,12 @@ function AccountModal({ open, onClose }) {
     { id: "notifications", label: "Alerts", icon: Bell },
     { id: "dashboard", label: "Dashboard", icon: TrendingUp, link: true },
     { id: "favorites", label: "Favorites", icon: Heart, link: true },
+    { id: "acct-orders", label: "Orders", icon: ClipboardList, link: true, linkScreen: "orders", linkTab: "orders" },
+    { id: "acct-calendar", label: "Calendar", icon: Calendar, link: true, linkScreen: "orders", linkTab: "calendar" },
+    { id: "acct-inventory", label: "Inventory", icon: Boxes, link: true, linkScreen: "orders", linkTab: "inventory" },
+    { id: "acct-ads", label: "Sponsored Ads", icon: Megaphone, link: true, linkScreen: "ads" },
+    { id: "acct-map", label: "Map", icon: MapPin, link: true, linkScreen: "explore", isMap: true },
+    { id: "payment", label: "Payment", icon: CreditCard },
     { id: "blocked", label: "Blocked", icon: AlertCircle },
     { id: "data", label: "Data", icon: Package },
   ];
@@ -10190,7 +10465,15 @@ function AccountModal({ open, onClose }) {
           {tabs.map((t) => (
             <button
               key={t.id}
-              onClick={() => (t.link ? (onClose(), navigate({ screen: t.linkScreen || t.id })) : setTab(t.id))}
+              onClick={() => {
+                if (!t.link) {
+                  setTab(t.id);
+                  return;
+                }
+                if (t.isMap) setExploreView("map");
+                onClose();
+                navigate(t.linkTab ? { screen: t.linkScreen || t.id, tab: t.linkTab } : { screen: t.linkScreen || t.id });
+              }}
               className={`flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-full text-[11px] font-semibold whitespace-nowrap transition ${tab === t.id ? "bg-emerald-800 text-white" : "bg-stone-100 text-stone-500"}`}
             >
               <t.icon size={12} /> {t.label}
@@ -10270,6 +10553,8 @@ function AccountModal({ open, onClose }) {
           </div>
         )}
 
+        {tab === "payment" && <PaymentMethodsManager />}
+
         {tab === "data" && (
           <div>
             <p className="text-xs font-bold text-stone-400 uppercase mb-2">Storage check</p>
@@ -10292,7 +10577,7 @@ function AccountModal({ open, onClose }) {
             <button onClick={exportData} className="w-full border border-stone-200 font-semibold py-2.5 rounded-xl text-stone-700 text-sm mb-2">
               Download my data (JSON)
             </button>
-            <p className="text-xs text-stone-400 mb-5">Includes your profile, favorites, saved places, and settings.</p>
+            <p className="text-xs text-stone-400 mb-5">Includes your profile, favorites, saved payment methods, and settings.</p>
 
             <p className="text-xs font-bold text-stone-400 uppercase mb-2">Delete account</p>
             {!confirmDelete ? (
@@ -11664,7 +11949,8 @@ function InventoryTab({ shop, patchShop, products, inventory, orders, onAdd, onE
             <div className="space-y-2 mb-6">
               {filtered.map((it) => {
                 const catInfo = CATEGORIES.find((c) => c.id === it.category) || CATEGORIES[CATEGORIES.length - 1];
-                const low = it.lowStockThreshold != null && it.qty <= it.lowStockThreshold;
+                const outOfStock = it.qty <= 0;
+                const low = !outOfStock && it.lowStockThreshold != null && it.qty <= it.lowStockThreshold;
                 const demand = pendingDemand.get(it.id) || 0;
                 const projected = it.qty - demand;
                 const short = demand > 0 && projected < 0;
@@ -11674,8 +11960,13 @@ function InventoryTab({ shop, patchShop, products, inventory, orders, onAdd, onE
                     <div className="flex-1 min-w-[120px]">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="font-semibold text-stone-800 truncate">{it.name}</p>
-                        {low && (
+                        {outOfStock && (
                           <span className="cs-t9 font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                            <AlertCircle size={9} /> Out of stock
+                          </span>
+                        )}
+                        {low && (
+                          <span className="cs-t9 font-bold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
                             <AlertCircle size={9} /> Low
                           </span>
                         )}
