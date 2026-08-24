@@ -5144,7 +5144,7 @@ function Sidebar({ route, navigate }) {
     return true;
   };
   return (
-    <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-stone-200 p-5 gap-1">
+    <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-stone-200 p-5 gap-1 overflow-y-auto">
       <div className="flex items-center gap-2 text-emerald-800 font-bold text-xl mb-8 px-2" style={displayFont}>
         <Sparkles size={22} /> CropSwap
       </div>
@@ -5477,18 +5477,39 @@ function ExploreView({ navigate }) {
     return Object.values(shopsById).filter((s) => ids.has(s.id));
   }, [sorted, shopsById]);
 
+  // Every 30 minutes the Sponsored rail slides its last item around to the
+  // front, so campaigns keep cycling through the top spot instead of one
+  // newest campaign always dominating it. The bucket is derived purely from
+  // wall-clock time, so it never needs its own storage and every shopper's
+  // page agrees on the same order at the same moment. A 1-minute check is
+  // cheap and only actually re-renders when the 30-minute bucket changes.
+  const SPONSOR_ROTATE_MS = 30 * 60000;
+  const [sponsorRotationBucket, setSponsorRotationBucket] = useState(() => Math.floor(Date.now() / SPONSOR_ROTATE_MS));
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const bucket = Math.floor(Date.now() / SPONSOR_ROTATE_MS);
+      setSponsorRotationBucket((prev) => (prev === bucket ? prev : bucket));
+    }, 60000);
+    return () => clearInterval(iv);
+  }, []);
+
   // Live, paid-for campaigns, newest first, capped so the rail can't grow
   // unbounded — each one resolved back to its actual (still-browsable)
   // listing, since a sponsored product could since have been deleted or its
-  // shop could have gone unbrowsable.
+  // shop could have gone unbrowsable. Then rotated by the 30-minute bucket
+  // above so every campaign gets a turn at the front.
   const sponsoredNow = useMemo(() => {
     const productsById = Object.fromEntries(products.map((p) => [p.id, p]));
-    return (sponsorships || [])
+    const live = (sponsorships || [])
       .filter((c) => sponsorIsLive(c) && productsById[c.productId])
       .sort((a, b) => b.startedAt - a.startedAt)
       .slice(0, 10)
       .map((c) => ({ campaign: c, product: productsById[c.productId] }));
-  }, [sponsorships, products]);
+    if (live.length < 2) return live;
+    const shift = sponsorRotationBucket % live.length;
+    if (shift === 0) return live;
+    return [...live.slice(-shift), ...live.slice(0, live.length - shift)];
+  }, [sponsorships, products, sponsorRotationBucket]);
 
   const activeFilterCount =
     filters.categories.length + (filters.maxDistance !== null ? 1 : 0) + (filters.minRating > 0 ? 1 : 0) + (filters.inSeasonOnly ? 1 : 0) + (filters.verifiedOnly ? 1 : 0) + (filters.minPrice ? 1 : 0) + (filters.maxPrice ? 1 : 0);
@@ -11522,7 +11543,7 @@ function OrderFormModal({ open, onClose, onSave, inventory, products, initial })
   );
 }
 
-function InventoryTab({ shop, patchShop, products, inventory, onAdd, onEdit }) {
+function InventoryTab({ shop, patchShop, products, inventory, orders, onAdd, onEdit }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
   const [showLog, setShowLog] = useState(false);
@@ -11534,6 +11555,28 @@ function InventoryTab({ shop, patchShop, products, inventory, onAdd, onEdit }) {
     if (!q.trim()) return true;
     return it.name.toLowerCase().includes(q.trim().toLowerCase());
   });
+
+  // How much of each inventory item is spoken for by orders that haven't
+  // been fulfilled yet — same "not yet fulfilled" bucket as the Orders tab
+  // (not completed, not archived), and the same name-match fallback used
+  // when an order is actually completed, so a free-typed line item still
+  // counts here even if it was never explicitly linked.
+  const pendingDemand = useMemo(() => {
+    const map = new Map();
+    (orders || []).forEach((o) => {
+      if (o.completed || o.archived) return;
+      (o.items || []).forEach((li) => {
+        let invId = li.inventoryItemId;
+        if (!invId) {
+          const match = inventory.items.find((it) => it.name.trim().toLowerCase() === (li.name || "").trim().toLowerCase());
+          invId = match ? match.id : null;
+        }
+        if (!invId) return;
+        map.set(invId, (map.get(invId) || 0) + (Number(li.qty) || 0));
+      });
+    });
+    return map;
+  }, [orders, inventory.items]);
 
   return (
     <div>
@@ -11609,6 +11652,9 @@ function InventoryTab({ shop, patchShop, products, inventory, onAdd, onEdit }) {
               {filtered.map((it) => {
                 const catInfo = CATEGORIES.find((c) => c.id === it.category) || CATEGORIES[CATEGORIES.length - 1];
                 const low = it.lowStockThreshold != null && it.qty <= it.lowStockThreshold;
+                const demand = pendingDemand.get(it.id) || 0;
+                const projected = it.qty - demand;
+                const short = demand > 0 && projected < 0;
                 return (
                   <div key={it.id} className="flex items-center gap-3 border border-stone-200 rounded-2xl p-3 flex-wrap sm:flex-nowrap">
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: catInfo.tint }} />
@@ -11629,6 +11675,19 @@ function InventoryTab({ shop, patchShop, products, inventory, onAdd, onEdit }) {
                       <p className="cs-t11 text-stone-400">
                         {formatMoney(it.price)} / {priceUnitLabel(it.unit)} · {catInfo.label}
                       </p>
+                      {demand > 0 && (
+                        <div
+                          className={`flex items-center gap-1.5 mt-1 pl-2 border-l-2 ${short ? "border-red-500" : "border-stone-300"}`}
+                          title={`${demand} ${priceUnitLabel(it.unit)} across your not-yet-fulfilled orders`}
+                        >
+                          {short && <AlertTriangle size={11} className="text-red-600 shrink-0" />}
+                          <p className={`cs-t11 font-semibold ${short ? "text-red-600" : "text-stone-500"}`}>
+                            {short
+                              ? `Short by ${Math.abs(projected)} if open orders (${demand}) are fulfilled`
+                              : `${projected} ${priceUnitLabel(it.unit)} left if open orders (${demand}) are fulfilled`}
+                          </p>
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <IconButton icon={Minus} label="Decrease stock" size={14} onClick={() => inventory.adjustStock(it.id, -1, "manual")} />
@@ -12681,7 +12740,7 @@ function OrdersScreen({ navigate, initialTab }) {
           />
         )}
         {tab === "inventory" && (
-          <InventoryTab shop={shop} patchShop={patchShop} products={shopProducts} inventory={inventory} onAdd={() => setItemModal({ mode: "add" })} onEdit={(it) => setItemModal({ mode: "edit", item: it })} />
+          <InventoryTab shop={shop} patchShop={patchShop} products={shopProducts} inventory={inventory} orders={orders.orders} onAdd={() => setItemModal({ mode: "add" })} onEdit={(it) => setItemModal({ mode: "edit", item: it })} />
         )}
         {tab === "archive" && <ArchiveTab orders={orders} onRestore={(id) => handleArchive(id, false)} onDelete={handleDeleteOrder} />}
       </div>
