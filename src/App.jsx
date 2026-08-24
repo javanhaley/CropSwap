@@ -8,7 +8,7 @@ import {
   Crown, Lock, Calendar, Clock, Target, Award, Zap, TrendingDown, Megaphone,
   Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check, ChevronUp,
   AlertTriangle, Image as ImageIcon, Video, PlayCircle,
-  DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark,
+  DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark, Rss,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -2884,6 +2884,22 @@ function useMarketData() {
     [applyMarket, flushMarket]
   );
 
+  // Deletes a whole storefront — every listing under it goes with it. Used
+  // from the multi-shop picker a signed-in vendor sees if their account owns
+  // more than one shop (a leftover from creating a new storefront without
+  // ever removing an old one), so they finally have a real way to clean an
+  // old shop up instead of it just sitting there, unreachable, forever.
+  const removeShop = useCallback(
+    async (shopId) => {
+      applyMarket(
+        shopsRef.current.filter((s) => s.id !== shopId),
+        productsRef.current.filter((p) => p.shopId !== shopId)
+      );
+      await flushMarket();
+    },
+    [applyMarket, flushMarket]
+  );
+
   const createShopForUser = useCallback(
     async (user, shopName, location) => {
       const id = uid("shop");
@@ -2907,7 +2923,10 @@ function useMarketData() {
         lng: point.lng,
         bio: "Tell people what you grow and how to find you.",
         themeId: "harvest",
-        bannerScene: "hills",
+        // Every new real shop starts on the Orchard Rows scene until the
+        // vendor uploads their own cover photo — the scene picker has been
+        // removed from the storefront builder, so this is the one default.
+        bannerScene: "orchard",
         emoji: "\u{1F9FA}",
         verified: false,
         status: "open",
@@ -2933,7 +2952,7 @@ function useMarketData() {
     [applyMarket, flushMarket]
   );
 
-  return { shops, products, shopsById, loading, updateShop, updateProduct, addProduct, removeProduct, createShopForUser, reload: loadAll };
+  return { shops, products, shopsById, loading, updateShop, updateProduct, addProduct, removeProduct, removeShop, createShopForUser, reload: loadAll };
 }
 
 function buildDefaultContactCard(seed) {
@@ -7248,31 +7267,13 @@ function LayoutTab({ shop }) {
 
   return (
     <div>
-      <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Theme</p>
-      <div className="grid grid-cols-2 gap-2.5 mb-6">
-        {THEMES.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => updateShop(shop.id, { themeId: t.id })}
-            className={`p-3 rounded-xl border-2 text-left transition ${shop.themeId === t.id ? "border-emerald-700" : "border-stone-200"}`}
-          >
-            <div className="flex gap-1 mb-2">
-              {t.swatch.map((c, i) => (
-                <span key={i} className="w-4 h-4 rounded-full" style={{ background: c }} />
-              ))}
-            </div>
-            <p className="text-sm font-semibold text-stone-800">{t.name}</p>
-          </button>
-        ))}
-      </div>
-
       <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Cover photo (background)</p>
       <div className="mb-5">
         <PhotoPicker
           photoId={shop.coverPhotoId}
           onChange={(id) => updateShop(shop.id, { coverPhotoId: id })}
           label="Upload a cover photo"
-          hint="Shown across the top of your storefront"
+          hint="Shown across the top of your storefront. Until you upload one, your storefront shows a default Orchard Rows scene."
           aspect={16 / 7}
           size="lg"
         />
@@ -7289,26 +7290,6 @@ function LayoutTab({ shop }) {
           hint="Your shop's circular icon — separate from the cover photo above"
           size="lg"
         />
-      </div>
-
-      <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">{shop.coverPhotoId ? "Or use a drawn scene" : "Cover scene"}</p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-6">
-        {SCENE_LIST.map((sc) => {
-          const active = (shop.bannerScene || defaultScene(shop.id)) === sc.id;
-          return (
-            <button
-              key={sc.id}
-              onClick={() => updateShop(shop.id, { bannerScene: sc.id })}
-              className={`rounded-xl overflow-hidden border-2 text-left transition ${active ? "border-emerald-700" : "border-stone-200 hover:border-stone-300"}`}
-              aria-pressed={active}
-            >
-              <span className="block h-14">
-                <BannerScene scene={sc.id} />
-              </span>
-              <span className="block cs-t11 font-semibold text-stone-700 px-2 py-1.5 bg-white">{sc.label}</span>
-            </button>
-          );
-        })}
       </div>
 
       <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">About / bio</p>
@@ -7677,6 +7658,7 @@ const PRODUCT_ICON_CHOICES = [
 
 function AddProductForm({ shop, onClose, editing }) {
   const { addProduct, updateProduct, viewportHeight, showToast } = useApp();
+  const inventory = useInventory(shop.id);
   const [photoId, setPhotoId] = useState(editing?.photoId || null);
   const [art, setArt] = useState(editing?.art || "tomato");
   const [name, setName] = useState(editing?.name || "");
@@ -7684,6 +7666,11 @@ function AddProductForm({ shop, onClose, editing }) {
   const [price, setPrice] = useState(editing ? String(editing.price) : "");
   const [priceUnit, setPriceUnit] = useState(editing?.priceUnit || "each");
   const [desc, setDesc] = useState(editing?.desc || "");
+  // Only offered on a brand-new listing — an existing one manages its stock
+  // from the Inventory tab (or the Inventory link on this form's edit mode
+  // isn't shown here at all, to avoid two different places claiming to set
+  // the same running quantity).
+  const [startingStock, setStartingStock] = useState("");
   const [saving, setSaving] = useState(false);
   const canSave = name.trim() && price !== "" && !isNaN(Number(price));
 
@@ -7711,7 +7698,22 @@ function AddProductForm({ shop, onClose, editing }) {
       await updateProduct(shop.id, editing.id, payload);
       showToast("Listing updated");
     } else {
-      await addProduct(shop.id, payload);
+      const product = await addProduct(shop.id, payload);
+      // A starting stock number creates a linked Inventory item in the same
+      // step, so a new listing can already be stock-tracked — falling out
+      // of stock, showing "low," deducting on completed orders — without a
+      // separate trip to the Inventory tab. Left blank, no item is created
+      // and the listing just isn't inventory-tracked, same as before.
+      if (startingStock.trim() !== "" && !isNaN(Number(startingStock))) {
+        await inventory.addItem({
+          name: product.name,
+          category: product.category,
+          unit: product.priceUnit,
+          qty: Number(startingStock),
+          price: product.price,
+          linkedProductId: product.id,
+        });
+      }
       showToast("Listing added");
     }
     setSaving(false);
@@ -7837,6 +7839,23 @@ function AddProductForm({ shop, onClose, editing }) {
               </button>
             ))}
           </div>
+
+          {!editing && (
+            <>
+              <label className="block cs-t11 font-semibold text-stone-500 mb-1">Starting stock (optional)</label>
+              <TextField
+                value={startingStock}
+                onChange={setStartingStock}
+                numeric
+                label="Starting stock"
+                placeholder={`e.g. 24 ${priceUnitLabel(priceUnit)}`}
+                className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm mb-1 outline-none focus:border-emerald-700"
+              />
+              <p className="cs-t10 text-stone-400 mb-3">
+                Sets this listing up in your Inventory with this much in stock right away — tracked automatically from here on. Leave blank to skip inventory tracking for now; you can always add it later from the Inventory tab.
+              </p>
+            </>
+          )}
 
           <label className="block cs-t11 font-semibold text-stone-500 mb-1">Description</label>
           <TextField
@@ -7976,9 +7995,21 @@ function ProductsTab({ shop, products }) {
   );
 }
 
-function StorefrontEditor({ navigate }) {
+let storefrontEditorLastTab = "layout";
+function StorefrontEditor({ navigate, initialTab }) {
   const { me, shopsById, products, showToast } = useApp();
-  const [tab, setTab] = useState("layout");
+  const [tab, setTabState] = useState(initialTab || storefrontEditorLastTab);
+  const setTab = (t) => {
+    storefrontEditorLastTab = t;
+    setTabState(t);
+  };
+  // An Account-modal quick link (e.g. "Updates") passes an explicit tab even
+  // when this screen is already mounted — no remount to re-run useState's
+  // initializer — so that explicit request still needs to win here.
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab]);
   const [justSaved, setJustSaved] = useState(false);
 
   if (!me.isVendor || !me.shopId) {
@@ -10466,6 +10497,7 @@ function AccountModal({ open, onClose }) {
     { id: "acct-orders", label: "Orders", icon: ClipboardList, link: true, linkScreen: "orders", linkTab: "orders" },
     { id: "acct-calendar", label: "Calendar", icon: Calendar, link: true, linkScreen: "orders", linkTab: "calendar" },
     { id: "acct-inventory", label: "Inventory", icon: Boxes, link: true, linkScreen: "orders", linkTab: "inventory" },
+    { id: "acct-updates", label: "Updates", icon: Rss, link: true, linkScreen: "storeEditor", linkTab: "updates" },
     { id: "acct-ads", label: "Sponsored Ads", icon: Megaphone, link: true, linkScreen: "ads" },
     { id: "acct-map", label: "Map", icon: MapPin, link: true, linkScreen: "explore", isMap: true },
     { id: "payment", label: "Payment", icon: CreditCard },
@@ -14370,6 +14402,89 @@ function LoadingScreen({ inline }) {
   );
 }
 
+// Shown right after signing in when this account owns more than one
+// storefront — a leftover from running "Start Selling" more than once
+// without ever having a way to remove the old shop. Lets someone pick which
+// one they mean to use, or delete any they don't need, before the rest of
+// the app decides which shop is "theirs" via me.shopId.
+function ChooseShopGate({ shops, activeShopId, onPick, onDelete, onSkip }) {
+  const [busyId, setBusyId] = useState(null);
+  const [confirmingId, setConfirmingId] = useState(null);
+
+  const handlePick = async (id) => {
+    setBusyId(id);
+    await onPick(id);
+    setBusyId(null);
+  };
+  const handleDelete = async (id) => {
+    setBusyId(id);
+    await onDelete(id);
+    setBusyId(null);
+    setConfirmingId(null);
+  };
+
+  return (
+    <div className="h-screen w-full flex items-start justify-center bg-stone-50 p-6 pt-10 overflow-y-auto" style={{ height: "100dvh" }}>
+      <div className="w-full max-w-sm">
+        <div className="flex items-center gap-2 text-emerald-800 font-bold text-2xl mb-1 justify-center" style={displayFont}>
+          <Sparkles size={24} /> CropSwap
+        </div>
+        <h1 className="text-center text-lg font-bold text-stone-900 mt-4 mb-1" style={displayFont}>Choose your shop</h1>
+        <p className="text-center text-stone-500 mb-6 text-sm">
+          This account owns more than one storefront. Pick the one you want to use, or delete any you don't need anymore.
+        </p>
+
+        <div className="flex flex-col gap-2.5 mb-4">
+          {shops.map((shop) => (
+            <div key={shop.id} className="bg-white border border-stone-200 rounded-2xl p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-800 flex items-center justify-center text-lg shrink-0">{shop.emoji || "🧺"}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-stone-900 truncate">{shop.name}</p>
+                  <p className="cs-t11 text-stone-400 truncate">@{shop.handle} · {shop.city}, {shop.state}</p>
+                </div>
+                {shop.id === activeShopId && (
+                  <span className="cs-t10 font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 shrink-0">Current</span>
+                )}
+              </div>
+              {confirmingId === shop.id ? (
+                <div className="flex items-center gap-2 bg-rose-50 rounded-xl p-2.5">
+                  <span className="text-xs text-rose-700 flex-1">Delete "{shop.name}" and all its listings? This can't be undone.</span>
+                  <button onClick={() => setConfirmingId(null)} className="text-xs font-semibold text-stone-500 shrink-0">Cancel</button>
+                  <button onClick={() => handleDelete(shop.id)} disabled={busyId === shop.id} className="text-xs font-semibold text-rose-700 shrink-0">
+                    {busyId === shop.id ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handlePick(shop.id)}
+                    disabled={busyId === shop.id}
+                    className="flex-1 bg-emerald-800 hover:bg-emerald-700 text-white text-sm font-semibold py-2 rounded-xl disabled:opacity-40 transition"
+                  >
+                    {busyId === shop.id ? "Switching…" : "Use this shop"}
+                  </button>
+                  <button
+                    onClick={() => setConfirmingId(shop.id)}
+                    className="px-3 py-2 rounded-xl border border-stone-200 text-stone-400 hover:text-rose-600 hover:border-rose-200 transition"
+                    aria-label={`Delete ${shop.name}`}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <button onClick={onSkip} className="text-xs font-semibold text-stone-400 hover:text-stone-600 block mx-auto">
+          Skip for now
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Onboarding({ onCreate, reason, onCancel }) {
   const [name, setName] = useState("");
   const [avatar, setAvatar] = useState(AVATAR_EMOJI[0]);
@@ -14684,6 +14799,11 @@ function RootShell() {
   // to the full authFlow screen once its own "Sign up free" button is
   // pressed; dismissing it (X, or tapping outside) just leaves them browsing.
   const [authPrompt, setAuthPrompt] = useState(null);
+  // A signed-in account can end up owning more than one shop (e.g. running
+  // "Start Selling" again without ever deleting the old one) — set true once
+  // they've picked a shop or skipped the picker, so it appears right after
+  // signing in but doesn't nag on every subsequent navigation this session.
+  const [shopGateResolved, setShopGateResolved] = useState(false);
   // Captured on every click, in the capture phase (so it's already current
   // by the time React's own onClick handlers — and therefore requireAuth —
   // run), purely so the popover above can anchor itself next to whatever was
@@ -14896,6 +15016,7 @@ function RootShell() {
     updateProduct: market.updateProduct,
     addProduct: market.addProduct,
     removeProduct: market.removeProduct,
+    removeShop: market.removeShop,
     createShopForUser: market.createShopForUser,
     photoUrls: photos.photoUrls,
     loadPhoto: photos.loadPhoto,
@@ -14948,6 +15069,31 @@ function RootShell() {
 
   if (meLoading) return <LoadingScreen />;
   if (market.loading) return <LoadingScreen />;
+
+  // An account can end up owning more than one shop — see removeShop's
+  // comment for how. Give them the picker right after signing in, once per
+  // session, rather than silently deciding for them via me.shopId.
+  const myShops = me ? market.shops.filter((s) => s.ownerId === me.id) : [];
+  if (me && myShops.length > 1 && !shopGateResolved) {
+    return (
+      <ChooseShopGate
+        shops={myShops}
+        activeShopId={me.shopId}
+        onPick={async (shopId) => {
+          await updateMe({ isVendor: true, shopId });
+          setShopGateResolved(true);
+        }}
+        onDelete={async (shopId) => {
+          await market.removeShop(shopId);
+          if (me.shopId === shopId) {
+            const remaining = myShops.filter((s) => s.id !== shopId);
+            await updateMe(remaining.length === 1 ? { isVendor: true, shopId: remaining[0].id } : { isVendor: false, shopId: null });
+          }
+        }}
+        onSkip={() => setShopGateResolved(true)}
+      />
+    );
+  }
 
   // Guests fall straight through to the normal shell below and browse freely.
   // The sign-up flow only takes over the screen once something has actually
@@ -15027,7 +15173,7 @@ function RootShell() {
             {route.screen === "explore" && <ExploreView navigate={navigate} />}
             {route.screen === "shop" && <ShopProfileView shopId={route.shopId} navigate={navigate} />}
             {route.screen === "store" && <StoreScreen navigate={navigate} />}
-            {route.screen === "storeEditor" && <StorefrontEditor navigate={navigate} />}
+            {route.screen === "storeEditor" && <StorefrontEditor navigate={navigate} initialTab={route.tab} />}
             {route.screen === "favorites" && <FavoritesView />}
             {route.screen === "messages" && (
               <MessagesView
