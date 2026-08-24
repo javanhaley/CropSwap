@@ -2586,6 +2586,14 @@ function useCurrentUser() {
       setLoading(false);
       return;
     }
+    // Supabase silently refreshes the auth token — including right when the
+    // browser tab regains focus — and fires this same event each time, with
+    // a new session object for the SAME already-signed-in user. Without this
+    // guard that re-triggered the full loading gate below on every refresh,
+    // which unmounts (and resets) the whole app tree: whatever screen or tab
+    // someone was on would snap back to its default the instant they tabbed
+    // away and back. A real sign-in or account switch still goes through.
+    if (meRef.current && meRef.current.id === session.user?.id) return;
     let cancelled = false;
     setLoading(true);
     (async () => {
@@ -4610,6 +4618,7 @@ function IconButton({ icon: Icon, onClick, label, active, size = 18, className =
       type="button"
       onClick={onClick}
       aria-label={label}
+      title={label}
       className={`inline-flex items-center justify-center w-9 h-9 rounded-full transition ${active ? "bg-emerald-800 text-white" : "bg-stone-100 text-stone-600 hover:bg-stone-200"} ${className}`}
     >
       <Icon size={size} />
@@ -11427,6 +11436,8 @@ function useShopCalendar(shopId) {
         notes: draft.notes || "",
         orderId: draft.orderId || null,
         kind: draft.kind || "note",
+        reminderMinutesBefore: draft.reminderMinutesBefore ?? null,
+        reminderAt: draft.reminderAt ?? null,
         createdAt: Date.now(),
       };
       await persist([ev, ...eventsRef.current]);
@@ -11474,6 +11485,21 @@ function computeOrderTotals(orders) {
 
 function orderTotal(order) {
   return order.items.reduce((sum, li) => sum + Number(li.qty || 0) * Number(li.price || 0), 0);
+}
+
+// The date an order was actually fulfilled, for sales-reporting purposes:
+// its scheduled pickup date/time, since that's when the sale really
+// happened from the shop's perspective — not whenever the vendor happened
+// to tap the "complete" checkbox in the app, which can lag behind (or get
+// batched) days after the fact and would otherwise throw off "sales over
+// time." Falls back to completedAt, then createdAt, for orders that never
+// had a pickup date set.
+function orderFulfillmentTime(order) {
+  if (order.pickupDate) {
+    const t = new Date(`${order.pickupDate}T${order.pickupTime || "00:00"}:00`).getTime();
+    if (!Number.isNaN(t)) return t;
+  }
+  return order.completedAt || order.createdAt || null;
 }
 
 function pickupLabel(order) {
@@ -11587,7 +11613,15 @@ function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDel
           <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-stone-100">
             <p className="text-sm font-bold text-stone-900">{formatMoney(total)}</p>
             <div className="flex items-center gap-1">
-              {!readOnly && !order.calendarEventId && <IconButton icon={Calendar} label="Add to calendar" size={14} onClick={onAddToCalendar} />}
+              {!readOnly && !order.calendarEventId && (
+                <button
+                  type="button"
+                  onClick={onAddToCalendar}
+                  className="inline-flex items-center gap-1 h-9 px-3 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-600 text-xs font-semibold transition"
+                >
+                  <Calendar size={14} /> Add to Calendar
+                </button>
+              )}
               {!readOnly && <IconButton icon={Pencil} label="Edit order" size={14} onClick={onEdit} />}
               {!readOnly && order.completed && <IconButton icon={Archive} label="Archive order" size={14} onClick={onArchive} />}
               {readOnly && <IconButton icon={Archive} label="Restore order" size={14} onClick={onArchive} />}
@@ -12214,6 +12248,14 @@ function ymd(year, month, day) {
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+// A millisecond timestamp as a "YYYY-MM-DDTHH:mm" string in local time, for
+// pre-filling a <input type="datetime-local"> — e.g. a custom reminder time.
+function toDatetimeLocalValue(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 const REMINDER_OPTIONS = [
   { value: "", label: "No reminder" },
   { value: "0", label: "At the time" },
@@ -12425,7 +12467,7 @@ function DayViewModal({ open, onClose, date, events, onAddNote, onOpenEvent, onE
                       <span className={`cs-t9 font-bold px-1.5 py-0.5 rounded-full ${ev.kind === "order" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
                         {ev.kind === "order" ? "Order" : "Note"}
                       </span>
-                      {ev.reminderMinutesBefore != null && <Bell size={11} className="text-stone-400" />}
+                      {(ev.reminderMinutesBefore != null || ev.reminderAt != null) && <Bell size={11} className="text-stone-400" />}
                     </div>
                     <p className="font-semibold text-stone-800 truncate mt-0.5">{ev.title}</p>
                     {ev.notes && <p className="cs-t11 text-stone-400 truncate">{ev.notes}</p>}
@@ -12444,17 +12486,39 @@ function DayViewModal({ open, onClose, date, events, onAddNote, onOpenEvent, onE
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-stone-100">
+                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-stone-100 flex-wrap">
                   <Bell size={12} className="text-stone-400 shrink-0" />
                   <select
-                    value={ev.reminderMinutesBefore == null ? "" : String(ev.reminderMinutesBefore)}
-                    onChange={(e) => onSetReminder(ev.id, e.target.value === "" ? null : Number(e.target.value))}
+                    value={ev.reminderAt != null ? "custom" : ev.reminderMinutesBefore == null ? "" : String(ev.reminderMinutesBefore)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "custom") {
+                        // Default to right now so it's a one-tap adjustment from there.
+                        onSetReminder(ev.id, { reminderMinutesBefore: null, reminderAt: Date.now() });
+                        return;
+                      }
+                      onSetReminder(ev.id, { reminderMinutesBefore: val === "" ? null : Number(val), reminderAt: null });
+                    }}
                     className="text-xs border border-stone-200 rounded-lg px-2 py-1 outline-none focus:border-emerald-700"
                   >
                     {REMINDER_OPTIONS.map((o) => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
+                    <option value="custom">Custom date &amp; time…</option>
                   </select>
+                  {ev.reminderAt != null && (
+                    <input
+                      type="datetime-local"
+                      value={toDatetimeLocalValue(ev.reminderAt)}
+                      onChange={(e) => {
+                        if (!e.target.value) return;
+                        const ms = new Date(e.target.value).getTime();
+                        if (Number.isNaN(ms)) return;
+                        onSetReminder(ev.id, { reminderMinutesBefore: null, reminderAt: ms });
+                      }}
+                      className="text-xs border border-stone-200 rounded-lg px-2 py-1 outline-none focus:border-emerald-700"
+                    />
+                  )}
                 </div>
               </div>
             ))}
@@ -12608,7 +12672,8 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate, initial }) {
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [notes, setNotes] = useState("");
-  const [reminder, setReminder] = useState("");
+  const [reminder, setReminder] = useState(""); // "" | "0" | "15" | "60" | "1440" | "custom"
+  const [reminderAt, setReminderAt] = useState(""); // datetime-local string, only used when reminder === "custom"
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -12617,15 +12682,25 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate, initial }) {
     setDate(initial?.date || initialDate || "");
     setTime(initial?.time || "");
     setNotes(initial?.notes || "");
-    setReminder(initial?.reminderMinutesBefore == null ? "" : String(initial.reminderMinutesBefore));
+    if (initial?.reminderAt != null) {
+      setReminder("custom");
+      setReminderAt(toDatetimeLocalValue(initial.reminderAt));
+    } else {
+      setReminder(initial?.reminderMinutesBefore == null ? "" : String(initial.reminderMinutesBefore));
+      setReminderAt("");
+    }
   }, [open, initial, initialDate]);
 
-  const canSave = title.trim().length > 0 && !!date;
+  const canSave = title.trim().length > 0 && !!date && (reminder !== "custom" || !!reminderAt);
 
   const handleSave = async () => {
     if (!canSave) return;
     setSaving(true);
-    await onSave({ title, date, time, notes, kind: "note", reminderMinutesBefore: reminder === "" ? null : Number(reminder) });
+    const reminderPayload =
+      reminder === "custom"
+        ? { reminderMinutesBefore: null, reminderAt: new Date(reminderAt).getTime() }
+        : { reminderMinutesBefore: reminder === "" ? null : Number(reminder), reminderAt: null };
+    await onSave({ title, date, time, notes, kind: "note", ...reminderPayload });
     setSaving(false);
     onClose();
   };
@@ -12659,11 +12734,28 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate, initial }) {
           </div>
           <div>
             <label className="cs-t11 font-semibold text-stone-500 mb-1 block flex items-center gap-1"><Bell size={11} /> Remind me</label>
-            <select value={reminder} onChange={(e) => setReminder(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700">
+            <select
+              value={reminder}
+              onChange={(e) => {
+                const val = e.target.value;
+                setReminder(val);
+                if (val === "custom" && !reminderAt) setReminderAt(toDatetimeLocalValue(Date.now()));
+              }}
+              className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+            >
               {REMINDER_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
+              <option value="custom">Custom date &amp; time…</option>
             </select>
+            {reminder === "custom" && (
+              <input
+                type="datetime-local"
+                value={reminderAt}
+                onChange={(e) => setReminderAt(e.target.value)}
+                className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm mt-2 outline-none focus:border-emerald-700"
+              />
+            )}
           </div>
           <TextField
             label="Notes"
@@ -12677,6 +12769,59 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate, initial }) {
         </div>
         <button onClick={handleSave} disabled={!canSave || saving} className="w-full mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-40">
           {saving ? "Saving…" : initial ? "Save changes" : "Add note"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function AddOrderToCalendarModal({ open, onClose, order, onSave }) {
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setDate(order?.pickupDate || "");
+    setTime(order?.pickupTime || "");
+  }, [open, order]);
+
+  const canSave = !!date;
+
+  const handleSave = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    await onSave({ date, time });
+    setSaving(false);
+    onClose();
+  };
+
+  if (!order) return null;
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="add-to-cal-title">
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 id="add-to-cal-title" className="font-bold text-lg text-stone-800" style={displayFont}>Add to calendar</h2>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-600">
+            <X size={20} />
+          </button>
+        </div>
+        <p className="text-sm text-stone-500 mb-4">
+          Schedule <span className="font-semibold text-stone-700">{order.customerName}</span>'s pickup on your shop calendar.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+          </div>
+          <div>
+            <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Time</label>
+            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+          </div>
+        </div>
+        <button onClick={handleSave} disabled={!canSave || saving} className="w-full mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-40 flex items-center justify-center gap-2">
+          <Calendar size={16} /> {saving ? "Adding…" : "Add to calendar"}
         </button>
       </div>
     </Modal>
@@ -12812,9 +12957,10 @@ function OrdersScreen({ navigate, initialTab }) {
   const [itemModal, setItemModal] = useState(null);
   const [noteModal, setNoteModal] = useState(null);
   const [eventDetail, setEventDetail] = useState(null);
+  const [calendarPickModal, setCalendarPickModal] = useState(null); // order currently being scheduled onto the calendar
   const [dayView, setDayView] = useState(null);
 
-  // In-app reminders: while this screen is open, checks once a minute for
+  // In-app reminders: while this screen is open, checks every 15 seconds for
   // any calendar event whose reminder window has just been entered, plus
   // orders crossing into "due within 6 hours" or "overdue". This is a real,
   // working alert — but it only fires in this browser tab, not as a phone
@@ -12828,10 +12974,18 @@ function OrdersScreen({ navigate, initialTab }) {
     const check = () => {
       const now = Date.now();
       calendar.events.forEach((ev) => {
-        if (ev.reminderMinutesBefore == null || !ev.date) return;
         if (remindedRef.current.has(ev.id)) return;
-        const when = new Date(`${ev.date}T${ev.time || "09:00"}:00`).getTime();
-        const triggerAt = when - ev.reminderMinutesBefore * 60000;
+        // A custom reminder fires at the exact date/time picked for it,
+        // independent of the event's own date — everything else fires the
+        // usual N-minutes-before-the-event way.
+        let triggerAt = null;
+        if (ev.reminderAt != null) {
+          triggerAt = ev.reminderAt;
+        } else if (ev.reminderMinutesBefore != null && ev.date) {
+          const when = new Date(`${ev.date}T${ev.time || "09:00"}:00`).getTime();
+          triggerAt = when - ev.reminderMinutesBefore * 60000;
+        }
+        if (triggerAt == null) return;
         if (now >= triggerAt && now - triggerAt < 6 * 3600000) {
           remindedRef.current.add(ev.id);
           showToast(`Reminder: ${ev.title}${ev.time ? ` @ ${ev.time}` : ""}`);
@@ -12853,7 +13007,10 @@ function OrdersScreen({ navigate, initialTab }) {
       setNowTick(now);
     };
     check();
-    const iv = setInterval(check, 60000);
+    // Every 15s rather than every 60s so a custom reminder set just seconds
+    // into the future — "remind me in 30 seconds" — still fires promptly
+    // instead of waiting up to a full minute for the next tick.
+    const iv = setInterval(check, 15000);
     return () => clearInterval(iv);
   }, [calendar.events, orders.orders, showToast]);
 
@@ -12927,16 +13084,16 @@ function OrdersScreen({ navigate, initialTab }) {
     showToast("Order updated");
   };
 
-  const handleAddOrderToCalendar = async (order) => {
+  const handleAddOrderToCalendar = async (order, draft) => {
     const ev = await calendar.addEvent({
       title: `${order.customerName} pickup`,
-      date: order.pickupDate || ymd(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()),
-      time: order.pickupTime,
+      date: draft.date,
+      time: draft.time,
       notes: order.pickupLocation,
       orderId: order.id,
       kind: "order",
     });
-    await orders.updateOrder(order.id, { calendarEventId: ev.id });
+    await orders.updateOrder(order.id, { calendarEventId: ev.id, pickupDate: draft.date, pickupTime: draft.time });
     showToast("Added to calendar");
   };
 
@@ -13041,7 +13198,7 @@ function OrdersScreen({ navigate, initialTab }) {
             onToggleComplete={handleToggleComplete}
             onArchive={(id) => handleArchive(id, true)}
             onDelete={handleDeleteOrder}
-            onAddToCalendar={handleAddOrderToCalendar}
+            onAddToCalendar={(order) => setCalendarPickModal(order)}
           />
         )}
         {tab === "calendar" && (
@@ -13088,6 +13245,14 @@ function OrdersScreen({ navigate, initialTab }) {
           onSave={(draft) => (noteModal.mode === "edit" ? calendar.updateEvent(noteModal.event.id, draft) : calendar.addEvent(draft))}
         />
       )}
+      {calendarPickModal && (
+        <AddOrderToCalendarModal
+          open
+          order={calendarPickModal}
+          onClose={() => setCalendarPickModal(null)}
+          onSave={(draft) => handleAddOrderToCalendar(calendarPickModal, draft)}
+        />
+      )}
       {eventDetail && (
         <EventDetailModal
           open
@@ -13130,7 +13295,7 @@ function OrdersScreen({ navigate, initialTab }) {
             setNoteModal({ mode: "edit", event: ev });
           }}
           onDeleteNote={(id) => calendar.removeEvent(id)}
-          onSetReminder={(id, mins) => calendar.updateEvent(id, { reminderMinutesBefore: mins })}
+          onSetReminder={(id, patch) => calendar.updateEvent(id, patch)}
           onUnlinkOrder={unlinkOrderEvent}
         />
       )}
@@ -13392,9 +13557,12 @@ function VendorDashboard({ navigate }) {
      SALES, CUSTOMERS & SPONSORED-ADS ANALYTICS
      Built from the shop's own real order history (all-time, loaded once
      via useOrders) and its real sponsorship campaigns — nothing simulated
-     here either. "Sales" = completed orders only, timed off completedAt
-     (falling back to createdAt for older records that predate that field
-     being reliably set). New-vs-returning and CAC/LTV are computed from
+     here either. "Sales" = completed orders only, timed off their pickup
+     date/time (orderFulfillmentTime — falling back to completedAt, then
+     createdAt, for orders that never had a pickup date set), so revenue
+     lands on the date it was actually fulfilled rather than whenever the
+     vendor happened to tap the complete checkbox. New-vs-returning and
+     CAC/LTV are computed from
      every completed order ever placed with this shop, not just the ones
      inside the selected range, so a customer's very first purchase is
      correctly recognized as "new" even if it happened outside the window.
@@ -13403,7 +13571,7 @@ function VendorDashboard({ navigate }) {
   const completedOrders = useMemo(() => allOrders.filter((o) => o.completed), [allOrders]);
   const ordersInRange = useMemo(
     () => completedOrders.filter((o) => {
-      const t = o.completedAt || o.createdAt || 0;
+      const t = orderFulfillmentTime(o) || 0;
       return t >= sinceMs && t <= nowMs;
     }),
     [completedOrders, sinceMs, nowMs]
@@ -13418,7 +13586,7 @@ function VendorDashboard({ navigate }) {
     let firstSum = 0;
     let secondSum = 0;
     ordersInRange.forEach((o) => {
-      const t = o.completedAt || o.createdAt || 0;
+      const t = orderFulfillmentTime(o) || 0;
       if (t < mid) firstSum += orderRevenue(o);
       else secondSum += orderRevenue(o);
     });
@@ -13427,7 +13595,7 @@ function VendorDashboard({ navigate }) {
   }, [ordersInRange, sinceMs, range.ms]);
 
   const salesSeries = useMemo(
-    () => bucketValueSeries(ordersInRange, range.granularity, sinceMs, nowMs, (o) => o.completedAt || o.createdAt || null, orderRevenue),
+    () => bucketValueSeries(ordersInRange, range.granularity, sinceMs, nowMs, orderFulfillmentTime, orderRevenue),
     [ordersInRange, range, sinceMs, nowMs]
   );
 
@@ -13685,7 +13853,7 @@ function VendorDashboard({ navigate }) {
           />
         </div>
 
-        <DashPanel title="Sales over time" icon={TrendingUp} className="mb-4" info="Revenue from completed orders, plotted across the date range you picked above.">
+        <DashPanel title="Sales over time" icon={TrendingUp} className="mb-4" info="Revenue from completed orders, plotted by pickup (fulfillment) date across the date range you picked above.">
           {salesSeries.every((b) => b.value === 0) ? (
             <p className="text-sm text-stone-400 py-6 text-center">No completed sales in this range yet.</p>
           ) : (
