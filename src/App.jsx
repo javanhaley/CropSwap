@@ -7220,6 +7220,7 @@ function BlockReorderList({ blocks, onReorder }) {
 function LayoutTab({ shop }) {
   const { updateShop, userLoc, showToast } = useApp();
   const [bio, setBio] = useState(shop.bio);
+  const [name, setName] = useState(shop.name || "");
   const [handle, setHandle] = useState(shop.handle || "");
   const [city, setCity] = useState(shop.city || "");
   const [stateCode, setStateCode] = useState(shop.state || "");
@@ -7228,6 +7229,7 @@ function LayoutTab({ shop }) {
 
   useEffect(() => {
     setBio(shop.bio);
+    setName(shop.name || "");
     setHandle(shop.handle || "");
     setCity(shop.city || "");
     setStateCode(shop.state || "");
@@ -7313,6 +7315,15 @@ function LayoutTab({ shop }) {
       />
 
       <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Shop details</p>
+      <label className="block cs-t11 font-semibold text-stone-500 mb-1">Shop name</label>
+      <TextField
+        value={name}
+        onChange={setName}
+        onBlur={(v) => updateShop(shop.id, { name: (v || "").trim() || shop.name })}
+        label="Shop name"
+        placeholder="Your farm or shop name"
+        className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm mb-2 outline-none focus:border-emerald-700"
+      />
       <label className="block cs-t11 font-semibold text-stone-500 mb-1">Tagline</label>
       <TextField
         value={tagline}
