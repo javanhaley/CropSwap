@@ -14394,7 +14394,7 @@ function AuthPromptPopover({ prompt, onSignUp, onLogIn, onDismiss }) {
   useEffect(() => {
     const vh = viewportHeight || window.innerHeight;
     const vw = window.innerWidth;
-    const cardH = 148 + (onLogIn ? 28 : 0); // rough estimate — icon + title + line + button(s)
+    const cardH = 148 + (onLogIn ? 70 : 0); // rough estimate — icon + title + line + button(s)
     const anchor = prompt?.anchor;
     let left, top;
     if (anchor) {
@@ -14430,9 +14430,12 @@ function AuthPromptPopover({ prompt, onSignUp, onLogIn, onDismiss }) {
           Sign up free
         </button>
         {onLogIn && (
-          <button onClick={onLogIn} className="w-full text-center text-xs font-semibold text-stone-500 hover:text-emerald-800 mt-2.5 py-1">
-            Already have an account? Log in
-          </button>
+          <>
+            <p className="text-center text-xs font-medium text-stone-500 mt-3 mb-1.5">Already have an account?</p>
+            <button onClick={onLogIn} className="w-full border-2 border-emerald-800 text-emerald-800 hover:bg-emerald-50 text-sm font-semibold py-2 rounded-xl transition">
+              Log in
+            </button>
+          </>
         )}
       </div>
     </div>
