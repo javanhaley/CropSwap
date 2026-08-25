@@ -4801,7 +4801,7 @@ function ProductCard({ product, onEdit, onDelete, sponsored }) {
             e.stopPropagation();
             openProductReviews(product.id);
           }}
-          className="mt-2 flex items-center gap-1.5 self-start cursor-pointer border-b border-stone-300 hover:border-stone-400 pb-0.5 -mb-px transition-colors"
+          className="mt-3.5 flex items-center gap-1.5 self-start cursor-pointer"
           aria-label={
             product.reviewCount > 0
               ? `${product.avgRating.toFixed(1)} star average, ${product.reviewCount} review${product.reviewCount === 1 ? "" : "s"} — view reviews`
