@@ -5415,7 +5415,7 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
 }
 
 function BottomNav({ route, navigate }) {
-  const { me } = useApp();
+  const { me, exploreView, setExploreView } = useApp();
   const items = [
     { id: "explore", label: "Explore", icon: Home },
     { id: "store", label: me?.isVendor ? "My Store" : "Sell", icon: Store },
@@ -5424,11 +5424,23 @@ function BottomNav({ route, navigate }) {
   return (
     <nav className="md:hidden shrink-0 bg-white border-t border-stone-200 flex justify-around items-center pt-1.5 cs-safe-bottom z-40">
       {items.map((it) => {
-        const isActive = route.screen === it.id || (it.id === "store" && route.screen === "storeEditor");
+        // Explore and Map share the same "explore" screen, told apart by
+        // exploreView — so Explore only reads as active here when the map
+        // isn't the one showing (matches Sidebar's isItemActive above).
+        const isActive =
+          it.id === "explore"
+            ? route.screen === "explore" && exploreView !== "map"
+            : route.screen === it.id || (it.id === "store" && route.screen === "storeEditor");
         return (
           <button
             key={it.id}
-            onClick={() => navigate({ screen: it.id })}
+            onClick={() => {
+              // exploreView lives outside this screen and doesn't reset on
+              // its own, so tapping Explore after being on the map would
+              // otherwise leave you looking at the map again.
+              if (it.id === "explore") setExploreView("grid");
+              navigate({ screen: it.id });
+            }}
             className={`flex flex-col items-center gap-0.5 px-4 py-1 ${isActive ? "text-emerald-800" : "text-stone-400"}`}
           >
             <it.icon size={21} />
@@ -5480,6 +5492,11 @@ function Sidebar({ route, navigate }) {
               key={it.id}
               onClick={() => {
                 if (it.id === "map") setExploreView("map");
+                // "Explore" and "Map" both point at the same screen and are
+                // told apart only by exploreView, which lives outside this
+                // screen and so doesn't reset on its own — without this,
+                // clicking Explore after having been on Map left you on Map.
+                if (it.id === "explore") setExploreView("grid");
                 navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen });
               }}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
