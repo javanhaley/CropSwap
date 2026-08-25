@@ -4493,6 +4493,11 @@ function StarRating({ value = 0, onChange, size = "md", showNumber = false }) {
             e.stopPropagation();
             onChange && onChange(i);
           }}
+          // Non-interactive (display-only) stars let clicks pass straight
+          // through to whatever wraps them — otherwise a disabled <button>
+          // silently eats the click and it never reaches a parent's own
+          // onClick (e.g. a product card's "view reviews" row).
+          style={!interactive ? { pointerEvents: "none" } : undefined}
           className={interactive ? "cursor-pointer" : "cursor-default"}
           aria-label={`${i} star${i > 1 ? "s" : ""}`}
         >
@@ -4796,7 +4801,7 @@ function ProductCard({ product, onEdit, onDelete, sponsored }) {
             e.stopPropagation();
             openProductReviews(product.id);
           }}
-          className="mt-2 flex items-center gap-1.5 self-start cursor-pointer"
+          className="mt-2 flex items-center gap-1.5 self-start cursor-pointer border-b border-stone-300 hover:border-stone-400 pb-0.5 -mb-px transition-colors"
           aria-label={
             product.reviewCount > 0
               ? `${product.avgRating.toFixed(1)} star average, ${product.reviewCount} review${product.reviewCount === 1 ? "" : "s"} — view reviews`
@@ -4804,14 +4809,16 @@ function ProductCard({ product, onEdit, onDelete, sponsored }) {
           }
         >
           <span
-            className="inline-flex"
+            className="inline-flex pointer-events-none"
             style={product.reviewCount > 0 ? { filter: "drop-shadow(0 0 3px rgba(251,191,36,0.65))" } : undefined}
           >
             <StarRating value={product.avgRating || 0} size="sm" />
           </span>
-          <span className="cs-t11 text-stone-500">
-            {product.reviewCount > 0 ? `${product.avgRating.toFixed(1)} (${product.reviewCount})` : "No reviews yet"}
-          </span>
+          {product.reviewCount > 0 && (
+            <span className="cs-t11 text-stone-500 pointer-events-none">
+              {product.avgRating.toFixed(1)} ({product.reviewCount})
+            </span>
+          )}
         </div>
       </div>
     </div>
