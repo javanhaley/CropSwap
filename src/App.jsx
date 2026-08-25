@@ -1744,6 +1744,38 @@ function countryApproxLatLng(code, seed) {
   return { lat: c.lat + dLat, lng: c.lng + dLng };
 }
 
+// Real city-level geocoding via OpenStreetMap's free Nominatim search API —
+// this is what actually puts a shop's map pin on the town/city that was
+// typed in, rather than the coarse state/country-centroid approximations
+// above, which only exist as a last-resort fallback for when this lookup
+// fails (offline, no match found, etc). US state codes are expanded to
+// their full name first since structured geocoding matches names more
+// reliably than 2-letter abbreviations.
+async function geocodeLocation({ city, state, country }) {
+  const countryName = countryInfo(country)?.name || country || "";
+  const stateName = (country || "US").toUpperCase() === "US" ? stateInfo(state)?.name || state || "" : state || "";
+  if (!city && !stateName) return null;
+  const params = new URLSearchParams({ format: "jsonv2", limit: "1" });
+  if (city) params.set("city", city);
+  if (stateName) params.set("state", stateName);
+  if (countryName) params.set("country", countryName);
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const hit = Array.isArray(data) ? data[0] : null;
+    if (!hit) return null;
+    const lat = Number(hit.lat);
+    const lng = Number(hit.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
 /* ============================================================================
    SECTION 4: UTILITIES — pure functions (unit-testable outside React)
 ============================================================================ */
@@ -7536,6 +7568,16 @@ function LayoutTab({ shop }) {
     setPickup(shop.pickupNotes || "");
   }, [shop.id]);
 
+  // Tries to put the map pin on the exact town/city typed in; falls back to
+  // an approximate state/country center only if that lookup can't find a
+  // match. Shared by the city, state, and country fields below since any of
+  // the three changing means the pin needs to be re-placed.
+  const placeShop = async (nextCity, nextState, nextCountry) => {
+    const geo = await geocodeLocation({ city: nextCity, state: nextState, country: nextCountry });
+    if (geo) return geo;
+    return nextCountry === "US" ? stateApproxLatLng(nextState, shop.id) : countryApproxLatLng(nextCountry, shop.id);
+  };
+
   return (
     <div>
       <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Cover photo (background)</p>
@@ -7607,7 +7649,11 @@ function LayoutTab({ shop }) {
       <TextField
         value={city}
         onChange={setCity}
-        onBlur={(v) => updateShop(shop.id, { city: v || shop.city })}
+        onBlur={async (v) => {
+          const nextCity = v || shop.city;
+          const point = await placeShop(nextCity, stateCode, countryCode);
+          updateShop(shop.id, point ? { city: nextCity, lat: point.lat, lng: point.lng } : { city: nextCity });
+        }}
         label="Town or city"
         placeholder="Town"
         className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm mb-2 outline-none focus:border-emerald-700"
@@ -7618,14 +7664,13 @@ function LayoutTab({ shop }) {
         {countryCode === "US" ? (
           <select
             value={stateCode}
-            onChange={(e) => {
+            onChange={async (e) => {
               const code = e.target.value;
               setStateCode(code);
-              // Re-centers the shop's map pin on the newly chosen state so it
-              // actually shows up there, not just in the text on the page —
-              // this is the fix for shops landing in the wrong part of the map.
-              const approx = stateApproxLatLng(code, shop.id);
-              updateShop(shop.id, approx ? { state: code, lat: approx.lat, lng: approx.lng } : { state: code });
+              // Re-places the shop's map pin using the newly chosen state so
+              // it actually shows up there, not just in the text on the page.
+              const point = await placeShop(city, code, countryCode);
+              updateShop(shop.id, point ? { state: code, lat: point.lat, lng: point.lng } : { state: code });
             }}
             aria-label="State"
             className="w-full border border-stone-200 rounded-xl px-2 py-2.5 text-sm bg-white"
@@ -7639,7 +7684,10 @@ function LayoutTab({ shop }) {
           <TextField
             value={stateCode}
             onChange={setStateCode}
-            onBlur={(v) => updateShop(shop.id, { state: v })}
+            onBlur={async (v) => {
+              const point = await placeShop(city, v, countryCode);
+              updateShop(shop.id, point ? { state: v, lat: point.lat, lng: point.lng } : { state: v });
+            }}
             label="State / province"
             placeholder="State / province"
             className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
@@ -7650,7 +7698,7 @@ function LayoutTab({ shop }) {
         <label className="block cs-t11 font-semibold text-stone-500 mb-1">Country</label>
         <select
           value={countryCode}
-          onChange={(e) => {
+          onChange={async (e) => {
             const code = e.target.value;
             const wasUS = countryCode === "US";
             const nowUS = code === "US";
@@ -7658,12 +7706,12 @@ function LayoutTab({ shop }) {
             // A US state code and a typed province name aren't interchangeable,
             // so crossing the US/non-US line clears the state field rather
             // than carrying over text that no longer means anything. Also
-            // re-centers the map pin on the new country so it doesn't stay
+            // re-places the map pin for the new country so it doesn't stay
             // stuck wherever the old country/state left it.
             const nextState = wasUS !== nowUS ? "" : stateCode;
             if (wasUS !== nowUS) setStateCode("");
-            const approx = nowUS ? stateApproxLatLng(nextState, shop.id) : countryApproxLatLng(code, shop.id);
-            updateShop(shop.id, approx ? { country: code, state: nextState, lat: approx.lat, lng: approx.lng } : { country: code, state: nextState });
+            const point = await placeShop(city, nextState, code);
+            updateShop(shop.id, point ? { country: code, state: nextState, lat: point.lat, lng: point.lng } : { country: code, state: nextState });
           }}
           aria-label="Country"
           className="w-full border border-stone-200 rounded-xl px-2 py-2.5 text-sm bg-white"
@@ -14671,7 +14719,7 @@ function VendorDashboard({ navigate }) {
    SECTION 25: STORE SCREEN (own shop or become-a-vendor prompt)
 ============================================================================ */
 function StoreScreen({ navigate }) {
-  const { me, shopsById, createShopForUser, updateMe, purchasePlan, showToast, userLoc } = useApp();
+  const { me, shopsById, createShopForUser, updateMe, purchasePlan, showToast } = useApp();
   const [shopName, setShopName] = useState("");
   const homeLoc = splitCityState(me?.homeLocation?.label);
   const [shopCity, setShopCity] = useState(homeLoc.city || "");
@@ -14836,20 +14884,25 @@ function StoreScreen({ navigate }) {
         <button
           onClick={async () => {
             setCreating(true);
+            // Geocode the actual town/city typed in so the map pin lands
+            // exactly there, rather than wherever the app's default/browsing
+            // location happens to be (that's a shopper convenience setting,
+            // not this shop's real location, and trusting it was placing
+            // shops in the wrong spot — including the wrong country).
+            // Falls back to an approximate state/country center only if the
+            // lookup can't find a match (see createShopForUser).
+            const geo = await geocodeLocation({ city: shopCity.trim(), state: shopState.trim(), country: shopCountry });
             const newShop = await createShopForUser(me, shopName.trim(), {
               city: shopCity.trim(),
               state: shopState.trim(),
               country: shopCountry,
-              // Only trust the device/default location for a US shop — for
-              // any other country it would otherwise pin the shop to
-              // whatever US location the app happens to be defaulted to,
-              // which is worse than falling back to that country's center
-              // (see createShopForUser). The vendor can always fine-tune
-              // their exact pin afterward from the storefront editor.
-              ...(shopCountry === "US" ? { lat: userLoc?.lat, lng: userLoc?.lng } : {}),
+              ...(geo ? { lat: geo.lat, lng: geo.lng } : {}),
             });
             await updateMe({ isVendor: true, shopId: newShop.id });
             setCreating(false);
+            if (!geo) {
+              showToast?.("Couldn't pinpoint that exact city — using an approximate map pin for now. You can fine-tune it later from your storefront editor.");
+            }
             navigate({ screen: "storeEditor" });
           }}
           disabled={creating || !shopName.trim() || !shopState.trim()}
