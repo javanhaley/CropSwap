@@ -4715,7 +4715,7 @@ function ProductImage({ src, photoId, artKey, category, emoji, alt, className = 
 }
 
 function ProductCard({ product, onEdit, onDelete, sponsored }) {
-  const { shopsById, favProducts, toggleFavorite, me, userLoc, openProduct } = useApp();
+  const { shopsById, favProducts, toggleFavorite, me, userLoc, openProduct, openProductReviews } = useApp();
   const shop = shopsById[product.shopId];
   const cat = catInfo(product.category);
   const isFav = !!favProducts[product.id];
@@ -4782,6 +4782,36 @@ function ProductCard({ product, onEdit, onDelete, sponsored }) {
             <span className="cs-t17 font-semibold text-stone-900" style={displayFont}>{formatPrice(product.price, product.priceUnit)}</span>
           )}
           {dist != null && <span className="cs-t10 text-stone-400 font-medium uppercase tracking-wider">{formatDistance(dist)}</span>}
+        </div>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            openProductReviews(product.id);
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault();
+            e.stopPropagation();
+            openProductReviews(product.id);
+          }}
+          className="mt-2 flex items-center gap-1.5 self-start cursor-pointer"
+          aria-label={
+            product.reviewCount > 0
+              ? `${product.avgRating.toFixed(1)} star average, ${product.reviewCount} review${product.reviewCount === 1 ? "" : "s"} — view reviews`
+              : "No reviews yet — view reviews"
+          }
+        >
+          <span
+            className="inline-flex"
+            style={product.reviewCount > 0 ? { filter: "drop-shadow(0 0 3px rgba(251,191,36,0.65))" } : undefined}
+          >
+            <StarRating value={product.avgRating || 0} size="sm" />
+          </span>
+          <span className="cs-t11 text-stone-500">
+            {product.reviewCount > 0 ? `${product.avgRating.toFixed(1)} (${product.reviewCount})` : "No reviews yet"}
+          </span>
         </div>
       </div>
     </div>
@@ -6749,7 +6779,7 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
 /* ============================================================================
    SECTION 17: PRODUCT DETAIL MODAL
 ============================================================================ */
-function ProductDetailModal({ product, open, onClose, navigate }) {
+function ProductDetailModal({ product, open, onClose, navigate, focusReviews }) {
   const { shopsById, favProducts, toggleFavorite, incrementShare, me, userLoc, showToast } = useApp();
 
   useEffect(() => {
@@ -6762,6 +6792,16 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, product?.id, me?.id]);
+
+  // Opened via a product card's star rating — jump straight to the review
+  // list instead of leaving the shopper to scroll and find it themselves.
+  useEffect(() => {
+    if (!open || !focusReviews || !product) return;
+    const t = setTimeout(() => {
+      document.getElementById("product-reviews-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 200);
+    return () => clearTimeout(t);
+  }, [open, focusReviews, product?.id]);
 
   if (!product) return null;
   const shop = shopsById[product.shopId];
@@ -6860,7 +6900,9 @@ function ProductDetailModal({ product, open, onClose, navigate }) {
             </div>
           )}
 
-          <ReviewSection entityType="product" entityId={product.id} ownerId={shop?.ownerId} shopId={product.shopId} />
+          <div id="product-reviews-anchor">
+            <ReviewSection entityType="product" entityId={product.id} ownerId={shop?.ownerId} shopId={product.shopId} />
+          </div>
         </div>
       </div>
     </Modal>
@@ -10781,6 +10823,41 @@ const DASHBOARD_RANGES = [
   { id: "months", label: "Months", ms: 365 * 86400000, granularity: "month" },
   { id: "years", label: "Years", ms: 5 * 365 * 86400000, granularity: "year" },
 ];
+// Independent per-panel period presets. These live under a single chart (via
+// PanelPeriodTabs below) and let that one chart jump to a specific past
+// calendar month/quarter/year WITHOUT changing the dashboard's global
+// Hours/Days/Weeks/Months/Years selector up top, which still drives every
+// other panel. "This range" (the default) just reuses whatever that global
+// selector is already showing, so nothing changes unless you tap a tab.
+const PANEL_PERIODS = [
+  { id: "current", label: "This range" },
+  { id: "lastMonth", label: "Last month" },
+  { id: "last3Months", label: "Last 3 months" },
+  { id: "lastYear", label: "Last year" },
+];
+// Calendar-aligned window (not a trailing N-day slice) for a PANEL_PERIODS
+// preset — e.g. "lastMonth" is the whole previous calendar month, so it's
+// still correct no matter what day of the current month it's viewed on.
+// Returns null for "current" (caller should fall back to the global range).
+function panelPeriodWindow(id, nowMs) {
+  const now = new Date(nowMs);
+  if (id === "lastMonth") {
+    const sinceMs = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+    const untilMs = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    return { sinceMs, untilMs, granularity: "day" };
+  }
+  if (id === "last3Months") {
+    const sinceMs = new Date(now.getFullYear(), now.getMonth() - 3, 1).getTime();
+    const untilMs = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    return { sinceMs, untilMs, granularity: "week" };
+  }
+  if (id === "lastYear") {
+    const sinceMs = new Date(now.getFullYear() - 1, 0, 1).getTime();
+    const untilMs = new Date(now.getFullYear(), 0, 1).getTime();
+    return { sinceMs, untilMs, granularity: "month" };
+  }
+  return null;
+}
 const DASH_STOPWORDS = new Set(["the", "and", "was", "for", "with", "this", "that", "very", "have", "just", "from", "are", "but", "you", "your", "not", "all", "its", "it's", "they", "them"]);
 
 function dayKey(ts) {
@@ -10847,7 +10924,7 @@ function orderCustomerKey(order) {
   const name = (order?.customerName || "").trim().toLowerCase();
   return name ? `name:${name}` : "unknown";
 }
-async function fetchAnalyticsEvents({ types, shopId, sinceMs, limit = 4000 }) {
+async function fetchAnalyticsEvents({ types, shopId, sinceMs, untilMs, limit = 4000 }) {
   try {
     let q = supabase
       .from("analytics_events")
@@ -10855,6 +10932,7 @@ async function fetchAnalyticsEvents({ types, shopId, sinceMs, limit = 4000 }) {
       .gte("created_at", new Date(sinceMs).toISOString())
       .order("created_at", { ascending: true })
       .limit(limit);
+    if (untilMs) q = q.lt("created_at", new Date(untilMs).toISOString());
     if (types?.length) q = q.in("event_type", types);
     if (shopId) q = q.eq("shop_id", shopId);
     const { data, error } = await q;
@@ -11012,6 +11090,28 @@ function DashPanel({ title, icon: Icon, right, children, className = "", info })
         {right}
       </div>
       {children}
+    </div>
+  );
+}
+// Small pill-tab row placed under a single chart, letting that one chart
+// jump to a specific past calendar month/quarter/year (see PANEL_PERIODS)
+// without touching the dashboard's global range selector up top, which
+// keeps driving every other panel as before.
+function PanelPeriodTabs({ value, onChange }) {
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-stone-100">
+      {PANEL_PERIODS.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => onChange(p.id)}
+          className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition ${
+            value === p.id ? "bg-stone-800 text-white" : "bg-stone-100 text-stone-500 hover:bg-stone-200"
+          }`}
+        >
+          {p.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -13353,6 +13453,17 @@ function VendorDashboard({ navigate }) {
   const [respLoading, setRespLoading] = useState(true);
   const [avgResponseMin, setAvgResponseMin] = useState(null);
 
+  // Per-panel period tabs (Peak activity, Views over time, Sales over time) —
+  // independent of the global range selector above. "current" reuses data
+  // already fetched for the global range; any other id fetches its own
+  // bounded window on demand (sales doesn't need a fetch — orders are
+  // already loaded all-time via useOrders).
+  const [heatmapPeriod, setHeatmapPeriod] = useState("current");
+  const [heatmapCustomEvents, setHeatmapCustomEvents] = useState([]);
+  const [viewsPeriod, setViewsPeriod] = useState("current");
+  const [viewsCustomEvents, setViewsCustomEvents] = useState([]);
+  const [salesPeriod, setSalesPeriod] = useState("current");
+
   const nowMs = Date.now();
   const sinceMs = nowMs - range.ms;
 
@@ -13385,6 +13496,39 @@ function VendorDashboard({ navigate }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shop?.id]);
+
+  // Fetches the heatmap's own view events whenever its period tab is set to
+  // something other than "current" — the globally-fetched rangeEvents above
+  // only cover the top range selector's window, so a "Last month" tap here
+  // needs its own request.
+  useEffect(() => {
+    if (!shop || heatmapPeriod === "current") return;
+    const win = panelPeriodWindow(heatmapPeriod, nowMs);
+    if (!win) return;
+    let cancelled = false;
+    fetchAnalyticsEvents({ types: ["view_shop", "view_product"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs }).then((ev) => {
+      if (!cancelled) setHeatmapCustomEvents(ev);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shop?.id, heatmapPeriod]);
+
+  // Same idea for the "Views over time" chart's own period tab.
+  useEffect(() => {
+    if (!shop || viewsPeriod === "current") return;
+    const win = panelPeriodWindow(viewsPeriod, nowMs);
+    if (!win) return;
+    let cancelled = false;
+    fetchAnalyticsEvents({ types: ["view_shop", "view_product"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs }).then((ev) => {
+      if (!cancelled) setViewsCustomEvents(ev);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shop?.id, viewsPeriod]);
 
   // Real average first-response time, from the vendor's own most recent
   // conversation threads (bounded to 10 so this stays cheap).
@@ -13437,6 +13581,14 @@ function VendorDashboard({ navigate }) {
 
   const viewSeries = useMemo(() => bucketSeries(viewEvents, range.granularity, sinceMs, nowMs), [viewEvents, range, sinceMs, nowMs]);
   const favoriteSeries = useMemo(() => bucketSeries(favoriteEvents, range.granularity, sinceMs, nowMs), [favoriteEvents, range, sinceMs, nowMs]);
+  // "Views over time" chart's own series — either the global-range one above
+  // ("current") or one bucketed over its own fetched period window.
+  const viewsSeries2 = useMemo(() => {
+    if (viewsPeriod === "current") return viewSeries;
+    const win = panelPeriodWindow(viewsPeriod, nowMs);
+    if (!win) return viewSeries;
+    return bucketSeries(viewsCustomEvents, win.granularity, win.sinceMs, win.untilMs);
+  }, [viewsPeriod, viewSeries, viewsCustomEvents, nowMs]);
 
   const trendingSearches = useMemo(() => {
     const counts = new Map();
@@ -13493,14 +13645,17 @@ function VendorDashboard({ navigate }) {
     return { total, repeat, pct: total ? Math.round((repeat / total) * 100) : 0 };
   }, [viewEvents]);
 
+  // Peak-activity heatmap's own source events — either the global-range view
+  // events above ("current") or its own fetched period window.
+  const heatmapEventsSource = heatmapPeriod === "current" ? viewEvents : heatmapCustomEvents;
   const heatmap = useMemo(() => {
     const grid = Array.from({ length: 7 }, () => Array(24).fill(0));
-    viewEvents.forEach((e) => {
+    heatmapEventsSource.forEach((e) => {
       const d = new Date(e.created_at);
       grid[d.getDay()][d.getHours()] += 1;
     });
     return grid;
-  }, [viewEvents]);
+  }, [heatmapEventsSource]);
   const heatmapMax = useMemo(() => Math.max(1, ...heatmap.flat()), [heatmap]);
 
   const platformAvgRating = useMemo(() => {
@@ -13630,6 +13785,19 @@ function VendorDashboard({ navigate }) {
     () => bucketValueSeries(ordersInRange, range.granularity, sinceMs, nowMs, orderFulfillmentTime, orderRevenue),
     [ordersInRange, range, sinceMs, nowMs]
   );
+  // "Sales over time" chart's own series — either the global-range one above
+  // ("current") or bucketed straight from all-time completedOrders over its
+  // own calendar window (no fetch needed, orders are already loaded all-time).
+  const salesSeries2 = useMemo(() => {
+    if (salesPeriod === "current") return salesSeries;
+    const win = panelPeriodWindow(salesPeriod, nowMs);
+    if (!win) return salesSeries;
+    const inWindow = completedOrders.filter((o) => {
+      const t = orderFulfillmentTime(o) || 0;
+      return t >= win.sinceMs && t < win.untilMs;
+    });
+    return bucketValueSeries(inWindow, win.granularity, win.sinceMs, win.untilMs, orderFulfillmentTime, orderRevenue);
+  }, [salesPeriod, salesSeries, completedOrders, nowMs]);
 
   const bestSellers = useMemo(() => {
     const counts = new Map();
@@ -13885,14 +14053,14 @@ function VendorDashboard({ navigate }) {
           />
         </div>
 
-        <DashPanel title="Sales over time" icon={TrendingUp} className="mb-4" info="Revenue from completed orders, plotted by pickup (fulfillment) date across the date range you picked above.">
-          {salesSeries.every((b) => b.value === 0) ? (
-            <p className="text-sm text-stone-400 py-6 text-center">No completed sales in this range yet.</p>
+        <DashPanel title="Sales over time" icon={TrendingUp} className="mb-4" info="Revenue from completed orders, plotted by pickup (fulfillment) date. Use the tabs below to jump to a specific past month/quarter/year instead of the date range up top.">
+          {salesSeries2.every((b) => b.value === 0) ? (
+            <p className="text-sm text-stone-400 py-6 text-center">No completed sales in this {salesPeriod === "current" ? "range" : "period"} yet.</p>
           ) : (
             <div style={{ width: "100%", height: 190 }}>
               <ResponsiveContainer>
-                <BarChart data={salesSeries}>
-                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(salesSeries.length / 8))} />
+                <BarChart data={salesSeries2}>
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(salesSeries2.length / 8))} />
                   <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={40} tickFormatter={(v) => `$${v}`} />
                   <Tooltip formatter={(v) => formatMoney(v)} />
                   <Bar dataKey="value" fill="#059669" radius={[3, 3, 0, 0]} />
@@ -13900,6 +14068,7 @@ function VendorDashboard({ navigate }) {
               </ResponsiveContainer>
             </div>
           )}
+          <PanelPeriodTabs value={salesPeriod} onChange={setSalesPeriod} />
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
@@ -14004,17 +14173,18 @@ function VendorDashboard({ navigate }) {
           )}
         </DashPanel>
 
-        <DashPanel title="Views over time" icon={TrendingUp} className="mb-4" info="Every view of your storefront or a listing, plotted across the date range you picked above. Look for spikes after you post something new.">
+        <DashPanel title="Views over time" icon={TrendingUp} className="mb-4" info="Every view of your storefront or a listing, plotted across the date range you picked above. Look for spikes after you post something new. Use the tabs below to jump to a specific past month/quarter/year instead.">
           <div style={{ width: "100%", height: 190 }}>
             <ResponsiveContainer>
-              <AreaChart data={viewSeries}>
-                <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(viewSeries.length / 8))} />
+              <AreaChart data={viewsSeries2}>
+                <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(viewsSeries2.length / 8))} />
                 <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={32} />
                 <Tooltip />
                 <Area type="monotone" dataKey="count" stroke="#065f46" fill="#a7f3d0" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
+          <PanelPeriodTabs value={viewsPeriod} onChange={setViewsPeriod} />
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
@@ -14104,22 +14274,34 @@ function VendorDashboard({ navigate }) {
           </div>
         </DashPanel>
 
-        <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4" info="A heatmap of exactly when shoppers view you, broken out by day of week and hour of day — warmer, redder squares are busier. Great for timing new posts.">
+        <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4" info="A heatmap of exactly when shoppers view you, broken out by day of week and hour of day — warmer, redder squares are busier. Great for timing new posts. Use the tabs below to jump to a specific past month/quarter/year instead.">
           <div className="overflow-x-auto">
-            <div className="inline-grid gap-[2px]" style={{ gridTemplateColumns: "repeat(24, 8px)" }}>
-              {heatmap.map((row, d) =>
-                row.map((v, h) => (
-                  <div
-                    key={`${d}-${h}`}
-                    title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
-                    className="w-2 h-2 rounded-sm"
-                    style={{ backgroundColor: v === 0 ? "#f5f5f4" : dashHeatColor(v / heatmapMax) }}
-                  />
-                ))
-              )}
+            <div className="inline-grid gap-[2px] items-center" style={{ gridTemplateColumns: "26px repeat(24, 14px)" }}>
+              <div />
+              {Array.from({ length: 24 }, (_, h) => (
+                <div key={`hh-${h}`} className="text-center text-stone-400 leading-none" style={{ fontSize: 8 }}>
+                  {h}
+                </div>
+              ))}
+              {heatmap.map((row, d) => (
+                <React.Fragment key={d}>
+                  <div className="text-right pr-1 text-stone-400 leading-none" style={{ fontSize: 9 }}>
+                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}
+                  </div>
+                  {row.map((v, h) => (
+                    <div
+                      key={`${d}-${h}`}
+                      title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
+                      className="rounded-sm"
+                      style={{ width: 12, height: 12, backgroundColor: v === 0 ? "#f5f5f4" : dashHeatColor(v / heatmapMax) }}
+                    />
+                  ))}
+                </React.Fragment>
+              ))}
             </div>
           </div>
-          <p className="cs-t11 text-stone-400 mt-2">Warmer (amber → rose) = busier. Rows are Sun–Sat, columns are hour of day.</p>
+          <p className="cs-t11 text-stone-400 mt-2">Warmer (amber → rose) = busier. Rows are Sun–Sat, columns are every hour of the day (0–23).</p>
+          <PanelPeriodTabs value={heatmapPeriod} onChange={setHeatmapPeriod} />
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
@@ -14786,6 +14968,9 @@ function RootShell() {
   const [profileCardTarget, setProfileCardTarget] = useState(null);
   const openProfileCard = useCallback((target) => setProfileCardTarget(target), []);
   const [openProductId, setOpenProductId] = useState(null);
+  // When a product is opened via its star rating (rather than the card
+  // itself), the detail modal auto-scrolls straight to the review list.
+  const [openProductFocusReviews, setOpenProductFocusReviews] = useState(false);
   const [toast, setToast] = useState("");
   // Anyone can browse without an account. The moment a guest tries to do
   // something that needs one — favorite, review, message, open a
@@ -15061,7 +15246,16 @@ function RootShell() {
     openTextSheet: (cfg) => setTextSheet({ ...cfg, sessionKey: uid("ts") }),
     openLocationPicker: () => setLocPickerOpen(true),
     openProfileCard,
-    openProduct: setOpenProductId,
+    openProduct: (id) => {
+      setOpenProductFocusReviews(false);
+      setOpenProductId(id);
+    },
+    // Opens the same product detail modal, but scrolled straight to its
+    // reviews — used by the clickable star rating on product cards.
+    openProductReviews: (id) => {
+      setOpenProductFocusReviews(true);
+      setOpenProductId(id);
+    },
     showToast,
     conversations: convo.conversations,
     ensureConversation: convo.ensureConversation,
@@ -15195,7 +15389,16 @@ function RootShell() {
         <BottomNav route={route} navigate={navigate} />
       </div>
 
-      <ProductDetailModal product={productsById[openProductId]} open={!!openProductId} onClose={() => setOpenProductId(null)} navigate={navigate} />
+      <ProductDetailModal
+        product={productsById[openProductId]}
+        open={!!openProductId}
+        focusReviews={openProductFocusReviews}
+        onClose={() => {
+          setOpenProductId(null);
+          setOpenProductFocusReviews(false);
+        }}
+        navigate={navigate}
+      />
       <FilterPanel
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
