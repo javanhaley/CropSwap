@@ -1531,6 +1531,219 @@ function stateApproxLatLng(code, seed) {
   return { lat: st.lat + dLat, lng: st.lng + dLng };
 }
 
+// United States pinned first so it's the easy default; everything else is
+// alphabetical by name. Coordinates are rough country centroids — good
+// enough to drop a shop's map pin in the right part of the world when it
+// doesn't have (or hasn't granted) an exact device location, the same way
+// US_STATES above does for state-level fallback placement.
+const COUNTRIES = [
+  { code: "US", name: "United States", lat: 39.8, lng: -98.6 },
+  { code: "AF", name: "Afghanistan", lat: 33.9, lng: 67.7 },
+  { code: "AL", name: "Albania", lat: 41.0, lng: 20.0 },
+  { code: "DZ", name: "Algeria", lat: 28.0, lng: 3.0 },
+  { code: "AD", name: "Andorra", lat: 42.5, lng: 1.6 },
+  { code: "AO", name: "Angola", lat: -11.2, lng: 17.9 },
+  { code: "AG", name: "Antigua and Barbuda", lat: 17.1, lng: -61.8 },
+  { code: "AR", name: "Argentina", lat: -38.4, lng: -63.6 },
+  { code: "AM", name: "Armenia", lat: 40.1, lng: 45.0 },
+  { code: "AU", name: "Australia", lat: -25.3, lng: 133.8 },
+  { code: "AT", name: "Austria", lat: 47.5, lng: 14.6 },
+  { code: "AZ", name: "Azerbaijan", lat: 40.1, lng: 47.6 },
+  { code: "BS", name: "Bahamas", lat: 25.0, lng: -77.4 },
+  { code: "BH", name: "Bahrain", lat: 26.0, lng: 50.6 },
+  { code: "BD", name: "Bangladesh", lat: 23.7, lng: 90.4 },
+  { code: "BB", name: "Barbados", lat: 13.2, lng: -59.5 },
+  { code: "BY", name: "Belarus", lat: 53.7, lng: 27.9 },
+  { code: "BE", name: "Belgium", lat: 50.5, lng: 4.5 },
+  { code: "BZ", name: "Belize", lat: 17.2, lng: -88.5 },
+  { code: "BJ", name: "Benin", lat: 9.3, lng: 2.3 },
+  { code: "BT", name: "Bhutan", lat: 27.5, lng: 90.4 },
+  { code: "BO", name: "Bolivia", lat: -16.3, lng: -63.6 },
+  { code: "BA", name: "Bosnia and Herzegovina", lat: 43.9, lng: 17.7 },
+  { code: "BW", name: "Botswana", lat: -22.3, lng: 24.7 },
+  { code: "BR", name: "Brazil", lat: -14.2, lng: -51.9 },
+  { code: "BN", name: "Brunei", lat: 4.5, lng: 114.7 },
+  { code: "BG", name: "Bulgaria", lat: 42.7, lng: 25.5 },
+  { code: "BF", name: "Burkina Faso", lat: 12.2, lng: -1.6 },
+  { code: "BI", name: "Burundi", lat: -3.4, lng: 29.9 },
+  { code: "CV", name: "Cabo Verde", lat: 16.0, lng: -24.0 },
+  { code: "KH", name: "Cambodia", lat: 12.6, lng: 105.0 },
+  { code: "CM", name: "Cameroon", lat: 7.4, lng: 12.4 },
+  { code: "CA", name: "Canada", lat: 56.1, lng: -106.3 },
+  { code: "CF", name: "Central African Republic", lat: 6.6, lng: 20.9 },
+  { code: "TD", name: "Chad", lat: 15.5, lng: 19.0 },
+  { code: "CL", name: "Chile", lat: -35.7, lng: -71.5 },
+  { code: "CN", name: "China", lat: 35.9, lng: 104.2 },
+  { code: "CO", name: "Colombia", lat: 4.6, lng: -74.3 },
+  { code: "KM", name: "Comoros", lat: -11.9, lng: 43.9 },
+  { code: "CD", name: "Congo (DRC)", lat: -4.0, lng: 21.8 },
+  { code: "CG", name: "Congo (Republic)", lat: -0.2, lng: 15.8 },
+  { code: "CR", name: "Costa Rica", lat: 9.7, lng: -83.8 },
+  { code: "HR", name: "Croatia", lat: 45.1, lng: 15.2 },
+  { code: "CU", name: "Cuba", lat: 21.5, lng: -77.8 },
+  { code: "CY", name: "Cyprus", lat: 35.1, lng: 33.4 },
+  { code: "CZ", name: "Czechia", lat: 49.8, lng: 15.5 },
+  { code: "DK", name: "Denmark", lat: 56.3, lng: 9.5 },
+  { code: "DJ", name: "Djibouti", lat: 11.8, lng: 42.6 },
+  { code: "DM", name: "Dominica", lat: 15.4, lng: -61.4 },
+  { code: "DO", name: "Dominican Republic", lat: 18.7, lng: -70.2 },
+  { code: "EC", name: "Ecuador", lat: -1.8, lng: -78.2 },
+  { code: "EG", name: "Egypt", lat: 26.8, lng: 30.8 },
+  { code: "SV", name: "El Salvador", lat: 13.8, lng: -88.9 },
+  { code: "GQ", name: "Equatorial Guinea", lat: 1.7, lng: 10.3 },
+  { code: "ER", name: "Eritrea", lat: 15.2, lng: 39.8 },
+  { code: "EE", name: "Estonia", lat: 58.6, lng: 25.0 },
+  { code: "SZ", name: "Eswatini", lat: -26.5, lng: 31.5 },
+  { code: "ET", name: "Ethiopia", lat: 9.1, lng: 40.5 },
+  { code: "FJ", name: "Fiji", lat: -17.7, lng: 178.1 },
+  { code: "FI", name: "Finland", lat: 61.9, lng: 25.7 },
+  { code: "FR", name: "France", lat: 46.6, lng: 1.9 },
+  { code: "GA", name: "Gabon", lat: -0.8, lng: 11.6 },
+  { code: "GM", name: "Gambia", lat: 13.4, lng: -15.3 },
+  { code: "GE", name: "Georgia", lat: 42.3, lng: 43.4 },
+  { code: "DE", name: "Germany", lat: 51.2, lng: 10.4 },
+  { code: "GH", name: "Ghana", lat: 7.9, lng: -1.0 },
+  { code: "GR", name: "Greece", lat: 39.1, lng: 21.8 },
+  { code: "GD", name: "Grenada", lat: 12.1, lng: -61.7 },
+  { code: "GT", name: "Guatemala", lat: 15.8, lng: -90.2 },
+  { code: "GN", name: "Guinea", lat: 9.9, lng: -9.7 },
+  { code: "GW", name: "Guinea-Bissau", lat: 11.8, lng: -15.2 },
+  { code: "GY", name: "Guyana", lat: 4.9, lng: -58.9 },
+  { code: "HT", name: "Haiti", lat: 18.9, lng: -72.3 },
+  { code: "HN", name: "Honduras", lat: 15.2, lng: -86.2 },
+  { code: "HU", name: "Hungary", lat: 47.2, lng: 19.5 },
+  { code: "IS", name: "Iceland", lat: 64.9, lng: -19.0 },
+  { code: "IN", name: "India", lat: 20.6, lng: 78.9 },
+  { code: "ID", name: "Indonesia", lat: -0.8, lng: 113.9 },
+  { code: "IR", name: "Iran", lat: 32.4, lng: 53.7 },
+  { code: "IQ", name: "Iraq", lat: 33.2, lng: 43.7 },
+  { code: "IE", name: "Ireland", lat: 53.4, lng: -8.2 },
+  { code: "IL", name: "Israel", lat: 31.0, lng: 34.8 },
+  { code: "IT", name: "Italy", lat: 41.9, lng: 12.6 },
+  { code: "JM", name: "Jamaica", lat: 18.1, lng: -77.3 },
+  { code: "JP", name: "Japan", lat: 36.2, lng: 138.3 },
+  { code: "JO", name: "Jordan", lat: 30.6, lng: 36.2 },
+  { code: "KZ", name: "Kazakhstan", lat: 48.0, lng: 66.9 },
+  { code: "KE", name: "Kenya", lat: 0.0, lng: 37.9 },
+  { code: "KI", name: "Kiribati", lat: 1.9, lng: -157.4 },
+  { code: "XK", name: "Kosovo", lat: 42.6, lng: 20.9 },
+  { code: "KW", name: "Kuwait", lat: 29.3, lng: 47.5 },
+  { code: "KG", name: "Kyrgyzstan", lat: 41.2, lng: 74.8 },
+  { code: "LA", name: "Laos", lat: 19.9, lng: 102.5 },
+  { code: "LV", name: "Latvia", lat: 56.9, lng: 24.6 },
+  { code: "LB", name: "Lebanon", lat: 33.9, lng: 35.9 },
+  { code: "LS", name: "Lesotho", lat: -29.6, lng: 28.2 },
+  { code: "LR", name: "Liberia", lat: 6.4, lng: -9.4 },
+  { code: "LY", name: "Libya", lat: 26.3, lng: 17.2 },
+  { code: "LI", name: "Liechtenstein", lat: 47.2, lng: 9.5 },
+  { code: "LT", name: "Lithuania", lat: 55.2, lng: 23.9 },
+  { code: "LU", name: "Luxembourg", lat: 49.8, lng: 6.1 },
+  { code: "MG", name: "Madagascar", lat: -18.8, lng: 46.9 },
+  { code: "MW", name: "Malawi", lat: -13.3, lng: 34.3 },
+  { code: "MY", name: "Malaysia", lat: 4.2, lng: 101.9 },
+  { code: "MV", name: "Maldives", lat: 3.2, lng: 73.2 },
+  { code: "ML", name: "Mali", lat: 17.6, lng: -4.0 },
+  { code: "MT", name: "Malta", lat: 35.9, lng: 14.4 },
+  { code: "MH", name: "Marshall Islands", lat: 7.1, lng: 171.2 },
+  { code: "MR", name: "Mauritania", lat: 21.0, lng: -10.9 },
+  { code: "MU", name: "Mauritius", lat: -20.3, lng: 57.6 },
+  { code: "MX", name: "Mexico", lat: 23.6, lng: -102.5 },
+  { code: "FM", name: "Micronesia", lat: 6.9, lng: 158.2 },
+  { code: "MD", name: "Moldova", lat: 47.4, lng: 28.4 },
+  { code: "MC", name: "Monaco", lat: 43.7, lng: 7.4 },
+  { code: "MN", name: "Mongolia", lat: 46.9, lng: 103.8 },
+  { code: "ME", name: "Montenegro", lat: 42.7, lng: 19.4 },
+  { code: "MA", name: "Morocco", lat: 31.8, lng: -7.1 },
+  { code: "MZ", name: "Mozambique", lat: -18.7, lng: 35.5 },
+  { code: "MM", name: "Myanmar", lat: 21.9, lng: 95.9 },
+  { code: "NA", name: "Namibia", lat: -22.9, lng: 18.5 },
+  { code: "NR", name: "Nauru", lat: -0.5, lng: 166.9 },
+  { code: "NP", name: "Nepal", lat: 28.4, lng: 84.1 },
+  { code: "NL", name: "Netherlands", lat: 52.1, lng: 5.3 },
+  { code: "NZ", name: "New Zealand", lat: -40.9, lng: 174.9 },
+  { code: "NI", name: "Nicaragua", lat: 12.9, lng: -85.2 },
+  { code: "NE", name: "Niger", lat: 17.6, lng: 8.1 },
+  { code: "NG", name: "Nigeria", lat: 9.1, lng: 8.7 },
+  { code: "KP", name: "North Korea", lat: 40.3, lng: 127.5 },
+  { code: "MK", name: "North Macedonia", lat: 41.6, lng: 21.7 },
+  { code: "NO", name: "Norway", lat: 60.5, lng: 8.5 },
+  { code: "OM", name: "Oman", lat: 21.5, lng: 55.9 },
+  { code: "PK", name: "Pakistan", lat: 30.4, lng: 69.3 },
+  { code: "PW", name: "Palau", lat: 7.5, lng: 134.6 },
+  { code: "PS", name: "Palestine", lat: 31.9, lng: 35.2 },
+  { code: "PA", name: "Panama", lat: 8.5, lng: -80.8 },
+  { code: "PG", name: "Papua New Guinea", lat: -6.3, lng: 143.9 },
+  { code: "PY", name: "Paraguay", lat: -23.4, lng: -58.4 },
+  { code: "PE", name: "Peru", lat: -9.2, lng: -75.0 },
+  { code: "PH", name: "Philippines", lat: 12.9, lng: 121.8 },
+  { code: "PL", name: "Poland", lat: 51.9, lng: 19.1 },
+  { code: "PT", name: "Portugal", lat: 39.4, lng: -8.2 },
+  { code: "QA", name: "Qatar", lat: 25.3, lng: 51.2 },
+  { code: "RO", name: "Romania", lat: 45.9, lng: 25.0 },
+  { code: "RU", name: "Russia", lat: 61.5, lng: 105.3 },
+  { code: "RW", name: "Rwanda", lat: -1.9, lng: 29.9 },
+  { code: "KN", name: "Saint Kitts and Nevis", lat: 17.4, lng: -62.8 },
+  { code: "LC", name: "Saint Lucia", lat: 13.9, lng: -60.9 },
+  { code: "VC", name: "Saint Vincent and the Grenadines", lat: 13.3, lng: -61.2 },
+  { code: "WS", name: "Samoa", lat: -13.8, lng: -172.1 },
+  { code: "SM", name: "San Marino", lat: 43.9, lng: 12.5 },
+  { code: "ST", name: "Sao Tome and Principe", lat: 0.2, lng: 6.6 },
+  { code: "SA", name: "Saudi Arabia", lat: 23.9, lng: 45.1 },
+  { code: "SN", name: "Senegal", lat: 14.5, lng: -14.5 },
+  { code: "RS", name: "Serbia", lat: 44.0, lng: 21.0 },
+  { code: "SC", name: "Seychelles", lat: -4.7, lng: 55.5 },
+  { code: "SL", name: "Sierra Leone", lat: 8.5, lng: -11.8 },
+  { code: "SG", name: "Singapore", lat: 1.35, lng: 103.8 },
+  { code: "SK", name: "Slovakia", lat: 48.7, lng: 19.7 },
+  { code: "SI", name: "Slovenia", lat: 46.2, lng: 15.0 },
+  { code: "SB", name: "Solomon Islands", lat: -9.6, lng: 160.2 },
+  { code: "SO", name: "Somalia", lat: 5.2, lng: 46.2 },
+  { code: "ZA", name: "South Africa", lat: -30.6, lng: 22.9 },
+  { code: "KR", name: "South Korea", lat: 35.9, lng: 127.8 },
+  { code: "SS", name: "South Sudan", lat: 6.9, lng: 31.3 },
+  { code: "ES", name: "Spain", lat: 40.5, lng: -3.7 },
+  { code: "LK", name: "Sri Lanka", lat: 7.9, lng: 80.8 },
+  { code: "SD", name: "Sudan", lat: 12.9, lng: 30.2 },
+  { code: "SR", name: "Suriname", lat: 3.9, lng: -56.0 },
+  { code: "SE", name: "Sweden", lat: 60.1, lng: 18.6 },
+  { code: "CH", name: "Switzerland", lat: 46.8, lng: 8.2 },
+  { code: "SY", name: "Syria", lat: 34.8, lng: 38.9 },
+  { code: "TW", name: "Taiwan", lat: 23.7, lng: 121.0 },
+  { code: "TJ", name: "Tajikistan", lat: 38.9, lng: 71.3 },
+  { code: "TZ", name: "Tanzania", lat: -6.4, lng: 34.9 },
+  { code: "TH", name: "Thailand", lat: 15.9, lng: 101.0 },
+  { code: "TL", name: "Timor-Leste", lat: -8.9, lng: 125.7 },
+  { code: "TG", name: "Togo", lat: 8.6, lng: 0.8 },
+  { code: "TO", name: "Tonga", lat: -21.2, lng: -175.2 },
+  { code: "TT", name: "Trinidad and Tobago", lat: 10.7, lng: -61.2 },
+  { code: "TN", name: "Tunisia", lat: 33.9, lng: 9.5 },
+  { code: "TR", name: "Turkey", lat: 38.9, lng: 35.2 },
+  { code: "TM", name: "Turkmenistan", lat: 39.0, lng: 59.6 },
+  { code: "TV", name: "Tuvalu", lat: -7.1, lng: 177.6 },
+  { code: "UG", name: "Uganda", lat: 1.4, lng: 32.3 },
+  { code: "UA", name: "Ukraine", lat: 48.4, lng: 31.2 },
+  { code: "AE", name: "United Arab Emirates", lat: 23.4, lng: 53.8 },
+  { code: "GB", name: "United Kingdom", lat: 55.4, lng: -3.4 },
+  { code: "UY", name: "Uruguay", lat: -32.5, lng: -55.8 },
+  { code: "UZ", name: "Uzbekistan", lat: 41.4, lng: 64.6 },
+  { code: "VU", name: "Vanuatu", lat: -15.4, lng: 166.9 },
+  { code: "VA", name: "Vatican City", lat: 41.9, lng: 12.45 },
+  { code: "VE", name: "Venezuela", lat: 6.4, lng: -66.6 },
+  { code: "VN", name: "Vietnam", lat: 14.1, lng: 108.3 },
+  { code: "YE", name: "Yemen", lat: 15.6, lng: 48.5 },
+  { code: "ZM", name: "Zambia", lat: -13.1, lng: 27.8 },
+  { code: "ZW", name: "Zimbabwe", lat: -19.0, lng: 29.2 },
+];
+function countryInfo(code) {
+  return COUNTRIES.find((c) => c.code === (code || "").toUpperCase()) || null;
+}
+function countryApproxLatLng(code, seed) {
+  const c = countryInfo(code);
+  if (!c) return null;
+  const { dLat, dLng } = jitterFromSeed(seed, 0.6);
+  return { lat: c.lat + dLat, lng: c.lng + dLng };
+}
+
 /* ============================================================================
    SECTION 4: UTILITIES — pure functions (unit-testable outside React)
 ============================================================================ */
@@ -2904,13 +3117,19 @@ function useMarketData() {
     async (user, shopName, location) => {
       const id = uid("shop");
       // Placed for real from the start: an exact lat/lng (device location or a
-      // picked city) wins outright; a bare state falls back to that state's
-      // approximate center so the pin at least lands in the right part of the
-      // country instead of squatting on the geographic center of the whole US
-      // until someone happens to notice and fix it by hand.
+      // picked city) wins outright. Failing that, a US shop falls back to its
+      // state's approximate center; a shop in any other country falls back to
+      // that country's approximate center — so the pin at least lands in the
+      // right part of the world instead of squatting on the geographic
+      // center of the US until someone happens to notice and fix it by hand.
+      const countryCode = (location?.country || "US").toUpperCase();
       const stateCode = (location?.state || "").toUpperCase().slice(0, 2);
       const hasExactPoint = typeof location?.lat === "number" && typeof location?.lng === "number";
-      const approx = !hasExactPoint ? stateApproxLatLng(stateCode, id) : null;
+      const approx = hasExactPoint
+        ? null
+        : countryCode === "US"
+        ? stateApproxLatLng(stateCode, id)
+        : countryApproxLatLng(countryCode, id);
       const point = hasExactPoint ? { lat: location.lat, lng: location.lng } : approx || { lat: US_CENTER.lat, lng: US_CENTER.lng };
       const newShop = {
         id,
@@ -2918,7 +3137,8 @@ function useMarketData() {
         name: shopName || `${user.name}'s Farm Stand`,
         handle: (shopName || user.name).toLowerCase().replace(/[^a-z0-9]+/g, "") || "farmstand",
         city: location?.city || "Your Town",
-        state: stateCode || "US",
+        state: stateCode || (countryCode === "US" ? "US" : ""),
+        country: countryCode,
         lat: point.lat,
         lng: point.lng,
         bio: "Tell people what you grow and how to find you.",
@@ -7301,6 +7521,7 @@ function LayoutTab({ shop }) {
   const [handle, setHandle] = useState(shop.handle || "");
   const [city, setCity] = useState(shop.city || "");
   const [stateCode, setStateCode] = useState(shop.state || "");
+  const [countryCode, setCountryCode] = useState(shop.country || "US");
   const [tagline, setTagline] = useState(shop.tagline || "");
   const [pickup, setPickup] = useState(shop.pickupNotes || "");
 
@@ -7310,6 +7531,7 @@ function LayoutTab({ shop }) {
     setHandle(shop.handle || "");
     setCity(shop.city || "");
     setStateCode(shop.state || "");
+    setCountryCode(shop.country || "US");
     setTagline(shop.tagline || "");
     setPickup(shop.pickupNotes || "");
   }, [shop.id]);
@@ -7381,37 +7603,73 @@ function LayoutTab({ shop }) {
         placeholder="yourfarm"
         className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm mb-2 outline-none focus:border-emerald-700"
       />
+      <label className="block cs-t11 font-semibold text-stone-500 mb-1">Town or city</label>
+      <TextField
+        value={city}
+        onChange={setCity}
+        onBlur={(v) => updateShop(shop.id, { city: v || shop.city })}
+        label="Town or city"
+        placeholder="Town"
+        className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm mb-2 outline-none focus:border-emerald-700"
+      />
       <div className="flex gap-2 mb-2">
         <div className="flex-1">
-        <label className="block cs-t11 font-semibold text-stone-500 mb-1">Town or city</label>
-        <TextField
-          value={city}
-          onChange={setCity}
-          onBlur={(v) => updateShop(shop.id, { city: v || shop.city })}
-          label="Town or city"
-          placeholder="Town"
-          className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
-        />
+        <label className="block cs-t11 font-semibold text-stone-500 mb-1">{countryCode === "US" ? "State" : "State / province"}</label>
+        {countryCode === "US" ? (
+          <select
+            value={stateCode}
+            onChange={(e) => {
+              const code = e.target.value;
+              setStateCode(code);
+              // Re-centers the shop's map pin on the newly chosen state so it
+              // actually shows up there, not just in the text on the page —
+              // this is the fix for shops landing in the wrong part of the map.
+              const approx = stateApproxLatLng(code, shop.id);
+              updateShop(shop.id, approx ? { state: code, lat: approx.lat, lng: approx.lng } : { state: code });
+            }}
+            aria-label="State"
+            className="w-full border border-stone-200 rounded-xl px-2 py-2.5 text-sm bg-white"
+          >
+            <option value="">State…</option>
+            {US_STATES.map((s) => (
+              <option key={s.code} value={s.code}>{s.code}</option>
+            ))}
+          </select>
+        ) : (
+          <TextField
+            value={stateCode}
+            onChange={setStateCode}
+            onBlur={(v) => updateShop(shop.id, { state: v })}
+            label="State / province"
+            placeholder="State / province"
+            className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
+          />
+        )}
         </div>
-        <div className="w-28">
-        <label className="block cs-t11 font-semibold text-stone-500 mb-1">State</label>
+        <div className="flex-1">
+        <label className="block cs-t11 font-semibold text-stone-500 mb-1">Country</label>
         <select
-          value={stateCode}
+          value={countryCode}
           onChange={(e) => {
             const code = e.target.value;
-            setStateCode(code);
-            // Re-centers the shop's map pin on the newly chosen state so it
-            // actually shows up there, not just in the text on the page —
-            // this is the fix for shops landing in the wrong part of the map.
-            const approx = stateApproxLatLng(code, shop.id);
-            updateShop(shop.id, approx ? { state: code, lat: approx.lat, lng: approx.lng } : { state: code });
+            const wasUS = countryCode === "US";
+            const nowUS = code === "US";
+            setCountryCode(code);
+            // A US state code and a typed province name aren't interchangeable,
+            // so crossing the US/non-US line clears the state field rather
+            // than carrying over text that no longer means anything. Also
+            // re-centers the map pin on the new country so it doesn't stay
+            // stuck wherever the old country/state left it.
+            const nextState = wasUS !== nowUS ? "" : stateCode;
+            if (wasUS !== nowUS) setStateCode("");
+            const approx = nowUS ? stateApproxLatLng(nextState, shop.id) : countryApproxLatLng(code, shop.id);
+            updateShop(shop.id, approx ? { country: code, state: nextState, lat: approx.lat, lng: approx.lng } : { country: code, state: nextState });
           }}
-          aria-label="State"
+          aria-label="Country"
           className="w-full border border-stone-200 rounded-xl px-2 py-2.5 text-sm bg-white"
         >
-          <option value="">State…</option>
-          {US_STATES.map((s) => (
-            <option key={s.code} value={s.code}>{s.code}</option>
+          {COUNTRIES.map((c) => (
+            <option key={c.code} value={c.code}>{c.name}</option>
           ))}
         </select>
         </div>
@@ -14418,6 +14676,7 @@ function StoreScreen({ navigate }) {
   const homeLoc = splitCityState(me?.homeLocation?.label);
   const [shopCity, setShopCity] = useState(homeLoc.city || "");
   const [shopState, setShopState] = useState((homeLoc.state || "").toUpperCase().slice(0, 2));
+  const [shopCountry, setShopCountry] = useState("US");
   const [creating, setCreating] = useState(false);
   const [reactivating, setReactivating] = useState(false);
   const shop = me.isVendor && me.shopId ? shopsById[me.shopId] : null;
@@ -14523,26 +14782,52 @@ function StoreScreen({ navigate }) {
           placeholder="Your farm or shop name"
           className="w-full border border-stone-200 rounded-xl px-4 py-3 text-sm mb-3 outline-none focus:border-emerald-700 text-left"
         />
+        <TextField
+          value={shopCity}
+          onChange={setShopCity}
+          label="Town or city"
+          placeholder="Town or city"
+          className="w-full border border-stone-200 rounded-xl px-4 py-3 text-sm mb-2 outline-none focus:border-emerald-700 text-left"
+        />
         <div className="flex gap-2 mb-1">
           <div className="flex-1">
-            <TextField
-              value={shopCity}
-              onChange={setShopCity}
-              label="Town or city"
-              placeholder="Town or city"
-              className="w-full border border-stone-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-emerald-700 text-left"
-            />
+            {shopCountry === "US" ? (
+              <select
+                value={shopState}
+                onChange={(e) => setShopState(e.target.value)}
+                aria-label="State"
+                className="w-full h-full border border-stone-200 rounded-xl px-2 py-3 text-sm bg-white text-left"
+              >
+                <option value="">State…</option>
+                {US_STATES.map((s) => (
+                  <option key={s.code} value={s.code}>{s.code}</option>
+                ))}
+              </select>
+            ) : (
+              <TextField
+                value={shopState}
+                onChange={setShopState}
+                label="State / province"
+                placeholder="State / province"
+                className="w-full border border-stone-200 rounded-xl px-3 py-3 text-sm outline-none focus:border-emerald-700 text-left"
+              />
+            )}
           </div>
-          <div className="w-32">
+          <div className="flex-1">
             <select
-              value={shopState}
-              onChange={(e) => setShopState(e.target.value)}
-              aria-label="State"
-              className="w-full h-full border border-stone-200 rounded-xl px-2 text-sm bg-white text-left"
+              value={shopCountry}
+              onChange={(e) => {
+                // Reset the state field on a country change — a US state
+                // code and a typed province name aren't interchangeable, so
+                // carrying one over into the other just leaves stale text.
+                setShopCountry(e.target.value);
+                setShopState("");
+              }}
+              aria-label="Country"
+              className="w-full h-full border border-stone-200 rounded-xl px-2 py-3 text-sm bg-white text-left"
             >
-              <option value="">State…</option>
-              {US_STATES.map((s) => (
-                <option key={s.code} value={s.code}>{s.code}</option>
+              {COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>{c.name}</option>
               ))}
             </select>
           </div>
@@ -14553,20 +14838,30 @@ function StoreScreen({ navigate }) {
             setCreating(true);
             const newShop = await createShopForUser(me, shopName.trim(), {
               city: shopCity.trim(),
-              state: shopState,
-              lat: userLoc?.lat,
-              lng: userLoc?.lng,
+              state: shopState.trim(),
+              country: shopCountry,
+              // Only trust the device/default location for a US shop — for
+              // any other country it would otherwise pin the shop to
+              // whatever US location the app happens to be defaulted to,
+              // which is worse than falling back to that country's center
+              // (see createShopForUser). The vendor can always fine-tune
+              // their exact pin afterward from the storefront editor.
+              ...(shopCountry === "US" ? { lat: userLoc?.lat, lng: userLoc?.lng } : {}),
             });
             await updateMe({ isVendor: true, shopId: newShop.id });
             setCreating(false);
             navigate({ screen: "storeEditor" });
           }}
-          disabled={creating || !shopName.trim() || !shopState}
+          disabled={creating || !shopName.trim() || !shopState.trim()}
           className="w-full bg-emerald-800 text-white font-semibold py-3 rounded-xl disabled:opacity-40"
         >
           {creating ? "Setting up…" : "Create my storefront"}
         </button>
-        {!shopState && <p className="cs-t11 text-stone-400 text-center mt-2">Pick a state to continue.</p>}
+        {!shopState.trim() && (
+          <p className="cs-t11 text-stone-400 text-center mt-2">
+            {shopCountry === "US" ? "Pick a state to continue." : "Enter your state or province to continue."}
+          </p>
+        )}
       </div>
     </div>
   );
