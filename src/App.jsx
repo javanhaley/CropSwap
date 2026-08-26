@@ -11153,40 +11153,72 @@ const DASHBOARD_RANGES = [
   { id: "months", label: "Months", ms: 365 * 86400000, granularity: "month" },
   { id: "years", label: "Years", ms: 5 * 365 * 86400000, granularity: "year" },
 ];
-// Independent per-panel period presets. These live under a single chart (via
-// PanelPeriodTabs below) and let that one chart jump to a specific past
-// calendar month/quarter/year WITHOUT changing the dashboard's global
+// Independent per-panel period presets, Yahoo/Google-Finance style. These
+// live under a single chart (via PanelPeriodTabs below) and let that one
+// chart jump to a trailing window WITHOUT changing the dashboard's global
 // Hours/Days/Weeks/Months/Years selector up top, which still drives every
 // other panel. "This range" (the default) just reuses whatever that global
-// selector is already showing, so nothing changes unless you tap a tab.
+// selector is already showing, so nothing changes unless you tap a button —
+// tapping 1M/6M/1Y/All (or picking an exact month from the dropdown next to
+// them) overrides just that one chart.
 const PANEL_PERIODS = [
   { id: "current", label: "This range" },
-  { id: "lastMonth", label: "Last month" },
-  { id: "last3Months", label: "Last 3 months" },
-  { id: "lastYear", label: "Last year" },
+  { id: "1m", label: "1M" },
+  { id: "6m", label: "6M" },
+  { id: "1y", label: "1Y" },
+  { id: "all", label: "All" },
 ];
-// Calendar-aligned window (not a trailing N-day slice) for a PANEL_PERIODS
-// preset — e.g. "lastMonth" is the whole previous calendar month, so it's
-// still correct no matter what day of the current month it's viewed on.
-// Returns null for "current" (caller should fall back to the global range).
-function panelPeriodWindow(id, nowMs) {
-  const now = new Date(nowMs);
-  if (id === "lastMonth") {
-    const sinceMs = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
-    const untilMs = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    return { sinceMs, untilMs, granularity: "day" };
+// Trailing window (not calendar-aligned) for a PANEL_PERIODS preset, or an
+// exact calendar month for a "month:YYYY-MM" id from the month dropdown.
+// `earliestMs` (typically the shop's createdAt) anchors "All" so it doesn't
+// reach back further than the shop has actually existed. Returns null for
+// "current" (caller should fall back to the global range).
+function panelPeriodWindow(id, nowMs, earliestMs) {
+  if (id === "1m") {
+    return { sinceMs: nowMs - 30 * 86400000, untilMs: nowMs, granularity: "day" };
   }
-  if (id === "last3Months") {
-    const sinceMs = new Date(now.getFullYear(), now.getMonth() - 3, 1).getTime();
-    const untilMs = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    return { sinceMs, untilMs, granularity: "week" };
+  if (id === "6m") {
+    return { sinceMs: nowMs - 182 * 86400000, untilMs: nowMs, granularity: "week" };
   }
-  if (id === "lastYear") {
-    const sinceMs = new Date(now.getFullYear() - 1, 0, 1).getTime();
-    const untilMs = new Date(now.getFullYear(), 0, 1).getTime();
-    return { sinceMs, untilMs, granularity: "month" };
+  if (id === "1y") {
+    return { sinceMs: nowMs - 365 * 86400000, untilMs: nowMs, granularity: "month" };
+  }
+  if (id === "all") {
+    const sinceMs = earliestMs || nowMs - 3 * 365 * 86400000;
+    const spanDays = (nowMs - sinceMs) / 86400000;
+    const granularity = spanDays <= 45 ? "day" : spanDays <= 210 ? "week" : "month";
+    return { sinceMs, untilMs: nowMs, granularity };
+  }
+  if (typeof id === "string" && id.startsWith("month:")) {
+    const m = id.match(/^month:(\d{4})-(\d{2})$/);
+    if (m) {
+      const year = Number(m[1]);
+      const month = Number(m[2]) - 1;
+      return { sinceMs: new Date(year, month, 1).getTime(), untilMs: new Date(year, month + 1, 1).getTime(), granularity: "day" };
+    }
   }
   return null;
+}
+// Newest-first list of { id: "month:YYYY-MM", label: "November 2025" }
+// options for a panel's month-picker dropdown, spanning from `sinceMs`
+// (typically the shop's createdAt) to the current month. Capped at 60
+// months as a sane upper bound for very old shops.
+function monthOptionsSince(sinceMs, nowMs) {
+  const now = new Date(nowMs);
+  const startAnchor = sinceMs ? new Date(sinceMs) : new Date(now.getFullYear() - 2, now.getMonth(), 1);
+  const startCursor = new Date(startAnchor.getFullYear(), startAnchor.getMonth(), 1);
+  const cursor = new Date(now.getFullYear(), now.getMonth(), 1);
+  const opts = [];
+  let guard = 0;
+  while (cursor >= startCursor && guard < 60) {
+    opts.push({
+      id: `month:${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`,
+      label: cursor.toLocaleDateString([], { month: "long", year: "numeric" }),
+    });
+    cursor.setMonth(cursor.getMonth() - 1);
+    guard += 1;
+  }
+  return opts;
 }
 const DASH_STOPWORDS = new Set(["the", "and", "was", "for", "with", "this", "that", "very", "have", "just", "from", "are", "but", "you", "your", "not", "all", "its", "it's", "they", "them"]);
 
@@ -11486,9 +11518,10 @@ function DashPanel({ title, icon: Icon, right, children, className = "", info })
 // jump to a specific past calendar month/quarter/year (see PANEL_PERIODS)
 // without touching the dashboard's global range selector up top, which
 // keeps driving every other panel as before.
-function PanelPeriodTabs({ value, onChange }) {
+function PanelPeriodTabs({ value, onChange, monthOptions }) {
+  const isMonthPick = typeof value === "string" && value.startsWith("month:");
   return (
-    <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-stone-100">
+    <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-stone-100">
       {PANEL_PERIODS.map((p) => (
         <button
           key={p.id}
@@ -11501,6 +11534,24 @@ function PanelPeriodTabs({ value, onChange }) {
           {p.label}
         </button>
       ))}
+      {monthOptions && monthOptions.length > 0 && (
+        <select
+          value={isMonthPick ? value : ""}
+          onChange={(e) => e.target.value && onChange(e.target.value)}
+          className={`text-[11px] font-semibold rounded-full pl-2.5 pr-1.5 py-1 border outline-none cursor-pointer ${
+            isMonthPick ? "bg-stone-800 text-white border-stone-800" : "bg-stone-100 text-stone-500 border-transparent"
+          }`}
+        >
+          <option value="" disabled>
+            Pick a month…
+          </option>
+          {monthOptions.map((m) => (
+            <option key={m.id} value={m.id} className="text-stone-900">
+              {m.label}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }
@@ -13840,6 +13891,16 @@ const METRIC_META = {
   aov: { title: "Average order value", icon: Receipt, tint: "violet" },
   bestseller: { title: "Best sellers", icon: Award, tint: "amber" },
 };
+// Which analytics_events types feed each metric's own trend chart — lets
+// MetricDetailModal fetch a wider (or exact-month) window on demand when its
+// own 1M/6M/1Y/All/month-picker controls are used, the same way the panels
+// below it already do for Views/Peak activity.
+const ANALYTICS_KIND_TYPES = {
+  views: ["view_shop", "view_product"],
+  favorites: ["favorite"],
+  shares: ["share"],
+  messages: ["message"],
+};
 // A bigger trend chart used inside a metric's drill-down modal — same
 // bucketed-series shape the panels below already use (bucketSeries gives
 // `.count`, bucketValueSeries gives `.value`), just told which key to plot.
@@ -13892,6 +13953,66 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
   const meta = METRIC_META[kind] || METRIC_META.views;
   const Icon = meta.icon;
   const t = DASH_TINTS[meta.tint] || DASH_TINTS.emerald;
+  const nowMsLocal = Date.now();
+
+  // Every trend chart in this modal gets the same Yahoo/Google-Finance-style
+  // 1M/6M/1Y/All + exact-month controls as the panels on the dashboard
+  // itself. "current" reuses whatever series the dashboard already computed
+  // for its top range selector (no extra work); anything else computes its
+  // own window and — for the analytics-event metrics — fetches it fresh.
+  // Revenue/Orders never need a fetch since completedOrders is already
+  // loaded all-time, so any window there just re-buckets client-side.
+  const isAnalyticsKind = !!ANALYTICS_KIND_TYPES[kind];
+  const isChartKind = isAnalyticsKind || kind === "revenue" || kind === "orders";
+  const [period, setPeriod] = useState("current");
+  const [customEvents, setCustomEvents] = useState(null);
+  const win = period !== "current" ? panelPeriodWindow(period, nowMsLocal, data.shop?.createdAt) : null;
+
+  useEffect(() => {
+    if (!isAnalyticsKind || !win || !data.shop) return;
+    let cancelled = false;
+    setCustomEvents(null);
+    fetchAnalyticsEvents({ types: ANALYTICS_KIND_TYPES[kind], shopId: data.shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs }).then((ev) => {
+      if (!cancelled) setCustomEvents(ev);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, kind]);
+
+  const ordersWindow = win || { sinceMs: data.rangeSinceMs, untilMs: data.rangeUntilMs, granularity: data.rangeGranularity };
+  const ordersInWindow = useMemo(() => {
+    if (kind !== "revenue" && kind !== "orders") return null;
+    return (data.completedOrders || []).filter((o) => {
+      const tt = orderFulfillmentTime(o) || 0;
+      return tt >= ordersWindow.sinceMs && tt <= ordersWindow.untilMs;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, data.completedOrders, ordersWindow.sinceMs, ordersWindow.untilMs]);
+
+  const chartLoading = !!(win && isAnalyticsKind && customEvents === null);
+  let chartSeries = null;
+  let rankedItems = null;
+  let shopPageViewsDisplay = data.shopPageViews;
+  if (kind === "views") {
+    chartSeries = win ? (customEvents ? bucketSeries(customEvents.filter((e) => e.event_type === "view_product" || e.event_type === "view_shop"), win.granularity, win.sinceMs, win.untilMs) : []) : data.viewSeries;
+    rankedItems = win ? (customEvents ? groupEventsByEntity(customEvents.filter((e) => e.event_type === "view_product"), data.shopProducts || []) : []) : data.viewsByProduct;
+    shopPageViewsDisplay = win ? (customEvents ? customEvents.filter((e) => e.event_type === "view_shop").length : "…") : data.shopPageViews;
+  } else if (kind === "favorites") {
+    chartSeries = win ? (customEvents ? bucketSeries(customEvents, win.granularity, win.sinceMs, win.untilMs) : []) : data.favoriteSeries;
+    rankedItems = win ? (customEvents ? groupEventsByEntity(customEvents.filter((e) => e.meta?.kind === "product"), data.shopProducts || []) : []) : data.favoritesByProduct;
+  } else if (kind === "shares") {
+    chartSeries = win ? (customEvents ? bucketSeries(customEvents, win.granularity, win.sinceMs, win.untilMs) : []) : data.shareSeries;
+    rankedItems = win ? (customEvents ? groupEventsByEntity(customEvents.filter((e) => e.meta?.kind === "product"), data.shopProducts || []) : []) : data.sharesByProduct;
+  } else if (kind === "messages") {
+    chartSeries = win ? (customEvents ? bucketSeries(customEvents, win.granularity, win.sinceMs, win.untilMs) : []) : data.messageSeries;
+  } else if (kind === "revenue") {
+    chartSeries = win ? bucketValueSeries(ordersInWindow || [], ordersWindow.granularity, ordersWindow.sinceMs, ordersWindow.untilMs, orderFulfillmentTime, orderRevenue) : data.salesSeries;
+  } else if (kind === "orders") {
+    chartSeries = win ? bucketValueSeries(ordersInWindow || [], ordersWindow.granularity, ordersWindow.sinceMs, ordersWindow.untilMs, orderFulfillmentTime, () => 1) : data.ordersSeries;
+  }
+  const periodControl = isChartKind ? <PanelPeriodTabs value={period} onChange={setPeriod} monthOptions={data.monthOptions} /> : null;
 
   return (
     <Modal open onClose={onClose} size="lg" labelledBy="metric-detail-title">
@@ -13910,41 +14031,44 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
 
         {kind === "views" && (
           <div className="space-y-4">
-            <DetailTrendChart data={data.viewSeries} dataKey="count" color={t.bar} />
+            {chartLoading ? <p className="text-sm text-stone-400 py-6 text-center">Loading…</p> : <DetailTrendChart data={chartSeries} dataKey="count" color={t.bar} />}
             <div className="grid grid-cols-2 gap-3">
-              <DigestChip tint="emerald" icon={Eye} label="Storefront page views" value={data.shopPageViews} />
-              <DigestChip tint="emerald" icon={Package} label="Listing views" value={data.viewsByProduct.reduce((s, p) => s + p.n, 0)} />
+              <DigestChip tint="emerald" icon={Eye} label="Storefront page views" value={shopPageViewsDisplay} />
+              <DigestChip tint="emerald" icon={Package} label="Listing views" value={(rankedItems || []).reduce((s, p) => s + p.n, 0)} />
             </div>
             <div>
-              <p className="cs-t11 text-stone-400 mb-1.5">Most-viewed listings this range</p>
-              <RankedList items={data.viewsByProduct} emptyText="No listing views yet in this range." />
+              <p className="cs-t11 text-stone-400 mb-1.5">Most-viewed listings in this window</p>
+              <RankedList items={rankedItems} emptyText="No listing views yet in this window." />
             </div>
+            {periodControl}
           </div>
         )}
 
         {kind === "favorites" && (
           <div className="space-y-4">
-            <DetailTrendChart data={data.favoriteSeries} dataKey="count" color={t.bar} />
+            {chartLoading ? <p className="text-sm text-stone-400 py-6 text-center">Loading…</p> : <DetailTrendChart data={chartSeries} dataKey="count" color={t.bar} />}
             <div>
-              <p className="cs-t11 text-stone-400 mb-1.5">Most-favorited listings this range</p>
-              <RankedList items={data.favoritesByProduct} emptyText="No favorites yet in this range." />
+              <p className="cs-t11 text-stone-400 mb-1.5">Most-favorited listings in this window</p>
+              <RankedList items={rankedItems} emptyText="No favorites yet in this window." />
             </div>
+            {periodControl}
           </div>
         )}
 
         {kind === "shares" && (
           <div className="space-y-4">
-            <DetailTrendChart data={data.shareSeries} dataKey="count" color={t.bar} />
+            {chartLoading ? <p className="text-sm text-stone-400 py-6 text-center">Loading…</p> : <DetailTrendChart data={chartSeries} dataKey="count" color={t.bar} />}
             <div>
-              <p className="cs-t11 text-stone-400 mb-1.5">Most-shared listings this range</p>
-              <RankedList items={data.sharesByProduct} emptyText="No shares yet in this range." />
+              <p className="cs-t11 text-stone-400 mb-1.5">Most-shared listings in this window</p>
+              <RankedList items={rankedItems} emptyText="No shares yet in this window." />
             </div>
+            {periodControl}
           </div>
         )}
 
         {kind === "messages" && (
           <div className="space-y-4">
-            <DetailTrendChart data={data.messageSeries} dataKey="count" color={t.bar} />
+            {chartLoading ? <p className="text-sm text-stone-400 py-6 text-center">Loading…</p> : <DetailTrendChart data={chartSeries} dataKey="count" color={t.bar} />}
             <div className="grid grid-cols-2 gap-3">
               <DigestChip
                 tint="blue"
@@ -13963,6 +14087,7 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
               <DigestChip tint="emerald" icon={ShoppingBag} label="Messages → orders" value={data.messageToOrderRate != null ? `${data.messageToOrderRate}%` : "—"} />
             </div>
             <p className="cs-t11 text-stone-400">Fast replies build trust — shoppers who message and hear back quickly are far more likely to follow through and place an order.</p>
+            {periodControl}
           </div>
         )}
 
@@ -14029,9 +14154,9 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
 
         {kind === "revenue" && (
           <div className="space-y-4">
-            <DetailTrendChart data={data.salesSeries} dataKey="value" color={t.bar} formatY={(v) => `$${v}`} />
+            <DetailTrendChart data={chartSeries} dataKey="value" color={t.bar} formatY={(v) => `$${v}`} />
             <div>
-              <p className="cs-t11 text-stone-400 mb-1.5">Revenue by day of week (last 90 days)</p>
+              <p className="cs-t11 text-stone-400 mb-1.5">Revenue by day of week</p>
               <div style={{ width: "100%", height: 140 }}>
                 <ResponsiveContainer>
                   <BarChart data={data.revenueByWeekday}>
@@ -14042,6 +14167,7 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+              <p className="cs-t10 text-stone-400 mt-1">Same window as the "Sales by day of week" panel on the dashboard.</p>
             </div>
             <div>
               <p className="cs-t11 text-stone-400 mb-1.5">Order size breakdown, this range</p>
@@ -14054,12 +14180,13 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
                 ))}
               </div>
             </div>
+            {periodControl}
           </div>
         )}
 
         {kind === "orders" && (
           <div className="space-y-4">
-            <DetailTrendChart data={data.ordersSeries} dataKey="value" color={t.bar} />
+            <DetailTrendChart data={chartSeries} dataKey="value" color={t.bar} />
             <p className="text-sm text-stone-600">
               {data.openOrdersCount > 0 ? (
                 <>
@@ -14073,12 +14200,12 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
               )}
             </p>
             <div>
-              <p className="cs-t11 text-stone-400 mb-1.5">Completed orders in this range</p>
-              {data.ordersInRange.length === 0 ? (
+              <p className="cs-t11 text-stone-400 mb-1.5">Completed orders in this window</p>
+              {(win ? ordersInWindow || [] : data.ordersInRange).length === 0 ? (
                 <p className="text-sm text-stone-400 py-2">None yet.</p>
               ) : (
                 <div className="space-y-1.5 max-h-56 overflow-y-auto">
-                  {[...data.ordersInRange]
+                  {[...(win ? ordersInWindow || [] : data.ordersInRange)]
                     .sort((a, b) => (orderFulfillmentTime(b) || 0) - (orderFulfillmentTime(a) || 0))
                     .slice(0, 20)
                     .map((o) => (
@@ -14093,6 +14220,7 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
                 </div>
               )}
             </div>
+            {periodControl}
           </div>
         )}
 
@@ -14207,10 +14335,16 @@ function VendorDashboard({ navigate }) {
   const [heatmapCustomEvents, setHeatmapCustomEvents] = useState([]);
   const [viewsPeriod, setViewsPeriod] = useState("current");
   const [viewsCustomEvents, setViewsCustomEvents] = useState([]);
+  const [favoritesPeriod, setFavoritesPeriod] = useState("current");
+  const [favoritesCustomEvents, setFavoritesCustomEvents] = useState([]);
   const [salesPeriod, setSalesPeriod] = useState("current");
+  const [weekdayPeriod, setWeekdayPeriod] = useState("current");
 
   const nowMs = Date.now();
   const sinceMs = nowMs - range.ms;
+  // Shared month-picker options for every chart's period control below —
+  // spans from this shop's first day to the current month.
+  const monthOptions = monthOptionsSince(shop?.createdAt, nowMs);
 
   useEffect(() => {
     if (!shop) return;
@@ -14248,7 +14382,7 @@ function VendorDashboard({ navigate }) {
   // needs its own request.
   useEffect(() => {
     if (!shop || heatmapPeriod === "current") return;
-    const win = panelPeriodWindow(heatmapPeriod, nowMs);
+    const win = panelPeriodWindow(heatmapPeriod, nowMs, shop?.createdAt);
     if (!win) return;
     let cancelled = false;
     fetchAnalyticsEvents({ types: ["view_shop", "view_product"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs }).then((ev) => {
@@ -14263,7 +14397,7 @@ function VendorDashboard({ navigate }) {
   // Same idea for the "Views over time" chart's own period tab.
   useEffect(() => {
     if (!shop || viewsPeriod === "current") return;
-    const win = panelPeriodWindow(viewsPeriod, nowMs);
+    const win = panelPeriodWindow(viewsPeriod, nowMs, shop?.createdAt);
     if (!win) return;
     let cancelled = false;
     fetchAnalyticsEvents({ types: ["view_shop", "view_product"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs }).then((ev) => {
@@ -14274,6 +14408,21 @@ function VendorDashboard({ navigate }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shop?.id, viewsPeriod]);
+
+  // Same idea again for the "Favorites over time" chart's own period tab.
+  useEffect(() => {
+    if (!shop || favoritesPeriod === "current") return;
+    const win = panelPeriodWindow(favoritesPeriod, nowMs, shop?.createdAt);
+    if (!win) return;
+    let cancelled = false;
+    fetchAnalyticsEvents({ types: ["favorite"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs }).then((ev) => {
+      if (!cancelled) setFavoritesCustomEvents(ev);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shop?.id, favoritesPeriod]);
 
   // Real average first-response time, from the vendor's own most recent
   // conversation threads (bounded to 10 so this stays cheap).
@@ -14355,10 +14504,17 @@ function VendorDashboard({ navigate }) {
   // ("current") or one bucketed over its own fetched period window.
   const viewsSeries2 = useMemo(() => {
     if (viewsPeriod === "current") return viewSeries;
-    const win = panelPeriodWindow(viewsPeriod, nowMs);
+    const win = panelPeriodWindow(viewsPeriod, nowMs, shop?.createdAt);
     if (!win) return viewSeries;
     return bucketSeries(viewsCustomEvents, win.granularity, win.sinceMs, win.untilMs);
   }, [viewsPeriod, viewSeries, viewsCustomEvents, nowMs]);
+  // Same idea for "Favorites over time".
+  const favoriteSeries2 = useMemo(() => {
+    if (favoritesPeriod === "current") return favoriteSeries;
+    const win = panelPeriodWindow(favoritesPeriod, nowMs, shop?.createdAt);
+    if (!win) return favoriteSeries;
+    return bucketSeries(favoritesCustomEvents, win.granularity, win.sinceMs, win.untilMs);
+  }, [favoritesPeriod, favoriteSeries, favoritesCustomEvents, nowMs]);
 
   const trendingSearches = useMemo(() => {
     const counts = new Map();
@@ -14589,7 +14745,7 @@ function VendorDashboard({ navigate }) {
   // own calendar window (no fetch needed, orders are already loaded all-time).
   const salesSeries2 = useMemo(() => {
     if (salesPeriod === "current") return salesSeries;
-    const win = panelPeriodWindow(salesPeriod, nowMs);
+    const win = panelPeriodWindow(salesPeriod, nowMs, shop?.createdAt);
     if (!win) return salesSeries;
     const inWindow = completedOrders.filter((o) => {
       const t = orderFulfillmentTime(o) || 0;
@@ -14634,19 +14790,23 @@ function VendorDashboard({ navigate }) {
   // Revenue by weekday over a fixed trailing 90 days — independent of the
   // range selector up top, so there's always enough signal to spot a real
   // best market day rather than one thin week's noise.
+  // "current" reuses the dashboard's global date range (same convention as
+  // every other panel's period control); the panel's own 1M/6M/1Y/All/
+  // month-picker controls (weekdayPeriod) can widen or narrow that window —
+  // no fetch needed since orders are already loaded all-time.
   const revenueByWeekday = useMemo(() => {
-    const since90 = nowMs - 90 * 86400000;
+    const win = weekdayPeriod === "current" ? { sinceMs, untilMs: nowMs } : panelPeriodWindow(weekdayPeriod, nowMs, shop?.createdAt) || { sinceMs, untilMs: nowMs };
     const buckets = Array.from({ length: 7 }, (_, d) => ({ day: d, label: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d], revenue: 0, orders: 0 }));
     completedOrders.forEach((o) => {
       const t = orderFulfillmentTime(o) || 0;
-      if (t < since90) return;
+      if (t < win.sinceMs || t > win.untilMs) return;
       const d = new Date(t).getDay();
       buckets[d].revenue += orderRevenue(o);
       buckets[d].orders += 1;
     });
     return buckets;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [completedOrders]);
+  }, [completedOrders, weekdayPeriod, nowMs, sinceMs]);
   const bestWeekday = useMemo(() => {
     const withSales = revenueByWeekday.filter((d) => d.revenue > 0);
     if (!withSales.length) return null;
@@ -15025,17 +15185,17 @@ function VendorDashboard({ navigate }) {
               </ResponsiveContainer>
             </div>
           )}
-          <PanelPeriodTabs value={salesPeriod} onChange={setSalesPeriod} />
+          <PanelPeriodTabs value={salesPeriod} onChange={setSalesPeriod} monthOptions={monthOptions} />
         </DashPanel>
 
         <DashPanel
           title="Sales by day of week"
           icon={Calendar}
           className="mb-4"
-          info="Revenue by day of the week from your last 90 days of completed orders — independent of the date range above. Use it to spot your best (and worst) market days."
+          info="Revenue by day of the week for completed orders. Use the buttons below (or pick an exact month) to widen or narrow the window and spot your best (and worst) market days."
         >
           {revenueByWeekday.every((d) => d.revenue === 0) ? (
-            <p className="text-sm text-stone-400 py-6 text-center">No completed sales in the last 90 days yet.</p>
+            <p className="text-sm text-stone-400 py-6 text-center">No completed sales in this window yet.</p>
           ) : (
             <>
               <div style={{ width: "100%", height: 160 }}>
@@ -15050,11 +15210,12 @@ function VendorDashboard({ navigate }) {
               </div>
               {bestWeekday && (
                 <p className="cs-t11 text-stone-400 mt-2">
-                  Best day: <span className="font-semibold text-stone-600">{bestWeekday.label}</span> ({formatMoney(bestWeekday.revenue)} over the last 90 days).
+                  Best day: <span className="font-semibold text-stone-600">{bestWeekday.label}</span> ({formatMoney(bestWeekday.revenue)} in this window).
                 </p>
               )}
             </>
           )}
+          <PanelPeriodTabs value={weekdayPeriod} onChange={setWeekdayPeriod} monthOptions={monthOptions} />
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
@@ -15199,7 +15360,7 @@ function VendorDashboard({ navigate }) {
               </AreaChart>
             </ResponsiveContainer>
           </div>
-          <PanelPeriodTabs value={viewsPeriod} onChange={setViewsPeriod} />
+          <PanelPeriodTabs value={viewsPeriod} onChange={setViewsPeriod} monthOptions={monthOptions} />
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
@@ -15220,11 +15381,11 @@ function VendorDashboard({ navigate }) {
             )}
           </DashPanel>
 
-          <DashPanel title="Favorites over time" icon={Heart} info="How your favorite count has moved over the date range, plus which of your listings are pulling in the most hearts and shares right now.">
+          <DashPanel title="Favorites over time" icon={Heart} info="How your favorite count has moved, plus which of your listings are pulling in the most hearts and shares right now. Use the buttons below (or pick an exact month) to change the window.">
             <div style={{ width: "100%", height: 150 }}>
               <ResponsiveContainer>
-                <LineChart data={favoriteSeries}>
-                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(favoriteSeries.length / 6))} />
+                <LineChart data={favoriteSeries2}>
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(favoriteSeries2.length / 6))} />
                   <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
                   <Tooltip />
                   <Line type="monotone" dataKey="count" stroke={DASH_TINTS.rose.bar} strokeWidth={2} dot={false} />
@@ -15232,6 +15393,7 @@ function VendorDashboard({ navigate }) {
               </ResponsiveContainer>
             </div>
             <p className="cs-t11 text-stone-400 mt-2">Top listings: {leaderboard.top.slice(0, 3).map((p) => p.name).join(", ") || "—"}</p>
+            <PanelPeriodTabs value={favoritesPeriod} onChange={setFavoritesPeriod} monthOptions={monthOptions} />
           </DashPanel>
         </div>
 
@@ -15316,7 +15478,7 @@ function VendorDashboard({ navigate }) {
             </div>
           </div>
           <p className="cs-t11 text-stone-400 mt-2">Warmer (amber → rose) = busier. Rows are Sun–Sat, columns are every hour of the day (0–23).</p>
-          <PanelPeriodTabs value={heatmapPeriod} onChange={setHeatmapPeriod} />
+          <PanelPeriodTabs value={heatmapPeriod} onChange={setHeatmapPeriod} monthOptions={monthOptions} />
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
@@ -15421,6 +15583,12 @@ function VendorDashboard({ navigate }) {
           navigate={navigate}
           data={{
             shop,
+            shopProducts,
+            completedOrders,
+            rangeSinceMs: sinceMs,
+            rangeUntilMs: nowMs,
+            rangeGranularity: range.granularity,
+            monthOptions,
             viewSeries,
             favoriteSeries,
             messageSeries,
