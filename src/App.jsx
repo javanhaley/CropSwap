@@ -9610,15 +9610,23 @@ function MessageActionSheet({ message, flags, onClose, onCopy, onDelete, onStar,
   );
 }
 
-// A small always-visible "⋮" next to each bubble — no long-press needed to
-// star, flag, label, copy, or delete a single text. Starred/important/
-// labeled messages get a tiny badge row under the bubble so it's visible at
-// a glance without opening anything.
+// Tapping/clicking the bubble itself opens the same star/flag/label/copy/
+// delete sheet as the "⋮" — no need to find a tiny button first. The "⋮"
+// stays too, mainly as a visual hint that the bubble is interactive.
+// Starred/important/labeled messages get a tiny badge row under the bubble
+// so it's visible at a glance without opening anything.
 function MessageBubble({ message, isMine, flags, onOpenActions }) {
   const hasBadges = !!(flags?.starred || flags?.important || (flags?.labelIds || []).length > 0);
   return (
     <div className={`flex items-end gap-1 max-w-[85%] ${isMine ? "self-end flex-row-reverse" : "self-start"}`}>
-      <div className={`cs-max75 px-3.5 py-2 rounded-2xl text-sm ${isMine ? "bg-emerald-800 text-white rounded-br-sm" : "bg-white border border-stone-200 text-stone-800 rounded-bl-sm"}`}>
+      <div
+        onClick={() => onOpenActions(message)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpenActions(message); } }}
+        aria-label="Message options"
+        className={`cs-max75 px-3.5 py-2 rounded-2xl text-sm cursor-pointer active:opacity-80 transition-opacity ${isMine ? "bg-emerald-800 text-white rounded-br-sm hover:bg-emerald-900" : "bg-white border border-stone-200 text-stone-800 rounded-bl-sm hover:bg-stone-50"}`}
+      >
         <p>{message.body}</p>
         {hasBadges && (
           <div className={`flex items-center gap-1 mt-1 ${isMine ? "justify-end" : "justify-start"}`}>
