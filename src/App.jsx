@@ -11254,6 +11254,24 @@ function orderCustomerKey(order) {
   const name = (order?.customerName || "").trim().toLowerCase();
   return name ? `name:${name}` : "unknown";
 }
+// Tallies a list of analytics_events by entity_id and resolves each id to a
+// listing name (or "Removed / other listing" if it no longer matches a
+// current product) — the building block for "which listings drove your
+// views/favorites/shares" drill-downs.
+function groupEventsByEntity(events, shopProducts) {
+  const counts = new Map();
+  events.forEach((e) => {
+    const key = e.entity_id || "unknown";
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return [...counts.entries()]
+    .map(([id, n]) => {
+      const p = shopProducts.find((pp) => pp.id === id);
+      return { id, name: p ? p.name : "Removed / other listing", n };
+    })
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 8);
+}
 async function fetchAnalyticsEvents({ types, shopId, sinceMs, untilMs, limit = 4000 }) {
   try {
     let q = supabase
@@ -11355,11 +11373,50 @@ function dashHeatColor(t) {
   const b = Math.round(c1[2] + (c2[2] - c1[2]) * clamped);
   return `rgb(${r},${g},${b})`;
 }
-function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate, tint = "emerald", warn = false }) {
+// Minimal inline trend sparkline — a handful of numbers rendered as a
+// filled area path, no axes/labels. Cheap enough to drop into every stat
+// card without the overhead of a full Recharts chart per card.
+function Sparkline({ data, color = "#059669", height = 26 }) {
+  if (!data || data.length < 2 || data.every((v) => !v)) return null;
+  const w = 100;
+  const h = height;
+  const max = Math.max(...data, 0);
+  const min = Math.min(...data, 0);
+  const range = max - min || 1;
+  const stepX = w / (data.length - 1);
+  const points = data.map((v, i) => [i * stepX, h - ((v - min) / range) * (h - 4) - 2]);
+  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const areaPath = `${linePath} L${w},${h} L0,${h} Z`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={height} preserveAspectRatio="none" className="block mt-1.5">
+      <path d={areaPath} fill={color} opacity={0.14} />
+      <path d={linePath} fill="none" stroke={color} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate, tint = "emerald", warn = false, spark, onOpen }) {
   const showWarn = warn && !locked;
   const t = showWarn ? DASH_TINTS.rose : DASH_TINTS[tint] || DASH_TINTS.emerald;
+  const clickable = !locked && !!onOpen;
   return (
-    <div className={`bg-white border rounded-xl p-3.5 relative ${showWarn ? "border-rose-200 ring-1 ring-rose-100" : "border-stone-200"}`}>
+    <div
+      onClick={clickable ? onOpen : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpen();
+              }
+            }
+          : undefined
+      }
+      className={`bg-white border rounded-xl p-3.5 relative ${showWarn ? "border-rose-200 ring-1 ring-rose-100" : "border-stone-200"} ${
+        clickable ? "cursor-pointer hover:border-stone-300 hover:shadow-sm transition" : ""
+      }`}
+    >
       <div className="flex items-center justify-between mb-1.5">
         <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${t.bg} ${t.text}`}>
           <Icon size={14} />
@@ -11386,6 +11443,8 @@ function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate
       )}
       <p className="cs-t11 text-stone-500">{label}</p>
       {sub && <p className="cs-t10 text-stone-400 mt-0.5">{sub}</p>}
+      {spark && !locked && <Sparkline data={spark} color={t.bar} />}
+      {clickable && <ChevronRight size={12} className="absolute bottom-3.5 right-3.5 text-stone-300" />}
     </div>
   );
 }
@@ -13766,6 +13825,349 @@ function OrdersScreen({ navigate, initialTab }) {
 }
 
 
+// Per-metric title/icon/tint used by MetricDetailModal below — kept in one
+// map so every KPI/sales card and its drill-down modal agree on the same
+// look without repeating the mapping at each call site.
+const METRIC_META = {
+  views: { title: "Views", icon: Eye, tint: "emerald" },
+  favorites: { title: "Favorites", icon: Heart, tint: "rose" },
+  messages: { title: "Messages", icon: MessageCircle, tint: "blue" },
+  shares: { title: "Shares", icon: Share2, tint: "violet" },
+  rating: { title: "Rating & reviews", icon: Star, tint: "amber" },
+  repeat: { title: "Repeat visitors", icon: Users, tint: "teal" },
+  revenue: { title: "Revenue", icon: DollarSign, tint: "emerald" },
+  orders: { title: "Orders", icon: ShoppingBag, tint: "blue" },
+  aov: { title: "Average order value", icon: Receipt, tint: "violet" },
+  bestseller: { title: "Best sellers", icon: Award, tint: "amber" },
+};
+// A bigger trend chart used inside a metric's drill-down modal — same
+// bucketed-series shape the panels below already use (bucketSeries gives
+// `.count`, bucketValueSeries gives `.value`), just told which key to plot.
+function DetailTrendChart({ data, dataKey, color, height = 160, formatY }) {
+  if (!data || data.length === 0 || data.every((d) => (d[dataKey] || 0) === 0)) {
+    return <p className="text-sm text-stone-400 py-6 text-center">No activity in this range yet.</p>;
+  }
+  return (
+    <div style={{ width: "100%", height }}>
+      <ResponsiveContainer>
+        <AreaChart data={data}>
+          <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(data.length / 8))} />
+          <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={36} tickFormatter={formatY} />
+          <Tooltip formatter={formatY ? (v) => formatY(v) : undefined} />
+          <Area type="monotone" dataKey={dataKey} stroke={color} fill={color} fillOpacity={0.15} strokeWidth={2} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+// A ranked "listing → count" list, used by the views/favorites/shares
+// drill-downs to show exactly which products are driving that metric.
+function RankedList({ items, valueSuffix = "", emptyText = "Not enough data yet." }) {
+  if (!items || items.length === 0) return <p className="text-sm text-stone-400 py-4 text-center">{emptyText}</p>;
+  const max = Math.max(...items.map((i) => i.n), 1);
+  return (
+    <div className="space-y-2">
+      {items.map((it, i) => (
+        <div key={it.id || it.name || i} className="flex items-center gap-2">
+          <span className="cs-t11 text-stone-400 w-4 shrink-0">{i + 1}</span>
+          <span className="text-sm text-stone-700 flex-1 truncate">{it.name}</span>
+          <div className="w-16 h-1.5 rounded-full bg-stone-100 overflow-hidden hidden sm:block shrink-0">
+            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.max(8, Math.round((it.n / max) * 100))}%` }} />
+          </div>
+          <span className="text-xs font-mono font-bold text-stone-700 w-10 text-right shrink-0">
+            {it.n}
+            {valueSuffix}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+// The click-through destination for every clickable card on the dashboard —
+// one shared modal, switched by `kind`, fed entirely from data VendorDashboard
+// already computed (no extra fetches). This is where "10x deeper" analysis
+// actually lives: per-listing breakdowns, rating distribution, order size
+// mix, restock alerts, etc. — the same real data, just sliced further.
+function MetricDetailModal({ kind, onClose, navigate, data }) {
+  const meta = METRIC_META[kind] || METRIC_META.views;
+  const Icon = meta.icon;
+  const t = DASH_TINTS[meta.tint] || DASH_TINTS.emerald;
+
+  return (
+    <Modal open onClose={onClose} size="lg" labelledBy="metric-detail-title">
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 id="metric-detail-title" className="text-lg font-bold text-stone-900 flex items-center gap-2" style={displayFont}>
+            <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${t.bg} ${t.text}`}>
+              <Icon size={16} />
+            </span>
+            {meta.title}
+          </h3>
+          <button onClick={onClose} aria-label="Close" className="w-8 h-8 rounded-full bg-stone-100 hover:bg-stone-200 flex items-center justify-center text-stone-500 shrink-0">
+            <X size={16} />
+          </button>
+        </div>
+
+        {kind === "views" && (
+          <div className="space-y-4">
+            <DetailTrendChart data={data.viewSeries} dataKey="count" color={t.bar} />
+            <div className="grid grid-cols-2 gap-3">
+              <DigestChip tint="emerald" icon={Eye} label="Storefront page views" value={data.shopPageViews} />
+              <DigestChip tint="emerald" icon={Package} label="Listing views" value={data.viewsByProduct.reduce((s, p) => s + p.n, 0)} />
+            </div>
+            <div>
+              <p className="cs-t11 text-stone-400 mb-1.5">Most-viewed listings this range</p>
+              <RankedList items={data.viewsByProduct} emptyText="No listing views yet in this range." />
+            </div>
+          </div>
+        )}
+
+        {kind === "favorites" && (
+          <div className="space-y-4">
+            <DetailTrendChart data={data.favoriteSeries} dataKey="count" color={t.bar} />
+            <div>
+              <p className="cs-t11 text-stone-400 mb-1.5">Most-favorited listings this range</p>
+              <RankedList items={data.favoritesByProduct} emptyText="No favorites yet in this range." />
+            </div>
+          </div>
+        )}
+
+        {kind === "shares" && (
+          <div className="space-y-4">
+            <DetailTrendChart data={data.shareSeries} dataKey="count" color={t.bar} />
+            <div>
+              <p className="cs-t11 text-stone-400 mb-1.5">Most-shared listings this range</p>
+              <RankedList items={data.sharesByProduct} emptyText="No shares yet in this range." />
+            </div>
+          </div>
+        )}
+
+        {kind === "messages" && (
+          <div className="space-y-4">
+            <DetailTrendChart data={data.messageSeries} dataKey="count" color={t.bar} />
+            <div className="grid grid-cols-2 gap-3">
+              <DigestChip
+                tint="blue"
+                icon={Clock}
+                label="Avg. response time"
+                value={
+                  data.respLoading
+                    ? "…"
+                    : data.avgResponseMin != null
+                    ? data.avgResponseMin < 60
+                      ? `${data.avgResponseMin}m`
+                      : `${(data.avgResponseMin / 60).toFixed(1)}h`
+                    : "—"
+                }
+              />
+              <DigestChip tint="emerald" icon={ShoppingBag} label="Messages → orders" value={data.messageToOrderRate != null ? `${data.messageToOrderRate}%` : "—"} />
+            </div>
+            <p className="cs-t11 text-stone-400">Fast replies build trust — shoppers who message and hear back quickly are far more likely to follow through and place an order.</p>
+          </div>
+        )}
+
+        {kind === "rating" && (
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              {data.ratingDistribution.map((r) => (
+                <div key={r.star} className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-stone-600 w-8 shrink-0 flex items-center gap-0.5">
+                    {r.star}
+                    <Star size={10} className="text-amber-500 fill-amber-500" />
+                  </span>
+                  <div className="flex-1 h-2 rounded-full bg-stone-100 overflow-hidden">
+                    <div className="h-full bg-amber-500 rounded-full" style={{ width: `${data.count ? Math.round((r.n / data.count) * 100) : 0}%` }} />
+                  </div>
+                  <span className="text-xs font-mono text-stone-500 w-6 text-right shrink-0">{r.n}</span>
+                </div>
+              ))}
+            </div>
+            {data.platformAvgRating != null && data.count > 0 && (
+              <p className="text-sm text-stone-600">
+                You: <span className="font-bold text-stone-900">{data.avgRating.toFixed(2)}</span> · Platform avg:{" "}
+                <span className="font-bold text-stone-900">{data.platformAvgRating.toFixed(2)}</span>
+              </p>
+            )}
+            <div>
+              <p className="cs-t11 text-stone-400 mb-1.5">Recent reviews</p>
+              {data.recentReviews.length === 0 ? (
+                <p className="text-sm text-stone-400 py-2">No reviews yet.</p>
+              ) : (
+                <div className="space-y-2.5">
+                  {data.recentReviews.map((r) => (
+                    <div key={r.id} className="border border-stone-100 rounded-xl p-2.5">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-bold text-stone-700">{r.authorName || "Shopper"}</span>
+                        <span className="text-[11px] font-bold text-amber-600 flex items-center gap-0.5">
+                          {r.rating} <Star size={10} className="fill-amber-500 text-amber-500" />
+                        </span>
+                      </div>
+                      {r.body && <p className="text-xs text-stone-500 line-clamp-2">{r.body}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {kind === "repeat" && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <DigestChip tint="teal" icon={Users} label="Unique viewers" value={data.repeatStats.total} />
+              <DigestChip tint="teal" icon={Repeat} label="Came back 2+ days" value={data.repeatStats.repeat} />
+            </div>
+            <p className="text-sm text-stone-600">
+              Repeat rate: <span className="font-bold text-stone-900">{data.repeatStats.pct}%</span>
+              {data.repeatStats.avgVisitsPerRepeat > 0 && (
+                <span className="cs-t11 text-stone-400"> — repeat viewers come back an average of {data.repeatStats.avgVisitsPerRepeat} different days.</span>
+              )}
+            </p>
+            <p className="cs-t11 text-stone-400">Repeat viewers are shoppers most likely to become loyal customers — consider a mailing-list message to say thanks or announce what's new.</p>
+          </div>
+        )}
+
+        {kind === "revenue" && (
+          <div className="space-y-4">
+            <DetailTrendChart data={data.salesSeries} dataKey="value" color={t.bar} formatY={(v) => `$${v}`} />
+            <div>
+              <p className="cs-t11 text-stone-400 mb-1.5">Revenue by day of week (last 90 days)</p>
+              <div style={{ width: "100%", height: 140 }}>
+                <ResponsiveContainer>
+                  <BarChart data={data.revenueByWeekday}>
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={36} tickFormatter={(v) => `$${v}`} />
+                    <Tooltip formatter={(v) => `$${Math.round(v)}`} />
+                    <Bar dataKey="revenue" fill={t.bar} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div>
+              <p className="cs-t11 text-stone-400 mb-1.5">Order size breakdown, this range</p>
+              <div className="space-y-1.5">
+                {data.orderSizeDistribution.map((b) => (
+                  <div key={b.label} className="flex items-center justify-between text-sm">
+                    <span className="text-stone-600">{b.label}</span>
+                    <span className="font-mono font-bold text-stone-700">{b.n}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {kind === "orders" && (
+          <div className="space-y-4">
+            <DetailTrendChart data={data.ordersSeries} dataKey="value" color={t.bar} />
+            <p className="text-sm text-stone-600">
+              {data.openOrdersCount > 0 ? (
+                <>
+                  <span className="font-bold text-stone-900">{data.openOrdersCount}</span> order{data.openOrdersCount === 1 ? "" : "s"} still open, awaiting pickup.{" "}
+                  <button onClick={() => navigate({ screen: "orders" })} className="font-bold text-emerald-800 underline underline-offset-2">
+                    Manage orders →
+                  </button>
+                </>
+              ) : (
+                "No open orders right now — everything's been picked up."
+              )}
+            </p>
+            <div>
+              <p className="cs-t11 text-stone-400 mb-1.5">Completed orders in this range</p>
+              {data.ordersInRange.length === 0 ? (
+                <p className="text-sm text-stone-400 py-2">None yet.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                  {[...data.ordersInRange]
+                    .sort((a, b) => (orderFulfillmentTime(b) || 0) - (orderFulfillmentTime(a) || 0))
+                    .slice(0, 20)
+                    .map((o) => (
+                      <div key={o.id} className="flex items-center justify-between text-sm border-b border-stone-50 py-1">
+                        <span className="truncate flex-1 text-stone-700">{o.customerName || "Customer"}</span>
+                        <span className="cs-t11 text-stone-400 mx-2 shrink-0">
+                          {orderFulfillmentTime(o) ? new Date(orderFulfillmentTime(o)).toLocaleDateString() : "—"}
+                        </span>
+                        <span className="font-mono font-bold text-stone-700 shrink-0">{formatMoney(orderRevenue(o))}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {kind === "aov" && (
+          <div className="space-y-4">
+            <p className="text-sm text-stone-600">
+              Average order value: <span className="font-bold text-stone-900">{formatMoney(data.aov)}</span> across {data.ordersInRange.length} completed order
+              {data.ordersInRange.length === 1 ? "" : "s"} this range.
+            </p>
+            <div>
+              <p className="cs-t11 text-stone-400 mb-1.5">Order size breakdown</p>
+              <div className="space-y-1.5">
+                {data.orderSizeDistribution.map((b) => (
+                  <div key={b.label}>
+                    <div className="flex items-center justify-between text-xs mb-0.5">
+                      <span className="font-semibold text-stone-700">{b.label}</span>
+                      <span className="font-mono text-stone-500">{b.n}</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-violet-500"
+                        style={{ width: `${data.ordersInRange.length ? Math.round((b.n / data.ordersInRange.length) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="cs-t11 text-stone-400">
+              A bigger average order usually comes from bundling well or pointing shoppers toward higher-value listings — worth a look if most orders land in the smallest bucket.
+            </p>
+          </div>
+        )}
+
+        {kind === "bestseller" && (
+          <div className="space-y-4">
+            {data.bestSellers.length === 0 ? (
+              <p className="text-sm text-stone-400 py-4 text-center">No completed sales in this range yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {data.bestSellers.map((p, i) => (
+                  <div key={p.key || p.name + i} className="flex items-center justify-between text-sm border-b border-stone-50 pb-2">
+                    <span className="flex items-center gap-2 flex-1 truncate">
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 ${i === 0 ? "bg-amber-500" : "bg-stone-300"}`}>
+                        {i + 1}
+                      </span>
+                      <span className="truncate">{p.name}</span>
+                    </span>
+                    <span className="cs-t11 font-mono text-stone-600 shrink-0">
+                      {p.qty} sold · {formatMoney(p.revenue)} · {data.totalRevenue ? Math.round((p.revenue / data.totalRevenue) * 100) : 0}% of revenue
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {data.lowStockAlerts.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5 mb-1.5">
+                  <AlertTriangle size={13} /> Restock watch
+                </p>
+                <div className="space-y-1">
+                  {data.lowStockAlerts.map((it) => (
+                    <p key={it.id} className="text-xs text-amber-900">
+                      {it.name}: <span className="font-bold">{it.qty}</span> {it.unit || ""} left (threshold {it.lowStockThreshold})
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
 function VendorDashboard({ navigate }) {
   const { me, shopsById, shops, products, conversations, showToast, sponsorships } = useApp();
   const shop = me?.shopId ? shopsById[me.shopId] : null;
@@ -13773,6 +14175,19 @@ function VendorDashboard({ navigate }) {
   const premium = isPremiumPlan(me);
   const mailing = useMailingList(shop?.ownerId || null);
   const shopOrders = useOrders(shop?.id || null);
+  const inventory = useInventory(shop?.id || null);
+
+  // Which KPI/sales card's drill-down modal is currently open, if any — see
+  // MetricDetailModal above. Every card on this dashboard is clickable now;
+  // this is the single piece of state that drives all of them.
+  const [detailKind, setDetailKind] = useState(null);
+
+  // A vendor-set monthly revenue goal, persisted per-shop in the private kv
+  // table (same pattern as inventory) — purely local to this dashboard,
+  // nothing else in the app reads or writes it.
+  const [monthlyGoal, setMonthlyGoal] = useState(null);
+  const [goalDraft, setGoalDraft] = useState("");
+  const [editingGoal, setEditingGoal] = useState(false);
 
   const [rangeId, setRangeId] = useState("days");
   const range = DASHBOARD_RANGES.find((r) => r.id === rangeId) || DASHBOARD_RANGES[1];
@@ -13891,6 +14306,31 @@ function VendorDashboard({ navigate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shop?.id, conversations?.length]);
 
+  useEffect(() => {
+    if (!shop) return;
+    let cancelled = false;
+    getJSON(`shopGoal:${shop.id}`, false, {}).then((g) => {
+      if (cancelled) return;
+      setMonthlyGoal(g?.monthlyGoal ?? null);
+      setGoalDraft(g?.monthlyGoal ? String(g.monthlyGoal) : "");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [shop?.id]);
+
+  const saveGoal = async () => {
+    const val = Number(goalDraft);
+    if (!val || val <= 0) {
+      showToast?.("Enter a goal greater than $0");
+      return;
+    }
+    await setJSON(`shopGoal:${shop.id}`, { monthlyGoal: val }, false, { verify: true });
+    setMonthlyGoal(val);
+    setEditingGoal(false);
+    showToast?.("Monthly goal saved");
+  };
+
   const shopProducts = useMemo(() => (shop ? products.filter((p) => p.shopId === shop.id) : []), [products, shop]);
 
   const viewEvents = useMemo(() => rangeEvents.shop.filter((e) => e.event_type === "view_shop" || e.event_type === "view_product"), [rangeEvents]);
@@ -13971,9 +14411,29 @@ function VendorDashboard({ navigate }) {
       byActor.get(e.actor_id).add(dayKey(new Date(e.created_at).getTime()));
     });
     const total = byActor.size;
-    const repeat = [...byActor.values()].filter((days) => days.size > 1).length;
-    return { total, repeat, pct: total ? Math.round((repeat / total) * 100) : 0 };
+    const repeatDaySets = [...byActor.values()].filter((days) => days.size > 1);
+    const repeat = repeatDaySets.length;
+    const avgVisitsPerRepeat = repeat ? Math.round((repeatDaySets.reduce((sum, days) => sum + days.size, 0) / repeat) * 10) / 10 : 0;
+    return { total, repeat, pct: total ? Math.round((repeat / total) * 100) : 0, avgVisitsPerRepeat };
   }, [viewEvents]);
+
+  // Product-level attribution for views/favorites/shares — the same
+  // analytics_events rows already fetched above, just grouped by entity_id
+  // instead of only counted, so a click on any of these three KPI cards can
+  // show exactly which listings are driving the number.
+  const productViewEvents = useMemo(() => viewEvents.filter((e) => e.event_type === "view_product"), [viewEvents]);
+  const shopPageViews = useMemo(() => viewEvents.filter((e) => e.event_type === "view_shop").length, [viewEvents]);
+  const viewsByProduct = useMemo(() => groupEventsByEntity(productViewEvents, shopProducts), [productViewEvents, shopProducts]);
+  const favoritesByProduct = useMemo(
+    () => groupEventsByEntity(favoriteEvents.filter((e) => e.meta?.kind === "product"), shopProducts),
+    [favoriteEvents, shopProducts]
+  );
+  const sharesByProduct = useMemo(
+    () => groupEventsByEntity(shareEvents.filter((e) => e.meta?.kind === "product"), shopProducts),
+    [shareEvents, shopProducts]
+  );
+  const messageSeries = useMemo(() => bucketSeries(messageEvents, range.granularity, sinceMs, nowMs), [messageEvents, range, sinceMs, nowMs]);
+  const shareSeries = useMemo(() => bucketSeries(shareEvents, range.granularity, sinceMs, nowMs), [shareEvents, range, sinceMs, nowMs]);
 
   // Peak-activity heatmap's own source events — either the global-range view
   // events above ("current") or its own fetched period window.
@@ -14001,6 +14461,15 @@ function VendorDashboard({ navigate }) {
   }, [shopProducts]);
 
   const publishedReviews = useMemo(() => shopReviews.filter((r) => r.status === "published"), [shopReviews]);
+  const ratingDistribution = useMemo(() => {
+    const counts = [0, 0, 0, 0, 0]; // index 0 -> 1 star ... index 4 -> 5 star
+    publishedReviews.forEach((r) => {
+      const i = Math.min(5, Math.max(1, Math.round(r.rating))) - 1;
+      counts[i] += 1;
+    });
+    return [5, 4, 3, 2, 1].map((star) => ({ star, n: counts[star - 1] }));
+  }, [publishedReviews]);
+  const recentReviews = useMemo(() => [...publishedReviews].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5), [publishedReviews]);
   const sentimentSeries = useMemo(() => {
     const sorted = [...publishedReviews].sort((a, b) => a.createdAt - b.createdAt);
     let runningSum = 0;
@@ -14135,7 +14604,7 @@ function VendorDashboard({ navigate }) {
       (o.items || []).forEach((it) => {
         const key = it.productId || it.inventoryItemId || it.name;
         if (!key) return;
-        const prev = counts.get(key) || { name: it.name || "Item", qty: 0, revenue: 0 };
+        const prev = counts.get(key) || { key, name: it.name || "Item", qty: 0, revenue: 0 };
         prev.qty += Number(it.qty) || 0;
         prev.revenue += (Number(it.price) || 0) * (Number(it.qty) || 0);
         counts.set(key, prev);
@@ -14143,6 +14612,86 @@ function VendorDashboard({ navigate }) {
     });
     return [...counts.values()].sort((a, b) => b.qty - a.qty).slice(0, 5);
   }, [ordersInRange]);
+
+  // How completed orders in this range break down by size — used by the
+  // Revenue and Average order value drill-downs to show the mix behind the
+  // headline number, not just the average itself.
+  const orderSizeDistribution = useMemo(() => {
+    const bins = [
+      { label: "Under $10", min: 0, max: 10, n: 0 },
+      { label: "$10–25", min: 10, max: 25, n: 0 },
+      { label: "$25–50", min: 25, max: 50, n: 0 },
+      { label: "$50+", min: 50, max: Infinity, n: 0 },
+    ];
+    ordersInRange.forEach((o) => {
+      const rev = orderRevenue(o);
+      const bin = bins.find((b) => rev >= b.min && rev < b.max) || bins[bins.length - 1];
+      bin.n += 1;
+    });
+    return bins;
+  }, [ordersInRange]);
+
+  // Revenue by weekday over a fixed trailing 90 days — independent of the
+  // range selector up top, so there's always enough signal to spot a real
+  // best market day rather than one thin week's noise.
+  const revenueByWeekday = useMemo(() => {
+    const since90 = nowMs - 90 * 86400000;
+    const buckets = Array.from({ length: 7 }, (_, d) => ({ day: d, label: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d], revenue: 0, orders: 0 }));
+    completedOrders.forEach((o) => {
+      const t = orderFulfillmentTime(o) || 0;
+      if (t < since90) return;
+      const d = new Date(t).getDay();
+      buckets[d].revenue += orderRevenue(o);
+      buckets[d].orders += 1;
+    });
+    return buckets;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [completedOrders]);
+  const bestWeekday = useMemo(() => {
+    const withSales = revenueByWeekday.filter((d) => d.revenue > 0);
+    if (!withSales.length) return null;
+    return withSales.reduce((best, d) => (d.revenue > best.revenue ? d : best), withSales[0]);
+  }, [revenueByWeekday]);
+
+  const ordersSeries = useMemo(
+    () => bucketValueSeries(ordersInRange, range.granularity, sinceMs, nowMs, orderFulfillmentTime, () => 1),
+    [ordersInRange, range, sinceMs, nowMs]
+  );
+  const openOrdersCount = useMemo(() => allOrders.filter((o) => !o.completed && !o.archived).length, [allOrders]);
+  const messageToOrderRate = messageEvents.length ? Math.round((orderCountInRange / messageEvents.length) * 100) : null;
+
+  // Cross-references the shop's tracked Inventory items with its best
+  // sellers — a running-low alert only really matters when it's about to
+  // affect a listing that's actually selling.
+  const lowStockAlerts = useMemo(
+    () => (inventory.items || []).filter((it) => it.lowStockThreshold != null && it.qty <= it.lowStockThreshold).sort((a, b) => a.qty - b.qty).slice(0, 5),
+    [inventory.items]
+  );
+  const bestSellerLowStockNote = useMemo(() => {
+    const top = bestSellers[0];
+    if (!top) return null;
+    const match = (inventory.items || []).find((it) => it.linkedProductId === top.key || it.id === top.key);
+    if (match && match.lowStockThreshold != null && match.qty <= match.lowStockThreshold) {
+      return `${match.qty} ${match.unit || "unit"}${match.qty === 1 ? "" : "s"} left`;
+    }
+    return null;
+  }, [bestSellers, inventory.items]);
+
+  // This calendar month's revenue + a simple linear pace projection for the
+  // "Revenue goal & pace" panel — average $/day so far this month × days in
+  // the month. Not a forecast model, just an honest "at this rate" estimate.
+  const nowDate = new Date(nowMs);
+  const monthStart = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).getTime();
+  const daysInMonth = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 0).getDate();
+  const daysElapsed = nowDate.getDate();
+  const thisMonthRevenue = useMemo(() => {
+    return completedOrders.reduce((sum, o) => {
+      const t = orderFulfillmentTime(o) || 0;
+      return t >= monthStart ? sum + orderRevenue(o) : sum;
+    }, 0);
+  }, [completedOrders, monthStart]);
+  const projectedMonthRevenue = daysElapsed > 0 ? (thisMonthRevenue / daysElapsed) * daysInMonth : 0;
+  const goalPct = monthlyGoal ? Math.min(100, Math.round((thisMonthRevenue / monthlyGoal) * 100)) : 0;
 
   // Every unique customer's very first-ever completed order, all-time —
   // the anchor for deciding "new" vs "returning" inside any range.
@@ -14301,7 +14850,9 @@ function VendorDashboard({ navigate }) {
             warn={premium && viewsDelta != null && viewsDelta <= -20}
             locked={!premium}
             navigate={navigate}
-            info="How many times shoppers opened your storefront or one of your listings in the selected date range."
+            spark={viewSeries.map((b) => b.count)}
+            onOpen={() => setDetailKind("views")}
+            info="How many times shoppers opened your storefront or one of your listings in the selected date range. Tap for a breakdown by listing."
           />
           <DashStat
             icon={Heart}
@@ -14309,7 +14860,9 @@ function VendorDashboard({ navigate }) {
             label="New favorites"
             value={favoriteEvents.length}
             delta={favoritesDelta}
-            info="Shoppers who tapped the heart on your shop or a listing — a strong signal they want to come back."
+            spark={favoriteSeries.map((b) => b.count)}
+            onOpen={() => setDetailKind("favorites")}
+            info="Shoppers who tapped the heart on your shop or a listing — a strong signal they want to come back. Tap for a breakdown by listing."
           />
           <DashStat
             icon={MessageCircle}
@@ -14320,7 +14873,9 @@ function VendorDashboard({ navigate }) {
             warn={premium && messagesDelta != null && messagesDelta <= -20}
             locked={!premium}
             navigate={navigate}
-            info="New conversations shoppers started with you in this range — usually your best sign of real buying intent."
+            spark={messageSeries.map((b) => b.count)}
+            onOpen={() => setDetailKind("messages")}
+            info="New conversations shoppers started with you in this range — usually your best sign of real buying intent. Tap for response-time and conversion detail."
           />
           <DashStat
             icon={Share2}
@@ -14328,7 +14883,9 @@ function VendorDashboard({ navigate }) {
             label="Shares"
             value={shareEvents.length}
             delta={pctChange(shareEvents)}
-            info="Times someone used the share button on your shop or listings — a rough read on word-of-mouth reach."
+            spark={shareSeries.map((b) => b.count)}
+            onOpen={() => setDetailKind("shares")}
+            info="Times someone used the share button on your shop or listings — a rough read on word-of-mouth reach. Tap for a breakdown by listing."
           />
           <DashStat
             icon={Star}
@@ -14337,7 +14894,9 @@ function VendorDashboard({ navigate }) {
             label="Avg rating"
             value={count > 0 ? avgRating.toFixed(1) : "—"}
             sub={`${count} review${count === 1 ? "" : "s"}`}
-            info="Your average star rating across every published review, all-time (not limited to the date range above)."
+            spark={sentimentSeries.length >= 2 ? sentimentSeries.slice(-12).map((s) => s.rolling) : null}
+            onOpen={() => setDetailKind("rating")}
+            info="Your average star rating across every published review, all-time (not limited to the date range above). Tap for the star breakdown and recent reviews."
           />
           <DashStat
             icon={Users}
@@ -14345,7 +14904,8 @@ function VendorDashboard({ navigate }) {
             label="Repeat visitors"
             value={`${repeatStats.pct}%`}
             sub={`${repeatStats.repeat} of ${repeatStats.total} viewers`}
-            info="The share of your viewers this range who came back and viewed you again on a different day — a loyalty signal."
+            onOpen={() => setDetailKind("repeat")}
+            info="The share of your viewers this range who came back and viewed you again on a different day — a loyalty signal. Tap for more detail."
           />
         </div>
 
@@ -14357,21 +14917,26 @@ function VendorDashboard({ navigate }) {
             label="Revenue"
             value={formatMoney(totalRevenue)}
             delta={revenueDelta}
-            info="Total from completed orders in this date range, based on each order's line-item prices and quantities."
+            spark={salesSeries.map((b) => b.value)}
+            onOpen={() => setDetailKind("revenue")}
+            info="Total from completed orders in this date range, based on each order's line-item prices and quantities. Tap for revenue by day of week and order-size mix."
           />
           <DashStat
             icon={ShoppingBag}
             tint="blue"
             label="Orders"
             value={orderCountInRange.toLocaleString()}
-            info="Completed orders in this date range. Orders still open or awaiting pickup aren't counted until they're marked done."
+            spark={ordersSeries.map((b) => b.value)}
+            onOpen={() => setDetailKind("orders")}
+            info="Completed orders in this date range. Orders still open or awaiting pickup aren't counted until they're marked done. Tap to see the order list."
           />
           <DashStat
             icon={Receipt}
             tint="violet"
             label="Avg order value"
             value={formatMoney(aov)}
-            info="Revenue ÷ orders in this range — how much a typical completed order is worth."
+            onOpen={() => setDetailKind("aov")}
+            info="Revenue ÷ orders in this range — how much a typical completed order is worth. Tap for the order-size breakdown."
           />
           <DashStat
             icon={Award}
@@ -14379,9 +14944,71 @@ function VendorDashboard({ navigate }) {
             label="Best seller"
             value={bestSellers[0] ? bestSellers[0].name : "—"}
             sub={bestSellers[0] ? `${bestSellers[0].qty} sold · ${formatMoney(bestSellers[0].revenue)}` : "No sales yet"}
-            info="Your top-selling item by quantity sold, in this date range."
+            onOpen={() => setDetailKind("bestseller")}
+            info="Your top-selling item by quantity sold, in this date range. Tap for your full top-5 and a restock check."
           />
         </div>
+
+        <DashPanel
+          title="Revenue goal & pace"
+          icon={Target}
+          className="mb-4"
+          info="Set a monthly revenue goal and track your pace toward it — projected using your average revenue per day so far this month."
+          right={
+            monthlyGoal != null && !editingGoal ? (
+              <button
+                onClick={() => {
+                  setGoalDraft(String(monthlyGoal));
+                  setEditingGoal(true);
+                }}
+                className="text-xs font-bold text-emerald-800 shrink-0"
+              >
+                Edit goal
+              </button>
+            ) : null
+          }
+        >
+          {editingGoal || monthlyGoal == null ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center border border-stone-200 rounded-xl overflow-hidden bg-white flex-1 max-w-[160px]">
+                <span className="pl-2.5 pr-1 text-stone-400 text-sm">$</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="50"
+                  value={goalDraft}
+                  onChange={(e) => setGoalDraft(e.target.value)}
+                  placeholder="1000"
+                  className="flex-1 min-w-0 py-2 pr-2 text-sm outline-none"
+                />
+              </div>
+              <button onClick={saveGoal} className="text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-full px-3.5 py-2">
+                Save goal
+              </button>
+              {monthlyGoal != null && (
+                <button onClick={() => setEditingGoal(false)} className="text-xs font-semibold text-stone-400">
+                  Cancel
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="flex items-end justify-between mb-1.5">
+                <p className="text-sm text-stone-600">
+                  <span className="font-bold text-stone-900 font-mono">{formatMoney(thisMonthRevenue)}</span> of {formatMoney(monthlyGoal)} goal this month
+                </p>
+                <span className="text-xs font-bold text-stone-500">{goalPct}%</span>
+              </div>
+              <div className="h-2.5 rounded-full bg-stone-100 overflow-hidden mb-2.5">
+                <div className="h-full rounded-full bg-emerald-600" style={{ width: `${goalPct}%` }} />
+              </div>
+              <p className="cs-t11 text-stone-400">
+                On pace for about <span className="font-bold text-stone-600">{formatMoney(projectedMonthRevenue)}</span> by month end —{" "}
+                {projectedMonthRevenue >= monthlyGoal ? "ahead of goal" : "below goal at the current pace"}.
+              </p>
+            </>
+          )}
+        </DashPanel>
 
         <DashPanel title="Sales over time" icon={TrendingUp} className="mb-4" info="Revenue from completed orders, plotted by pickup (fulfillment) date. Use the tabs below to jump to a specific past month/quarter/year instead of the date range up top.">
           {salesSeries2.every((b) => b.value === 0) ? (
@@ -14401,8 +15028,43 @@ function VendorDashboard({ navigate }) {
           <PanelPeriodTabs value={salesPeriod} onChange={setSalesPeriod} />
         </DashPanel>
 
+        <DashPanel
+          title="Sales by day of week"
+          icon={Calendar}
+          className="mb-4"
+          info="Revenue by day of the week from your last 90 days of completed orders — independent of the date range above. Use it to spot your best (and worst) market days."
+        >
+          {revenueByWeekday.every((d) => d.revenue === 0) ? (
+            <p className="text-sm text-stone-400 py-6 text-center">No completed sales in the last 90 days yet.</p>
+          ) : (
+            <>
+              <div style={{ width: "100%", height: 160 }}>
+                <ResponsiveContainer>
+                  <BarChart data={revenueByWeekday}>
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={40} tickFormatter={(v) => `$${v}`} />
+                    <Tooltip formatter={(v) => formatMoney(v)} />
+                    <Bar dataKey="revenue" fill={DASH_TINTS.emerald.bar} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              {bestWeekday && (
+                <p className="cs-t11 text-stone-400 mt-2">
+                  Best day: <span className="font-semibold text-stone-600">{bestWeekday.label}</span> ({formatMoney(bestWeekday.revenue)} over the last 90 days).
+                </p>
+              )}
+            </>
+          )}
+        </DashPanel>
+
         <div className="grid md:grid-cols-2 gap-4 mb-4">
           <DashPanel title="Best sellers" icon={Award} info="Your top 5 items by units sold in this date range, with the revenue each one brought in.">
+            {bestSellerLowStockNote && (
+              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2.5">
+                <AlertTriangle size={12} className="text-amber-600 shrink-0" />
+                <p className="text-[11px] font-semibold text-amber-800">Your best seller is running low — {bestSellerLowStockNote}.</p>
+              </div>
+            )}
             {bestSellers.length === 0 ? (
               <p className="text-sm text-stone-400 py-4 text-center">No completed sales in this range yet.</p>
             ) : (
@@ -14440,6 +15102,29 @@ function VendorDashboard({ navigate }) {
             </p>
           </DashPanel>
         </div>
+
+        {lowStockAlerts.length > 0 && (
+          <DashPanel
+            title="Restock watch"
+            icon={AlertTriangle}
+            className="mb-4"
+            info="Inventory items at or below the low-stock threshold you set for them — a quick list of what needs restocking soonest."
+          >
+            <div className="space-y-1.5">
+              {lowStockAlerts.map((it) => (
+                <div key={it.id} className="flex items-center justify-between text-sm">
+                  <span className="truncate flex-1">{it.name}</span>
+                  <span className="cs-t11 font-mono text-amber-700 shrink-0">
+                    {it.qty} {it.unit || ""} left · threshold {it.lowStockThreshold}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => navigate({ screen: "orders", tab: "inventory" })} className="text-xs font-bold text-emerald-800 mt-2.5">
+              Manage inventory →
+            </button>
+          </DashPanel>
+        )}
 
         <DashPanel
           title="Sponsored ads performance"
@@ -14728,6 +15413,44 @@ function VendorDashboard({ navigate }) {
           </ToolLock>
         </DashPanel>
       </div>
+
+      {detailKind && (
+        <MetricDetailModal
+          kind={detailKind}
+          onClose={() => setDetailKind(null)}
+          navigate={navigate}
+          data={{
+            shop,
+            viewSeries,
+            favoriteSeries,
+            messageSeries,
+            shareSeries,
+            ordersSeries,
+            salesSeries,
+            shopPageViews,
+            viewsByProduct,
+            favoritesByProduct,
+            sharesByProduct,
+            avgResponseMin,
+            respLoading,
+            messageToOrderRate,
+            avgRating,
+            count,
+            ratingDistribution,
+            recentReviews,
+            platformAvgRating,
+            repeatStats,
+            totalRevenue,
+            revenueByWeekday,
+            orderSizeDistribution,
+            ordersInRange,
+            openOrdersCount,
+            aov,
+            bestSellers,
+            lowStockAlerts,
+          }}
+        />
+      )}
     </div>
   );
 }
