@@ -2795,7 +2795,6 @@ function containsBlockedContent(text) {
 /* ============================================================================
    SECTION 8: DATA HOOKS
 ============================================================================ */
-const AVATAR_EMOJI = ["🌻", "🍅", "🐝", "🍇", "🥕", "🐐", "🌾", "🍎", "🐓", "🍄", "🐄", "🍒"];
 
 function useCurrentUser() {
   // undefined = still checking for a session, null = signed out, object = signed in.
@@ -2874,7 +2873,10 @@ function useCurrentUser() {
       id,
       name: name || "Guest",
       email: sessionRef.current?.user?.email || null,
-      avatar: avatar || AVATAR_EMOJI[Math.floor(Math.random() * AVATAR_EMOJI.length)],
+      // No more auto-assigned farm-emoji avatars — accounts start with none
+      // (Avatar falls back to a plain neutral glyph) until someone uploads a
+      // real photo from the account modal.
+      avatar: avatar || "",
       createdAt: Date.now(),
       isVendor: false,
       shopId: null,
@@ -3780,19 +3782,69 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
     return [...byId.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   }, [reviews, mine]);
 
+  // A review's authorName/authorAvatar is written once, at post time — so
+  // without this, renaming your profile (or a shop updating its display
+  // name) would leave every review you'd already left frozen under the old
+  // name forever. Instead, look up each author's *current* public profile
+  // and let it override the stored snapshot at render time; the snapshot
+  // itself is left untouched and still serves as a fallback if a lookup
+  // fails (offline, or the account no longer exists).
+  const [liveAuthors, setLiveAuthors] = useState({});
+  const fetchedAuthorIdsRef = useRef(new Set());
+  useEffect(() => {
+    const ids = new Set();
+    allReviews.forEach((r) => {
+      if (r.authorId) ids.add(r.authorId);
+      if (r.response?.authorId) ids.add(r.response.authorId);
+    });
+    const toFetch = [...ids].filter((id) => !fetchedAuthorIdsRef.current.has(id));
+    if (!toFetch.length) return;
+    toFetch.forEach((id) => fetchedAuthorIdsRef.current.add(id));
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        toFetch.map(async (id) => {
+          const theirs = await getJSON(`users:${id}`, true, null);
+          return theirs ? [id, { name: theirs.name, avatar: theirs.avatar, avatarPhotoId: theirs.avatarPhotoId }] : null;
+        })
+      );
+      if (cancelled) return;
+      const found = entries.filter(Boolean);
+      if (found.length) setLiveAuthors((prev) => ({ ...prev, ...Object.fromEntries(found) }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [allReviews]);
+
   const published = useMemo(() => allReviews.filter((r) => r.status === "published"), [allReviews]);
   const visible = useMemo(
     () =>
       allReviews
         .filter((r) => r.status === "published" || (r.status === "pending" && viewerId && r.authorId === viewerId))
         .map((r) => {
-          if (!r.response) return r;
+          const live = liveAuthors[r.authorId];
+          const withLiveAuthor = live
+            ? { ...r, authorName: live.name || r.authorName, authorAvatar: live.avatar || r.authorAvatar, authorAvatarPhotoId: live.avatarPhotoId }
+            : r;
+          if (!withLiveAuthor.response) return withLiveAuthor;
           const respVisible =
-            r.response.status === "published" ||
-            (r.response.status === "pending" && viewerId && r.response.authorId === viewerId);
-          return respVisible ? r : { ...r, response: null };
+            withLiveAuthor.response.status === "published" ||
+            (withLiveAuthor.response.status === "pending" && viewerId && withLiveAuthor.response.authorId === viewerId);
+          if (!respVisible) return { ...withLiveAuthor, response: null };
+          const liveResp = liveAuthors[withLiveAuthor.response.authorId];
+          if (!liveResp) return withLiveAuthor;
+          return {
+            ...withLiveAuthor,
+            response: {
+              ...withLiveAuthor.response,
+              authorName: liveResp.name || withLiveAuthor.response.authorName,
+              authorAvatar: liveResp.avatar || withLiveAuthor.response.authorAvatar,
+              authorAvatarPhotoId: liveResp.avatarPhotoId,
+            },
+          };
         }),
-    [allReviews, viewerId]
+    [allReviews, viewerId, liveAuthors]
   );
   const avgRating = useMemo(() => {
     if (!published.length) return 0;
@@ -4215,6 +4267,49 @@ function useMessages(me, cid, otherUser) {
     [cid]
   );
 
+  // Per-message star/important/labels — same idea as hiddenMsgs above (a
+  // private, per-viewer overlay on the shared thread), so categorizing one
+  // text is entirely your own business and never touches the other side's
+  // copy of the conversation.
+  const [msgFlags, setMsgFlags] = useState({});
+  const msgFlagsRef = useRef({});
+  useEffect(() => {
+    let cancelled = false;
+    msgFlagsRef.current = {};
+    setMsgFlags({});
+    if (!cid) return;
+    getJSON(`msgFlags:${cid}`, false, {}).then((flags) => {
+      const safe = flags && typeof flags === "object" ? flags : {};
+      if (!cancelled) {
+        msgFlagsRef.current = safe;
+        setMsgFlags(safe);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cid]);
+  const patchMsgFlags = useCallback(
+    (id, patch) => {
+      const cur = msgFlagsRef.current[id] || {};
+      const next = { ...msgFlagsRef.current, [id]: { ...cur, ...patch } };
+      msgFlagsRef.current = next;
+      setMsgFlags(next);
+      if (cid) setJSON(`msgFlags:${cid}`, next, false);
+    },
+    [cid]
+  );
+  const toggleMessageStar = useCallback((id) => patchMsgFlags(id, { starred: !msgFlagsRef.current[id]?.starred }), [patchMsgFlags]);
+  const toggleMessageImportant = useCallback((id) => patchMsgFlags(id, { important: !msgFlagsRef.current[id]?.important }), [patchMsgFlags]);
+  const toggleMessageLabel = useCallback(
+    (id, labelId) => {
+      const cur = msgFlagsRef.current[id]?.labelIds || [];
+      const nextIds = cur.includes(labelId) ? cur.filter((x) => x !== labelId) : [...cur, labelId];
+      patchMsgFlags(id, { labelIds: nextIds });
+    },
+    [patchMsgFlags]
+  );
+
   // Whether the other person has blocked *me* — checked from their own
   // profile (shared_kv is readable by any signed-in user), not from anything
   // stored locally, since only they control that list. This is what actually
@@ -4295,7 +4390,7 @@ function useMessages(me, cid, otherUser) {
 
   const visibleMessages = useMemo(() => messages.filter((m) => !hiddenIds.includes(m.id)), [messages, hiddenIds]);
 
-  return { messages: visibleMessages, loading, send, blockedByOther, deleteMessage };
+  return { messages: visibleMessages, loading, send, blockedByOther, deleteMessage, msgFlags, toggleMessageStar, toggleMessageImportant, toggleMessageLabel };
 }
 
 function useNotifications(me) {
@@ -4592,6 +4687,92 @@ function useIsTouchDevice() {
   return touch;
 }
 
+// ---- Comma-formatted number entry. The value a caller reads via onChange is
+// always a plain digit string (e.g. "1000.5") — exactly what Number(value),
+// formatMoney, and every other bit of math in this app already expects.
+// Commas are purely how NumberField *displays* that string while someone is
+// looking at it; nothing downstream has to change to get them.
+function formatNumberWithCommas(raw) {
+  if (raw == null) return "";
+  const str = String(raw);
+  const neg = str.startsWith("-");
+  const body = neg ? str.slice(1) : str;
+  const dot = body.indexOf(".");
+  const intPart = dot === -1 ? body : body.slice(0, dot);
+  const decPart = dot === -1 ? "" : body.slice(dot);
+  const withCommas = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return (neg ? "-" : "") + withCommas + decPart;
+}
+function cleanNumericInput(raw, allowDecimal) {
+  let s = String(raw || "").replace(allowDecimal ? /[^\d.]/g : /[^\d]/g, "");
+  if (allowDecimal) {
+    const dot = s.indexOf(".");
+    if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, "");
+  }
+  return s;
+}
+function countSignificantChars(str, upto) {
+  let n = 0;
+  for (let i = 0; i < upto && i < str.length; i++) {
+    if (/[\d.]/.test(str[i])) n++;
+  }
+  return n;
+}
+function caretForSignificantCount(str, targetCount) {
+  if (targetCount <= 0) return 0;
+  let n = 0;
+  for (let i = 0; i < str.length; i++) {
+    if (/[\d.]/.test(str[i])) {
+      n++;
+      if (n === targetCount) return i + 1;
+    }
+  }
+  return str.length;
+}
+// A drop-in replacement for a plain numeric <input> that inserts thousands
+// commas as you type (1000 -> 1,000) without disturbing where the cursor
+// sits — typing in the middle of a number still lands the caret in the right
+// place after the comma shifts around it.
+function NumberField({ value, onChange, onBlur, allowDecimal = true, placeholder, className, inputRef, onKeyDown, disabled }) {
+  const ref = useRef(null);
+  const handleChange = (e) => {
+    const el = e.target;
+    const raw = el.value;
+    const caret = el.selectionStart ?? raw.length;
+    const sigBefore = countSignificantChars(raw, caret);
+    const cleaned = cleanNumericInput(raw, allowDecimal);
+    const formatted = formatNumberWithCommas(cleaned);
+    onChange(cleaned);
+    requestAnimationFrame(() => {
+      const elNow = ref.current;
+      if (!elNow) return;
+      const pos = caretForSignificantCount(formatted, sigBefore);
+      try {
+        elNow.setSelectionRange(pos, pos);
+      } catch (err) {
+        /* ignore — some input states don't support selection ranges */
+      }
+    });
+  };
+  return (
+    <input
+      ref={(el) => {
+        ref.current = el;
+        if (inputRef) inputRef.current = el;
+      }}
+      type="text"
+      inputMode={allowDecimal ? "decimal" : "numeric"}
+      value={formatNumberWithCommas(value)}
+      onChange={handleChange}
+      onBlur={() => onBlur?.(value)}
+      onKeyDown={onKeyDown}
+      placeholder={placeholder}
+      className={className}
+      disabled={disabled}
+    />
+  );
+}
+
 function TextEntrySheet({ config, onClose }) {
   const [val, setVal] = useState("");
   const fieldRef = useRef(null);
@@ -4635,14 +4816,10 @@ function TextEntrySheet({ config, onClose }) {
           </button>
         </div>
         {config.numeric ? (
-          <input
-            ref={fieldRef}
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.01"
+          <NumberField
+            inputRef={fieldRef}
             value={val}
-            onChange={(e) => setVal(e.target.value)}
+            onChange={setVal}
             placeholder={config.placeholder}
             className="w-full border border-stone-200 rounded-xl px-3.5 py-3 text-base outline-none focus:border-emerald-700"
           />
@@ -4690,7 +4867,8 @@ function TextField({
   const openSheet = ctx?.openTextSheet;
 
   if (isTouch && openSheet) {
-    const display = value === "" || value == null ? "" : String(value);
+    const raw = value === "" || value == null ? "" : String(value);
+    const display = numeric ? formatNumberWithCommas(raw) : raw;
     return (
       <div
         role="button"
@@ -4698,7 +4876,7 @@ function TextField({
         onClick={() =>
           openSheet({
             label: label || placeholder || "Enter text",
-            value: display,
+            value: raw,
             placeholder,
             multiline,
             numeric,
@@ -4732,12 +4910,26 @@ function TextField({
       />
     );
   }
+  if (numeric) {
+    return (
+      <NumberField
+        value={value}
+        onChange={onChange}
+        onBlur={onBlur}
+        placeholder={placeholder}
+        className={className}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && onSubmit) {
+            e.preventDefault();
+            onSubmit(value);
+          }
+        }}
+      />
+    );
+  }
   return (
     <input
-      type={numeric ? "number" : "text"}
-      inputMode={numeric ? "decimal" : undefined}
-      min={numeric ? "0" : undefined}
-      step={numeric ? "0.01" : undefined}
+      type="text"
       value={value}
       onChange={(e) => onChange(e.target.value)}
       onBlur={() => onBlur?.(value)}
@@ -7145,11 +7337,11 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
           {reviews.map((r) => (
             <div key={r.id} className="flex gap-3">
               <button
-                onClick={() => openProfileCard({ id: r.authorId, name: r.authorName, avatar: r.authorAvatar })}
+                onClick={() => openProfileCard({ id: r.authorId, name: r.authorName, avatar: r.authorAvatar, avatarPhotoId: r.authorAvatarPhotoId })}
                 aria-label={`View ${r.authorName}'s profile`}
                 className="shrink-0"
               >
-                <Avatar emoji={r.authorAvatar} name={r.authorName} size="sm" />
+                <Avatar emoji={r.authorAvatar} name={r.authorName} size="sm" photoId={r.authorAvatarPhotoId} />
               </button>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -9386,13 +9578,25 @@ function useLongPress(onLongPress, ms = 450) {
 // The small "what do you want to do with this message" sheet a long-press
 // opens — delete here is always delete-for-me (see useMessages), so it's
 // safe to offer on a message from either side of the conversation.
-function MessageActionSheet({ message, onClose, onCopy, onDelete }) {
+// A single text's own "⋮" — star, mark important, and label it just like a
+// whole conversation, plus the existing copy/delete-for-me. One tap opens
+// this; nothing here requires a long-press.
+function MessageActionSheet({ message, flags, onClose, onCopy, onDelete, onStar, onImportant, onLabels }) {
   return (
     <Modal open={!!message} onClose={onClose} labelledBy="msg-action-title">
       <div className="p-6">
         <h2 id="msg-action-title" className="sr-only">Message actions</h2>
         {message && <p className="text-xs text-stone-400 mb-4 line-clamp-2">"{message.body}"</p>}
         <div className="flex flex-col gap-2">
+          <button onClick={onStar} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <Star size={15} className={flags?.starred ? "fill-amber-400 text-amber-400" : ""} /> {flags?.starred ? "Unstar" : "Star"}
+          </button>
+          <button onClick={onImportant} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <AlertCircle size={15} className={flags?.important ? "fill-amber-100 text-amber-600" : ""} /> {flags?.important ? "Mark not important" : "Mark important"}
+          </button>
+          <button onClick={onLabels} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <Tag size={15} /> Labels…
+          </button>
           <button onClick={onCopy} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800">
             Copy text
           </button>
@@ -9406,14 +9610,27 @@ function MessageActionSheet({ message, onClose, onCopy, onDelete }) {
   );
 }
 
-function MessageBubble({ message, isMine, onLongPress }) {
-  const longPress = useLongPress(() => onLongPress(message));
+// A small always-visible "⋮" next to each bubble — no long-press needed to
+// star, flag, label, copy, or delete a single text. Starred/important/
+// labeled messages get a tiny badge row under the bubble so it's visible at
+// a glance without opening anything.
+function MessageBubble({ message, isMine, flags, onOpenActions }) {
+  const hasBadges = !!(flags?.starred || flags?.important || (flags?.labelIds || []).length > 0);
   return (
-    <div
-      {...longPress}
-      className={`cs-max75 px-3.5 py-2 rounded-2xl text-sm cursor-pointer ${isMine ? "self-end bg-emerald-800 text-white rounded-br-sm" : "self-start bg-white border border-stone-200 text-stone-800 rounded-bl-sm"}`}
-    >
-      {message.body}
+    <div className={`flex items-end gap-1 max-w-[85%] ${isMine ? "self-end flex-row-reverse" : "self-start"}`}>
+      <div className={`cs-max75 px-3.5 py-2 rounded-2xl text-sm ${isMine ? "bg-emerald-800 text-white rounded-br-sm" : "bg-white border border-stone-200 text-stone-800 rounded-bl-sm"}`}>
+        <p>{message.body}</p>
+        {hasBadges && (
+          <div className={`flex items-center gap-1 mt-1 ${isMine ? "justify-end" : "justify-start"}`}>
+            {flags.starred && <Star size={10} className={isMine ? "fill-amber-300 text-amber-300" : "fill-amber-400 text-amber-400"} />}
+            {flags.important && <AlertCircle size={10} className={isMine ? "text-amber-200" : "text-amber-600"} />}
+            {(flags.labelIds || []).length > 0 && <Tag size={10} className={isMine ? "text-amber-200" : "text-amber-600"} />}
+          </div>
+        )}
+      </div>
+      <button onClick={() => onOpenActions(message)} aria-label="Message options" className="shrink-0 text-stone-300 hover:text-stone-600 p-1">
+        <MoreVertical size={14} />
+      </button>
     </div>
   );
 }
@@ -9931,7 +10148,27 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
 
   const activeConvo = useMemo(() => conversations.find((c) => c.id === selectedCid) || null, [conversations, selectedCid]);
 
-  const { messages, send, blockedByOther, deleteMessage } = useMessages(me, selectedCid, activeOther);
+  const { messages, send, blockedByOther, deleteMessage, msgFlags, toggleMessageStar, toggleMessageImportant, toggleMessageLabel } = useMessages(me, selectedCid, activeOther);
+  const [msgLabelPickerFor, setMsgLabelPickerFor] = useState(null); // a message id, or null when closed
+  const [msgLabelCheckedIds, setMsgLabelCheckedIds] = useState(() => new Set());
+  const openMessageLabelPicker = (msgId) => {
+    setMsgLabelCheckedIds(new Set(msgFlags[msgId]?.labelIds || []));
+    setMsgLabelPickerFor(msgId);
+  };
+  const runToggleMessageLabel = (labelId) => {
+    if (!msgLabelPickerFor) return;
+    toggleMessageLabel(msgLabelPickerFor, labelId);
+    setMsgLabelCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(labelId)) next.delete(labelId);
+      else next.add(labelId);
+      return next;
+    });
+  };
+  const runCreateAndApplyMessageLabel = async (name) => {
+    const label = await createMessageLabel(name);
+    if (label) runToggleMessageLabel(label.id);
+  };
   const isBlocked = !!activeOther && (me.blockedUserIds || []).includes(activeOther.id);
   const [actionTarget, setActionTarget] = useState(null);
 
@@ -10291,7 +10528,7 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
               </div>
             )}
             {messages.map((m) => (
-              <MessageBubble key={m.id} message={m} isMine={m.senderId === me.id} onLongPress={setActionTarget} />
+              <MessageBubble key={m.id} message={m} isMine={m.senderId === me.id} flags={msgFlags[m.id]} onOpenActions={setActionTarget} />
             ))}
             <div ref={scrollRef} />
           </div>
@@ -10339,9 +10576,23 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
 
       <MessageActionSheet
         message={actionTarget}
+        flags={actionTarget ? msgFlags[actionTarget.id] : null}
         onClose={() => setActionTarget(null)}
         onCopy={() => copyMessage(actionTarget)}
         onDelete={() => confirmDeleteMessage(actionTarget)}
+        onStar={() => { toggleMessageStar(actionTarget.id); setActionTarget(null); }}
+        onImportant={() => { toggleMessageImportant(actionTarget.id); setActionTarget(null); }}
+        onLabels={() => { openMessageLabelPicker(actionTarget.id); setActionTarget(null); }}
+      />
+
+      <LabelPickerModal
+        open={!!msgLabelPickerFor}
+        labels={messageLabels}
+        count={1}
+        checkedIds={msgLabelCheckedIds}
+        onClose={() => setMsgLabelPickerFor(null)}
+        onToggle={runToggleMessageLabel}
+        onCreateAndApply={runCreateAndApplyMessageLabel}
       />
 
       <ConversationActionSheet
@@ -12010,12 +12261,6 @@ function AccountModal({ open, onClose }) {
                 hint="Taken from your phone, cropped square"
               />
             </div>
-            <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">{me.avatarPhotoId ? "Or pick a symbol instead" : "Avatar"}</p>
-            <div className="grid grid-cols-6 gap-1.5 mb-4">
-              {AVATAR_EMOJI.map((em) => (
-                <button key={em} onClick={() => updateMe({ avatar: em })} className={`text-xl p-1.5 rounded-lg transition ${me.avatar === em ? "bg-emerald-100 ring-2 ring-emerald-600" : "hover:bg-stone-100"}`}>{em}</button>
-              ))}
-            </div>
             <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Display name</p>
             <TextField
               value={name}
@@ -12794,14 +13039,10 @@ function PriceInput({ value, onChange, step = 0.25, disabled }) {
   return (
     <div className={`flex items-center border border-stone-200 rounded-xl overflow-hidden focus-within:border-emerald-700 ${disabled ? "bg-stone-50 opacity-60" : "bg-white"}`}>
       <span className="pl-2.5 pr-1 text-stone-400 text-sm">$</span>
-      <input
-        type="number"
-        min="0"
-        step="0.01"
-        inputMode="decimal"
+      <NumberField
         value={value}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={onChange}
         className="flex-1 min-w-0 py-2 pr-1 text-sm outline-none bg-transparent"
       />
       {!disabled && (
@@ -13497,11 +13738,9 @@ function OrderFormModal({ open, onClose, onSave, inventory, products, initial })
                     <div className="grid grid-cols-3 gap-2">
                       <div>
                         <label className="cs-t9 text-stone-400">Qty</label>
-                        <input
-                          type="number"
-                          min="0"
+                        <NumberField
                           value={li.qty}
-                          onChange={(e) => updateLine(li.id, { qty: e.target.value })}
+                          onChange={(v) => updateLine(li.id, { qty: v })}
                           className="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-emerald-700"
                         />
                       </div>
@@ -13867,7 +14106,7 @@ function InventoryItemModal({ open, onClose, onSave, initial, products }) {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Quantity in stock</label>
-              <input type="number" min="0" value={qty} onChange={(e) => setQty(e.target.value)} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+              <NumberField value={qty} onChange={setQty} className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
             </div>
             <div>
               <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Unit</label>
@@ -13881,7 +14120,7 @@ function InventoryItemModal({ open, onClose, onSave, initial, products }) {
             </div>
             <div>
               <label className="cs-t11 font-semibold text-stone-500 mb-1 block">Low-stock alert at</label>
-              <input type="number" min="0" value={threshold} onChange={(e) => setThreshold(e.target.value)} placeholder="Optional" className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
+              <NumberField value={threshold} onChange={setThreshold} placeholder="Optional" className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700" />
             </div>
           </div>
           <TextField
@@ -16584,12 +16823,10 @@ function VendorDashboard({ navigate }) {
             <div className="flex items-center gap-2 flex-wrap">
               <div className="flex items-center border border-stone-200 rounded-xl overflow-hidden bg-white flex-1 max-w-[160px]">
                 <span className="pl-2.5 pr-1 text-stone-400 text-sm">$</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="50"
+                <NumberField
+                  allowDecimal={false}
                   value={goalDraft}
-                  onChange={(e) => setGoalDraft(e.target.value)}
+                  onChange={setGoalDraft}
                   placeholder="1000"
                   className="flex-1 min-w-0 py-2 pr-2 text-sm outline-none"
                 />
@@ -17400,7 +17637,6 @@ function ChooseShopGate({ shops, activeShopId, onPick, onDelete, onSkip }) {
 
 function Onboarding({ onCreate, reason, onCancel }) {
   const [name, setName] = useState("");
-  const [avatar, setAvatar] = useState(AVATAR_EMOJI[0]);
   const [fullName, setFullName] = useState("");
   const [zipcode, setZipcode] = useState("");
   const [phone, setPhone] = useState("");
@@ -17456,13 +17692,6 @@ function Onboarding({ onCreate, reason, onCancel }) {
           </button>
         )}
         <div className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm">
-          <p className="text-xs font-bold text-stone-400 uppercase mb-2">Pick an avatar</p>
-          <div className="grid grid-cols-6 gap-2 mb-4">
-            {AVATAR_EMOJI.map((em) => (
-              <button key={em} onClick={() => setAvatar(em)} className={`text-2xl p-2 rounded-xl transition ${avatar === em ? "bg-emerald-100 ring-2 ring-emerald-600" : "hover:bg-stone-100"}`}>{em}</button>
-            ))}
-          </div>
-
           <p className="text-xs font-bold text-stone-400 uppercase mb-2">Display name</p>
           <input
             value={name}
@@ -17543,7 +17772,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
           <button
             onClick={async () => {
               setBusy(true);
-              await onCreate({ name: name.trim() || "Guest", avatar, fullName: fullName.trim(), zipcode: zipcode.trim(), phone: digitsOnly(phone) });
+              await onCreate({ name: name.trim() || "Guest", avatar: "", fullName: fullName.trim(), zipcode: zipcode.trim(), phone: digitsOnly(phone) });
               setBusy(false);
             }}
             disabled={busy || !formReady}
