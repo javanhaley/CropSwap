@@ -11162,7 +11162,7 @@ const DASHBOARD_RANGES = [
 // tapping 1M/6M/1Y/All (or picking an exact month from the dropdown next to
 // them) overrides just that one chart.
 const PANEL_PERIODS = [
-  { id: "current", label: "This range" },
+  { id: "current", label: "This week" },
   { id: "1m", label: "1M" },
   { id: "6m", label: "6M" },
   { id: "1y", label: "1Y" },
@@ -14032,6 +14032,7 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
         {kind === "views" && (
           <div className="space-y-4">
             {chartLoading ? <p className="text-sm text-stone-400 py-6 text-center">Loading…</p> : <DetailTrendChart data={chartSeries} dataKey="count" color={t.bar} />}
+            {periodControl}
             <div className="grid grid-cols-2 gap-3">
               <DigestChip tint="emerald" icon={Eye} label="Storefront page views" value={shopPageViewsDisplay} />
               <DigestChip tint="emerald" icon={Package} label="Listing views" value={(rankedItems || []).reduce((s, p) => s + p.n, 0)} />
@@ -14040,35 +14041,35 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
               <p className="cs-t11 text-stone-400 mb-1.5">Most-viewed listings in this window</p>
               <RankedList items={rankedItems} emptyText="No listing views yet in this window." />
             </div>
-            {periodControl}
           </div>
         )}
 
         {kind === "favorites" && (
           <div className="space-y-4">
             {chartLoading ? <p className="text-sm text-stone-400 py-6 text-center">Loading…</p> : <DetailTrendChart data={chartSeries} dataKey="count" color={t.bar} />}
+            {periodControl}
             <div>
               <p className="cs-t11 text-stone-400 mb-1.5">Most-favorited listings in this window</p>
               <RankedList items={rankedItems} emptyText="No favorites yet in this window." />
             </div>
-            {periodControl}
           </div>
         )}
 
         {kind === "shares" && (
           <div className="space-y-4">
             {chartLoading ? <p className="text-sm text-stone-400 py-6 text-center">Loading…</p> : <DetailTrendChart data={chartSeries} dataKey="count" color={t.bar} />}
+            {periodControl}
             <div>
               <p className="cs-t11 text-stone-400 mb-1.5">Most-shared listings in this window</p>
               <RankedList items={rankedItems} emptyText="No shares yet in this window." />
             </div>
-            {periodControl}
           </div>
         )}
 
         {kind === "messages" && (
           <div className="space-y-4">
             {chartLoading ? <p className="text-sm text-stone-400 py-6 text-center">Loading…</p> : <DetailTrendChart data={chartSeries} dataKey="count" color={t.bar} />}
+            {periodControl}
             <div className="grid grid-cols-2 gap-3">
               <DigestChip
                 tint="blue"
@@ -14087,7 +14088,6 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
               <DigestChip tint="emerald" icon={ShoppingBag} label="Messages → orders" value={data.messageToOrderRate != null ? `${data.messageToOrderRate}%` : "—"} />
             </div>
             <p className="cs-t11 text-stone-400">Fast replies build trust — shoppers who message and hear back quickly are far more likely to follow through and place an order.</p>
-            {periodControl}
           </div>
         )}
 
@@ -14155,6 +14155,7 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
         {kind === "revenue" && (
           <div className="space-y-4">
             <DetailTrendChart data={chartSeries} dataKey="value" color={t.bar} formatY={(v) => `$${v}`} />
+            {periodControl}
             <div>
               <p className="cs-t11 text-stone-400 mb-1.5">Revenue by day of week</p>
               <div style={{ width: "100%", height: 140 }}>
@@ -14180,13 +14181,13 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
                 ))}
               </div>
             </div>
-            {periodControl}
           </div>
         )}
 
         {kind === "orders" && (
           <div className="space-y-4">
             <DetailTrendChart data={chartSeries} dataKey="value" color={t.bar} />
+            {periodControl}
             <p className="text-sm text-stone-600">
               {data.openOrdersCount > 0 ? (
                 <>
@@ -14220,7 +14221,6 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
                 </div>
               )}
             </div>
-            {periodControl}
           </div>
         )}
 
@@ -15197,25 +15197,23 @@ function VendorDashboard({ navigate }) {
           {revenueByWeekday.every((d) => d.revenue === 0) ? (
             <p className="text-sm text-stone-400 py-6 text-center">No completed sales in this window yet.</p>
           ) : (
-            <>
-              <div style={{ width: "100%", height: 160 }}>
-                <ResponsiveContainer>
-                  <BarChart data={revenueByWeekday}>
-                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={40} tickFormatter={(v) => `$${v}`} />
-                    <Tooltip formatter={(v) => formatMoney(v)} />
-                    <Bar dataKey="revenue" fill={DASH_TINTS.emerald.bar} radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              {bestWeekday && (
-                <p className="cs-t11 text-stone-400 mt-2">
-                  Best day: <span className="font-semibold text-stone-600">{bestWeekday.label}</span> ({formatMoney(bestWeekday.revenue)} in this window).
-                </p>
-              )}
-            </>
+            <div style={{ width: "100%", height: 160 }}>
+              <ResponsiveContainer>
+                <BarChart data={revenueByWeekday}>
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" />
+                  <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={40} tickFormatter={(v) => `$${v}`} />
+                  <Tooltip formatter={(v) => formatMoney(v)} />
+                  <Bar dataKey="revenue" fill={DASH_TINTS.emerald.bar} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           )}
           <PanelPeriodTabs value={weekdayPeriod} onChange={setWeekdayPeriod} monthOptions={monthOptions} />
+          {bestWeekday && (
+            <p className="cs-t11 text-stone-400 mt-2">
+              Best day: <span className="font-semibold text-stone-600">{bestWeekday.label}</span> ({formatMoney(bestWeekday.revenue)} in this window).
+            </p>
+          )}
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
@@ -15392,8 +15390,8 @@ function VendorDashboard({ navigate }) {
                 </LineChart>
               </ResponsiveContainer>
             </div>
-            <p className="cs-t11 text-stone-400 mt-2">Top listings: {leaderboard.top.slice(0, 3).map((p) => p.name).join(", ") || "—"}</p>
             <PanelPeriodTabs value={favoritesPeriod} onChange={setFavoritesPeriod} monthOptions={monthOptions} />
+            <p className="cs-t11 text-stone-400 mt-2">Top listings: {leaderboard.top.slice(0, 3).map((p) => p.name).join(", ") || "—"}</p>
           </DashPanel>
         </div>
 
@@ -15477,8 +15475,8 @@ function VendorDashboard({ navigate }) {
               ))}
             </div>
           </div>
-          <p className="cs-t11 text-stone-400 mt-2">Warmer (amber → rose) = busier. Rows are Sun–Sat, columns are every hour of the day (0–23).</p>
           <PanelPeriodTabs value={heatmapPeriod} onChange={setHeatmapPeriod} monthOptions={monthOptions} />
+          <p className="cs-t11 text-stone-400 mt-2">Warmer (amber → rose) = busier. Rows are Sun–Sat, columns are every hour of the day (0–23).</p>
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
