@@ -11521,7 +11521,7 @@ function DashPanel({ title, icon: Icon, right, children, className = "", info })
 function PanelPeriodTabs({ value, onChange, monthOptions }) {
   const isMonthPick = typeof value === "string" && value.startsWith("month:");
   return (
-    <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-stone-100">
+    <div className="flex flex-wrap items-center gap-1.5 mt-1 pt-1.5 border-t border-stone-100">
       {PANEL_PERIODS.map((p) => (
         <button
           key={p.id}
@@ -15625,7 +15625,7 @@ function VendorDashboard({ navigate }) {
    SECTION 25: STORE SCREEN (own shop or become-a-vendor prompt)
 ============================================================================ */
 function StoreScreen({ navigate }) {
-  const { me, shopsById, createShopForUser, updateMe, purchasePlan, showToast } = useApp();
+  const { me, shops, shopsById, createShopForUser, updateMe, purchasePlan, showToast } = useApp();
   const [shopName, setShopName] = useState("");
   const homeLoc = splitCityState(me?.homeLocation?.label);
   const [shopCity, setShopCity] = useState(homeLoc.city || "");
@@ -15634,6 +15634,24 @@ function StoreScreen({ navigate }) {
   const [creating, setCreating] = useState(false);
   const [reactivating, setReactivating] = useState(false);
   const shop = me.isVendor && me.shopId ? shopsById[me.shopId] : null;
+
+  // One storefront per account, enforced here too — not just at signup.
+  // The old multi-shop drift (see removeShop's comment) happened when
+  // me.shopId went stale/null while a shop this account actually owns was
+  // still sitting in the market. Catch that here and relink instead of
+  // ever showing the "create a storefront" form to an account that
+  // already has one — that form is the only place a second shop could
+  // get spun up, so closing it off here is what makes "one shop per
+  // account" hold going forward.
+  const existingOwnedShop = !shop ? shops.find((s) => s.ownerId === me.id) : null;
+  useEffect(() => {
+    if (existingOwnedShop && me.shopId !== existingOwnedShop.id) {
+      updateMe({ isVendor: true, shopId: existingOwnedShop.id });
+    }
+  }, [existingOwnedShop, me.shopId, updateMe]);
+  if (existingOwnedShop) {
+    return <LoadingScreen />;
+  }
 
   if (shop && shop.billingStatus === "inactive") {
     const daysLeft = Math.max(0, Math.ceil(ABANDON_DAYS - daysBetween(shop.inactiveSince || Date.now(), Date.now())));
