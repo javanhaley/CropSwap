@@ -9,7 +9,7 @@ import {
   Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check, ChevronUp,
   AlertTriangle, Image as ImageIcon, Video, PlayCircle,
   DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark, Rss,
-  Folder, MoreVertical,
+  Folder, MoreVertical, Inbox, Menu, Tag,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -3822,39 +3822,137 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
   };
 }
 
+// Shared by every path that lands a message in a thread (interactive send,
+// a scheduled send firing, a mailing-list broadcast) — the single place that
+// updates both sides' conversation-list summaries afterward, so
+// lastMessage/lastAt/lastSenderId never drift out of sync depending on which
+// path sent it. Only the sender's own entry has its draft cleared — the
+// other person's in-progress reply, if any, is theirs and untouched.
+async function updateConversationSummaries(cid, meId, meName, meAvatar, otherId, otherName, otherAvatar, msg) {
+  const summaryUpdate = async (userId, otherUserId, otherUserName, otherUserAvatar, clearOwnDraft) => {
+    const list = await getJSON(`conversationsFor:${userId}`, true, []);
+    const idx = list.findIndex((c) => c.id === cid);
+    const base = idx >= 0 ? list[idx] : {};
+    const entry = {
+      ...base,
+      id: cid,
+      otherUserId: otherUserId,
+      otherUserName: otherUserName,
+      otherUserAvatar: otherUserAvatar,
+      lastMessage: msg.body,
+      lastAt: msg.createdAt,
+      lastSenderId: meId,
+      ...(clearOwnDraft ? { draft: "" } : {}),
+    };
+    const next = idx >= 0 ? [entry, ...list.slice(0, idx), ...list.slice(idx + 1)] : [entry, ...list];
+    await setJSON(`conversationsFor:${userId}`, next, true);
+  };
+  await summaryUpdate(meId, otherId, otherName, otherAvatar, true);
+  if (otherId) await summaryUpdate(otherId, meId, meName, meAvatar, false);
+}
+
+// Delivers one message on behalf of `me` without an already-open thread in
+// memory — used by the scheduled-send sweep, where nothing has the target
+// conversation loaded when the moment to send arrives.
+async function deliverMessage(me, otherUser, cid, body) {
+  if (otherUser) {
+    const theirs = await getJSON(`users:${otherUser.id}`, true, null);
+    if (theirs && (theirs.blockedUserIds || []).includes(me.id)) return { ok: false, reason: "blocked" };
+  }
+  const existing = await readJSON(`messages:${cid}`, true, []);
+  if (!existing.ok) return { ok: false, reason: "network" };
+  const msg = { id: uid("msg"), senderId: me.id, body: body.trim(), createdAt: Date.now() };
+  const next = [...(existing.value || []), msg];
+  await setJSON(`messages:${cid}`, next, true);
+  await updateConversationSummaries(cid, me.id, me.name, me.avatar, otherUser?.id || null, otherUser?.name || "them", otherUser?.avatar || "\u{1F642}", msg);
+  if (otherUser) {
+    const notif = { id: uid("notif"), type: "message", title: `New message from ${me.name}`, body: msg.body.slice(0, 80), createdAt: Date.now(), read: false, route: { screen: "messages", cid } };
+    const theirRead = await readJSON(`notifications:${otherUser.id}`, true, []);
+    if (theirRead.ok) await setJSON(`notifications:${otherUser.id}`, [notif, ...(theirRead.value || [])], true);
+    logAnalyticsEvent("message", { entityId: otherUser.id, shopId: otherUser.shopId || null });
+  }
+  return { ok: true, msg };
+}
+
+const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // Gmail-style: 30 days, then gone for good.
+
 function useConversations(me) {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [folders, setFolders] = useState([]);
+  const [labels, setLabels] = useState([]);
+  const [scheduled, setScheduled] = useState([]);
   const listRef = useRef([]);
 
   const load = useCallback(async () => {
     if (!me) return;
     const rec = await getJSON(`conversationsFor:${me.id}`, true, seedConversations(me.id));
-    const safe = Array.isArray(rec) ? rec : [];
+    let safe = Array.isArray(rec) ? rec : [];
+    // Trash auto-purges after 30 days, same as Gmail — a lazy sweep on load
+    // since there's no server-side cron in this stack to do it for us.
+    const now = Date.now();
+    const kept = safe.filter((c) => !(c.trashed && c.trashedAt && now - c.trashedAt > TRASH_RETENTION_MS));
+    if (kept.length !== safe.length) {
+      safe = kept;
+      setJSON(`conversationsFor:${me.id}`, safe, true);
+    }
     listRef.current = safe;
     setList(safe);
     setLoading(false);
   }, [me]);
 
-  // Folders are purely a personal organizing tool — which folder a
-  // conversation sits in only matters to the person who filed it there — so
+  // Labels are purely a personal organizing tool — which labels a
+  // conversation carries only matters to the person who applied them — so
   // they live in the row-owned kv table (like savedSearches), never in
   // shared_kv where the other side of the conversation could see or touch
   // them.
-  const loadFolders = useCallback(async () => {
+  const loadLabels = useCallback(async () => {
     if (!me) return;
-    const rec = await getJSON(`messageFolders:${me.id}`, false, []);
-    setFolders(Array.isArray(rec) ? rec : []);
+    const rec = await getJSON(`messageLabels:${me.id}`, false, []);
+    setLabels(Array.isArray(rec) ? rec : []);
   }, [me]);
+
+  const loadScheduled = useCallback(async () => {
+    if (!me) return;
+    const rec = await getJSON(`scheduledMessages:${me.id}`, false, []);
+    setScheduled(Array.isArray(rec) ? rec : []);
+  }, [me]);
+
+  // Fires any scheduled message whose time has come. Runs on load and on
+  // every poll — there's no server cron here, so "on time" means "next time
+  // someone with this tab open checks," same tradeoff the abandoned-shop
+  // sweep elsewhere in the app makes.
+  const checkScheduled = useCallback(async () => {
+    if (!me) return;
+    const rec = await readJSON(`scheduledMessages:${me.id}`, false, []);
+    if (!rec.ok) return;
+    const items = Array.isArray(rec.value) ? rec.value : [];
+    const now = Date.now();
+    const due = items.filter((s) => s.sendAt <= now);
+    const remaining = items.filter((s) => s.sendAt > now);
+    if (due.length) {
+      await setJSON(`scheduledMessages:${me.id}`, remaining, false);
+      setScheduled(remaining);
+      for (const item of due) {
+        await deliverMessage(me, item.otherUserId ? { id: item.otherUserId, name: item.otherUserName, avatar: item.otherUserAvatar } : null, item.cid, item.body);
+      }
+      load();
+    } else {
+      setScheduled(items);
+    }
+  }, [me, load]);
 
   useEffect(() => {
     load();
-    loadFolders();
+    loadLabels();
+    loadScheduled();
+    checkScheduled();
     if (!me) return;
-    const iv = setInterval(load, 20000);
+    const iv = setInterval(() => {
+      load();
+      checkScheduled();
+    }, 20000);
     return () => clearInterval(iv);
-  }, [load, loadFolders, me]);
+  }, [load, loadLabels, loadScheduled, checkScheduled, me]);
 
   const persistList = useCallback(
     async (next) => {
@@ -3863,6 +3961,14 @@ function useConversations(me) {
       if (me) await setJSON(`conversationsFor:${me.id}`, next, true);
     },
     [me]
+  );
+
+  const patchConversations = useCallback(
+    async (cids, patch) => {
+      const set = new Set(cids);
+      await persistList(listRef.current.map((c) => (set.has(c.id) ? { ...c, ...patch } : c)));
+    },
+    [persistList]
   );
 
   const ensureConversation = useCallback(
@@ -3911,66 +4017,140 @@ function useConversations(me) {
   );
 
   // Delete-for-me only, same principle as message deletion (see
-  // useMessages): this just drops entries from *my* copy of the
-  // conversation index. The other person's copy, and the shared message
-  // thread itself, are untouched — they still have their side of it.
-  const deleteConversations = useCallback(
+  // useMessages): trashing/restoring/permanently deleting just changes *my*
+  // copy of the conversation index. The other person's copy, and the shared
+  // message thread itself, are untouched — they still have their side of it.
+  const trashConversations = useCallback((cids) => patchConversations(cids, { trashed: true, trashedAt: Date.now(), spam: false }), [patchConversations]);
+  const trashAllConversations = useCallback(async () => {
+    await persistList(listRef.current.map((c) => (c.trashed ? c : { ...c, trashed: true, trashedAt: Date.now(), spam: false })));
+  }, [persistList]);
+  const restoreConversations = useCallback((cids) => patchConversations(cids, { trashed: false, trashedAt: null, spam: false }), [patchConversations]);
+  const markAsSpam = useCallback((cids) => patchConversations(cids, { spam: true, trashed: false, trashedAt: null }), [patchConversations]);
+  const markNotSpam = useCallback((cids) => patchConversations(cids, { spam: false }), [patchConversations]);
+  const permanentlyDeleteConversations = useCallback(
     async (cids) => {
       const drop = new Set(cids);
       await persistList(listRef.current.filter((c) => !drop.has(c.id)));
     },
     [persistList]
   );
-
-  const deleteAllConversations = useCallback(async () => {
-    await persistList([]);
+  const emptyTrash = useCallback(async () => {
+    await persistList(listRef.current.filter((c) => !c.trashed));
   }, [persistList]);
 
-  const moveConversationsToFolder = useCallback(
-    async (cids, folderId) => {
-      const set = new Set(cids);
-      await persistList(listRef.current.map((c) => (set.has(c.id) ? { ...c, folderId: folderId || null } : c)));
+  const toggleStar = useCallback(
+    (cid) => {
+      const cur = listRef.current.find((c) => c.id === cid);
+      return patchConversations([cid], { starred: !cur?.starred });
     },
-    [persistList]
+    [patchConversations]
+  );
+  const toggleImportant = useCallback(
+    (cid) => {
+      const cur = listRef.current.find((c) => c.id === cid);
+      return patchConversations([cid], { important: !cur?.important });
+    },
+    [patchConversations]
   );
 
-  const persistFolders = useCallback(
-    async (next) => {
-      setFolders(next);
-      if (me) await setJSON(`messageFolders:${me.id}`, next, false);
+  // Drafts autosave like Gmail's do: every keystroke updates the list in
+  // memory (so the Drafts view reflects it immediately) but the network
+  // write is debounced so typing doesn't hammer storage.
+  const draftTimer = useRef(null);
+  const setDraft = useCallback(
+    (cid, text) => {
+      const next = listRef.current.map((c) => (c.id === cid ? { ...c, draft: text } : c));
+      listRef.current = next;
+      setList(next);
+      if (draftTimer.current) clearTimeout(draftTimer.current);
+      draftTimer.current = setTimeout(() => {
+        if (me) setJSON(`conversationsFor:${me.id}`, listRef.current, true);
+      }, 600);
     },
     [me]
   );
 
-  const createFolder = useCallback(
+  const scheduleMessage = useCallback(
+    async (otherUser, cid, body, sendAt) => {
+      if (!me || !body.trim()) return null;
+      const item = { id: uid("sched"), cid, otherUserId: otherUser?.id || null, otherUserName: otherUser?.name || "them", otherUserAvatar: otherUser?.avatar || "\u{1F642}", body: body.trim(), sendAt, createdAt: Date.now() };
+      const next = [item, ...scheduled];
+      setScheduled(next);
+      await setJSON(`scheduledMessages:${me.id}`, next, false);
+      return item;
+    },
+    [me, scheduled]
+  );
+  const cancelScheduledMessage = useCallback(
+    async (id) => {
+      const next = scheduled.filter((s) => s.id !== id);
+      setScheduled(next);
+      if (me) await setJSON(`scheduledMessages:${me.id}`, next, false);
+    },
+    [me, scheduled]
+  );
+
+  const persistLabels = useCallback(
+    async (next) => {
+      setLabels(next);
+      if (me) await setJSON(`messageLabels:${me.id}`, next, false);
+    },
+    [me]
+  );
+
+  const createLabel = useCallback(
     async (name) => {
       const trimmed = (name || "").trim();
       if (!trimmed) return null;
-      const folder = { id: uid("fold"), name: trimmed, createdAt: Date.now() };
-      await persistFolders([...folders, folder]);
-      return folder;
+      const label = { id: uid("label"), name: trimmed, createdAt: Date.now() };
+      await persistLabels([...labels, label]);
+      return label;
     },
-    [folders, persistFolders]
+    [labels, persistLabels]
   );
 
-  const renameFolder = useCallback(
+  const renameLabel = useCallback(
     async (id, name) => {
       const trimmed = (name || "").trim();
       if (!trimmed) return;
-      await persistFolders(folders.map((f) => (f.id === id ? { ...f, name: trimmed } : f)));
+      await persistLabels(labels.map((l) => (l.id === id ? { ...l, name: trimmed } : l)));
     },
-    [folders, persistFolders]
+    [labels, persistLabels]
   );
 
-  // Deleting a folder never deletes the conversations in it — they just
-  // fall back to Unfiled, the same way emptying a mail folder doesn't
-  // delete the mail.
-  const deleteFolder = useCallback(
+  // Deleting a label never deletes the conversations that carried it —
+  // they just lose that one tag, the same way deleting a Gmail label
+  // doesn't touch the mail underneath it.
+  const deleteLabel = useCallback(
     async (id) => {
-      await persistFolders(folders.filter((f) => f.id !== id));
-      await persistList(listRef.current.map((c) => (c.folderId === id ? { ...c, folderId: null } : c)));
+      await persistLabels(labels.filter((l) => l.id !== id));
+      await persistList(listRef.current.map((c) => ((c.labelIds || []).includes(id) ? { ...c, labelIds: c.labelIds.filter((x) => x !== id) } : c)));
     },
-    [folders, persistFolders, persistList]
+    [labels, persistLabels, persistList]
+  );
+
+  const toggleLabel = useCallback(
+    (cid, labelId) => {
+      const cur = listRef.current.find((c) => c.id === cid);
+      const has = (cur?.labelIds || []).includes(labelId);
+      const nextIds = has ? (cur.labelIds || []).filter((id) => id !== labelId) : [...(cur?.labelIds || []), labelId];
+      return patchConversations([cid], { labelIds: nextIds });
+    },
+    [patchConversations]
+  );
+
+  const addLabelToConversations = useCallback(
+    (cids, labelId) => {
+      const set = new Set(cids);
+      return persistList(
+        listRef.current.map((c) => {
+          if (!set.has(c.id)) return c;
+          const ids = c.labelIds || [];
+          return ids.includes(labelId) ? c : { ...c, labelIds: [...ids, labelId] };
+        })
+      );
+    },
+    [persistList]
   );
 
   return {
@@ -3978,13 +4158,25 @@ function useConversations(me) {
     loading,
     ensureConversation,
     refresh: load,
-    folders,
-    deleteConversations,
-    deleteAllConversations,
-    moveConversationsToFolder,
-    createFolder,
-    renameFolder,
-    deleteFolder,
+    labels,
+    createLabel,
+    renameLabel,
+    deleteLabel,
+    toggleLabel,
+    addLabelToConversations,
+    toggleStar,
+    toggleImportant,
+    trashConversations,
+    trashAllConversations,
+    restoreConversations,
+    markAsSpam,
+    markNotSpam,
+    permanentlyDeleteConversations,
+    emptyTrash,
+    setDraft,
+    scheduled,
+    scheduleMessage,
+    cancelScheduledMessage,
   };
 }
 
@@ -4087,20 +4279,8 @@ function useMessages(me, cid, otherUser) {
       await setJSON(`messages:${cid}`, next, true);
       setMessages(next);
 
-      const summaryUpdate = async (userId, otherName, otherAvatar) => {
-        const list = await getJSON(`conversationsFor:${userId}`, true, []);
-        const idx = list.findIndex((c) => c.id === cid);
-        // Spread the existing entry first so per-viewer organizing fields
-        // (folderId) survive a new message bumping this conversation to the
-        // top — otherwise every reply would silently un-file it.
-        const base = idx >= 0 ? list[idx] : {};
-        const entry = { ...base, id: cid, otherUserId: userId === me.id ? otherUser?.id : me.id, otherUserName: otherName, otherUserAvatar: otherAvatar, lastMessage: msg.body, lastAt: msg.createdAt };
-        const next2 = idx >= 0 ? [entry, ...list.slice(0, idx), ...list.slice(idx + 1)] : [entry, ...list];
-        await setJSON(`conversationsFor:${userId}`, next2, true);
-      };
-      await summaryUpdate(me.id, otherUser?.name || "them", otherUser?.avatar || "\u{1F642}");
+      await updateConversationSummaries(cid, me.id, me.name, me.avatar, otherUser?.id || null, otherUser?.name || "them", otherUser?.avatar || "\u{1F642}", msg);
       if (otherUser) {
-        await summaryUpdate(otherUser.id, me.name, me.avatar);
         const notif = { id: uid("notif"), type: "message", title: `New message from ${me.name}`, body: msg.body.slice(0, 80), createdAt: Date.now(), read: false, route: { screen: "messages", cid } };
         const theirRead = await readJSON(`notifications:${otherUser.id}`, true, []);
         if (theirRead.ok) {
@@ -4227,16 +4407,7 @@ async function deliverBroadcastMessage(fromUser, toUserId, toUserName, toUserAva
   const msg = { id: uid("msg"), senderId: fromUser.id, body, createdAt: Date.now(), broadcast: true };
   await setJSON(`messages:${cid}`, [...list, msg], true);
 
-  const summaryUpdate = async (userId, otherId, otherName, otherAvatar) => {
-    const list2 = await getJSON(`conversationsFor:${userId}`, true, []);
-    const idx = list2.findIndex((c) => c.id === cid);
-    const base = idx >= 0 ? list2[idx] : {};
-    const entry = { ...base, id: cid, otherUserId: otherId, otherUserName: otherName, otherUserAvatar: otherAvatar, lastMessage: body, lastAt: msg.createdAt };
-    const next2 = idx >= 0 ? [entry, ...list2.slice(0, idx), ...list2.slice(idx + 1)] : [entry, ...list2];
-    await setJSON(`conversationsFor:${userId}`, next2, true);
-  };
-  await summaryUpdate(fromUser.id, toUserId, toUserName, toUserAvatar);
-  await summaryUpdate(toUserId, fromUser.id, fromUser.name, fromUser.avatar);
+  await updateConversationSummaries(cid, fromUser.id, fromUser.name, fromUser.avatar, toUserId, toUserName, toUserAvatar, msg);
   await notifyUser(toUserId, "message", `Update from ${fromUser.name}`, text.slice(0, 80), { screen: "messages", cid });
   return true;
 }
@@ -9285,19 +9456,52 @@ function ConfirmModal({ open, title, body, confirmLabel = "Delete", onConfirm, o
 
 // The quick, single-tap alternative to a long-press: a "⋮" on every
 // conversation row opens this sheet immediately, no hold required.
-function ConversationActionSheet({ conversation, onClose, onMove, onDelete }) {
+// The single-row "⋮" — one tap, no hold, everything Gmail's row hover
+// actions plus its right-click menu would offer. Which context actions show
+// up depends on which view the row is sitting in (Trash gets Restore/Delete
+// forever, Spam gets Not spam, everywhere else gets Spam/Trash).
+function ConversationActionSheet({ conversation, view, onClose, onStar, onImportant, onLabels, onSpam, onNotSpam, onTrash, onRestore, onDeleteForever }) {
+  if (!conversation) return null;
+  const inTrash = view === "trash";
+  const inSpam = view === "spam";
   return (
     <Modal open={!!conversation} onClose={onClose} labelledBy="convo-action-title">
       <div className="p-6">
         <h2 id="convo-action-title" className="sr-only">Conversation actions</h2>
-        {conversation && <p className="text-xs text-stone-400 mb-4 line-clamp-1">{conversation.otherUserName}</p>}
+        <p className="text-xs text-stone-400 mb-4 line-clamp-1">{conversation.otherUserName}</p>
         <div className="flex flex-col gap-2">
-          <button onClick={onMove} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
-            <Folder size={15} /> Move to folder
+          <button onClick={onStar} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <Star size={15} className={conversation.starred ? "fill-amber-400 text-amber-400" : ""} /> {conversation.starred ? "Unstar" : "Star"}
           </button>
-          <button onClick={onDelete} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
-            <Trash2 size={15} /> Delete conversation
+          <button onClick={onImportant} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <AlertCircle size={15} className={conversation.important ? "fill-amber-100 text-amber-600" : ""} /> {conversation.important ? "Mark not important" : "Mark important"}
           </button>
+          <button onClick={onLabels} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <Tag size={15} /> Labels…
+          </button>
+          {inTrash ? (
+            <button onClick={onRestore} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-emerald-50 text-sm font-semibold text-emerald-700 flex items-center gap-2">
+              <Inbox size={15} /> Move to Inbox
+            </button>
+          ) : inSpam ? (
+            <button onClick={onNotSpam} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-emerald-50 text-sm font-semibold text-emerald-700 flex items-center gap-2">
+              <Inbox size={15} /> Not spam
+            </button>
+          ) : (
+            <>
+              <button onClick={onSpam} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-amber-50 text-sm font-semibold text-amber-700 flex items-center gap-2">
+                <AlertTriangle size={15} /> Mark as spam
+              </button>
+              <button onClick={onTrash} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
+                <Trash2 size={15} /> Move to Trash
+              </button>
+            </>
+          )}
+          {(inTrash || inSpam) && (
+            <button onClick={onDeleteForever} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
+              <Trash2 size={15} /> Delete forever
+            </button>
+          )}
         </div>
         <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
       </div>
@@ -9305,10 +9509,11 @@ function ConversationActionSheet({ conversation, onClose, onMove, onDelete }) {
   );
 }
 
-// Shared by both the single-row "⋮" action and the bulk select-mode toolbar —
-// pick an existing folder, drop back to Unfiled, or spin up a brand new
-// folder and move straight into it in one tap.
-function FolderPickerModal({ open, folders, count, onClose, onPick, onCreateAndPick }) {
+// Shared by both the single-row "Labels…" action and the bulk select-mode
+// toolbar. Unlike the old single-folder picker, a conversation can carry
+// several labels at once — same as Gmail — so each row is its own checkbox
+// rather than a destination you pick once.
+function LabelPickerModal({ open, labels, count, checkedIds, onClose, onToggle, onCreateAndApply }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   useEffect(() => {
@@ -9318,33 +9523,40 @@ function FolderPickerModal({ open, folders, count, onClose, onPick, onCreateAndP
     }
   }, [open]);
   return (
-    <Modal open={open} onClose={onClose} labelledBy="folder-picker-title">
+    <Modal open={open} onClose={onClose} labelledBy="label-picker-title">
       <div className="p-6">
-        <h2 id="folder-picker-title" className="text-base font-bold text-stone-900 mb-3" style={displayFont}>
-          Move {count > 1 ? `${count} conversations` : "conversation"} to…
+        <h2 id="label-picker-title" className="text-base font-bold text-stone-900 mb-3" style={displayFont}>
+          Label {count > 1 ? `${count} conversations` : "conversation"}
         </h2>
-        <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-          <button onClick={() => onPick(null)} className="text-left px-4 py-2.5 rounded-xl hover:bg-stone-50 text-sm font-semibold text-stone-700 flex items-center gap-2">
-            <Archive size={15} className="text-stone-400" /> Unfiled
-          </button>
-          {folders.map((f) => (
-            <button key={f.id} onClick={() => onPick(f.id)} className="text-left px-4 py-2.5 rounded-xl hover:bg-stone-50 text-sm font-semibold text-stone-700 flex items-center gap-2">
-              <Folder size={15} className="text-amber-600" /> {f.name}
-            </button>
-          ))}
-        </div>
+        {labels.length === 0 && !creating ? (
+          <p className="text-sm text-stone-400 py-2">No labels yet.</p>
+        ) : (
+          <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
+            {labels.map((l) => {
+              const checked = checkedIds?.has ? checkedIds.has(l.id) : false;
+              return (
+                <button key={l.id} onClick={() => onToggle(l.id)} className="text-left px-3 py-2.5 rounded-xl hover:bg-stone-50 text-sm font-semibold text-stone-700 flex items-center gap-2.5">
+                  <span className={`w-4.5 h-4.5 rounded-md border-2 flex items-center justify-center shrink-0 ${checked ? "bg-emerald-700 border-emerald-700" : "border-stone-300"}`}>
+                    {checked && <Check size={12} className="text-white" />}
+                  </span>
+                  <Tag size={14} className="text-amber-600 shrink-0" /> {l.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {creating ? (
           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-stone-100">
             <input
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && name.trim() && onCreateAndPick(name)}
-              placeholder="Folder name"
+              onKeyDown={(e) => e.key === "Enter" && name.trim() && onCreateAndApply(name)}
+              placeholder="Label name"
               className="flex-1 border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-700"
             />
             <button
-              onClick={() => name.trim() && onCreateAndPick(name)}
+              onClick={() => name.trim() && onCreateAndApply(name)}
               disabled={!name.trim()}
               className="px-3 py-2 rounded-xl bg-emerald-800 text-white text-sm font-semibold disabled:opacity-40"
             >
@@ -9352,19 +9564,20 @@ function FolderPickerModal({ open, folders, count, onClose, onPick, onCreateAndP
             </button>
           </div>
         ) : (
-          <button onClick={() => setCreating(true)} className="w-full text-left px-4 py-2.5 mt-2 pt-3 border-t border-stone-100 text-sm font-semibold text-emerald-700 flex items-center gap-2">
-            <Plus size={15} /> New folder
+          <button onClick={() => setCreating(true)} className="w-full text-left px-3 py-2.5 mt-2 pt-3 border-t border-stone-100 text-sm font-semibold text-emerald-700 flex items-center gap-2">
+            <Plus size={15} /> Create new label
           </button>
         )}
-        <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
+        <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Done</button>
       </div>
     </Modal>
   );
 }
 
-// Rename or delete folders themselves — deleting one just sends its
-// conversations back to Unfiled, so no destructive confirm is needed here.
-function ManageFoldersModal({ open, folders, onClose, onRename, onDelete }) {
+// Rename or delete labels themselves — deleting one just removes that tag
+// from whatever it was on, the same way deleting a Gmail label doesn't
+// touch the mail underneath it.
+function ManageLabelsModal({ open, labels, onClose, onRename, onDelete }) {
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState("");
   useEffect(() => {
@@ -9378,37 +9591,37 @@ function ManageFoldersModal({ open, folders, onClose, onRename, onDelete }) {
     setEditingId(null);
   };
   return (
-    <Modal open={open} onClose={onClose} labelledBy="manage-folders-title">
+    <Modal open={open} onClose={onClose} labelledBy="manage-labels-title">
       <div className="p-6">
-        <h2 id="manage-folders-title" className="text-base font-bold text-stone-900 mb-3" style={displayFont}>Manage folders</h2>
-        {folders.length === 0 ? (
-          <p className="text-sm text-stone-400 py-4 text-center">No folders yet — create one from the folder picker when moving a conversation.</p>
+        <h2 id="manage-labels-title" className="text-base font-bold text-stone-900 mb-3" style={displayFont}>Manage labels</h2>
+        {labels.length === 0 ? (
+          <p className="text-sm text-stone-400 py-4 text-center">No labels yet — create one from any conversation's "⋮" menu.</p>
         ) : (
           <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
-            {folders.map((f) => (
-              <div key={f.id} className="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-stone-50">
-                <Folder size={15} className="text-amber-600 shrink-0" />
-                {editingId === f.id ? (
+            {labels.map((l) => (
+              <div key={l.id} className="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-stone-50">
+                <Tag size={15} className="text-amber-600 shrink-0" />
+                {editingId === l.id ? (
                   <input
                     autoFocus
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
-                    onBlur={() => commit(f.id)}
-                    onKeyDown={(e) => e.key === "Enter" && commit(f.id)}
+                    onBlur={() => commit(l.id)}
+                    onKeyDown={(e) => e.key === "Enter" && commit(l.id)}
                     className="flex-1 border border-stone-200 rounded-lg px-2 py-1 text-sm outline-none focus:border-emerald-700"
                   />
                 ) : (
                   <button
                     onClick={() => {
-                      setEditingId(f.id);
-                      setDraft(f.name);
+                      setEditingId(l.id);
+                      setDraft(l.name);
                     }}
                     className="flex-1 text-left text-sm font-semibold text-stone-800 truncate"
                   >
-                    {f.name}
+                    {l.name}
                   </button>
                 )}
-                <button onClick={() => onDelete(f.id)} aria-label={`Delete ${f.name} folder`} className="text-stone-400 hover:text-rose-600 shrink-0 p-1">
+                <button onClick={() => onDelete(l.id)} aria-label={`Delete ${l.name} label`} className="text-stone-400 hover:text-rose-600 shrink-0 p-1">
                   <Trash2 size={14} />
                 </button>
               </div>
@@ -9422,8 +9635,9 @@ function ManageFoldersModal({ open, folders, onClose, onRename, onDelete }) {
 }
 
 // The Messages list's top-level "⋯" — one tap away, everything the bulk
-// toolbar doesn't already cover.
-function MessagesOverflowMenu({ open, onClose, onSelect, onManageFolders, onDeleteAll }) {
+// toolbar and nav rail don't already cover. inTrash swaps the destructive
+// item to "Empty trash", which only makes sense while looking at Trash.
+function MessagesOverflowMenu({ open, onClose, onSelect, onManageLabels, onDeleteAll, inTrash }) {
   return (
     <Modal open={open} onClose={onClose} labelledBy="messages-menu-title">
       <div className="p-6">
@@ -9432,11 +9646,11 @@ function MessagesOverflowMenu({ open, onClose, onSelect, onManageFolders, onDele
           <button onClick={onSelect} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
             <Check size={15} /> Select conversations
           </button>
-          <button onClick={onManageFolders} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
-            <Folder size={15} /> Manage folders
+          <button onClick={onManageLabels} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <Tag size={15} /> Manage labels
           </button>
           <button onClick={onDeleteAll} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
-            <Trash2 size={15} /> Delete all conversations
+            <Trash2 size={15} /> {inTrash ? "Empty Trash" : "Delete all conversations"}
           </button>
         </div>
         <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
@@ -9445,11 +9659,87 @@ function MessagesOverflowMenu({ open, onClose, onSelect, onManageFolders, onDele
   );
 }
 
+// Gmail's "schedule send" popover — a couple of quick presets plus a custom
+// date/time, applied to whatever's currently typed in the compose box.
+function ScheduleSendModal({ open, onClose, onSchedule }) {
+  const [custom, setCustom] = useState("");
+  const presets = useMemo(() => {
+    const now = new Date();
+    const mk = (d) => d.getTime();
+    const tonight = new Date(now);
+    tonight.setHours(18, 0, 0, 0);
+    if (tonight <= now) tonight.setDate(tonight.getDate() + 1);
+    const tomorrowMorning = new Date(now);
+    tomorrowMorning.setDate(tomorrowMorning.getDate() + 1);
+    tomorrowMorning.setHours(8, 0, 0, 0);
+    const monday = new Date(now);
+    const daysToMonday = (8 - monday.getDay()) % 7 || 7;
+    monday.setDate(monday.getDate() + daysToMonday);
+    monday.setHours(8, 0, 0, 0);
+    return [
+      { label: "In 1 hour", at: mk(new Date(now.getTime() + 60 * 60 * 1000)) },
+      { label: "This evening, 6 PM", at: mk(tonight) },
+      { label: "Tomorrow morning, 8 AM", at: mk(tomorrowMorning) },
+      { label: "Monday morning, 8 AM", at: mk(monday) },
+    ];
+  }, [open]);
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="schedule-send-title">
+      <div className="p-6">
+        <h2 id="schedule-send-title" className="text-base font-bold text-stone-900 mb-3" style={displayFont}>Schedule send</h2>
+        <div className="flex flex-col gap-1.5">
+          {presets.map((p) => (
+            <button key={p.label} onClick={() => onSchedule(p.at)} className="text-left px-4 py-2.5 rounded-xl hover:bg-stone-50 text-sm font-semibold text-stone-700 flex items-center gap-2">
+              <Clock size={15} className="text-stone-400" /> {p.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 mt-3 pt-3 border-t border-stone-100">
+          <input
+            type="datetime-local"
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            className="flex-1 border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-700"
+          />
+          <button
+            onClick={() => {
+              const t = new Date(custom).getTime();
+              if (!isNaN(t)) onSchedule(t);
+            }}
+            disabled={!custom}
+            className="px-3 py-2 rounded-xl bg-emerald-800 text-white text-sm font-semibold disabled:opacity-40"
+          >
+            Set
+          </button>
+        </div>
+        <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Gmail's own nav-rail order: Inbox, Starred, Important, Sent, Scheduled,
+// Drafts, Spam, Trash. Purchases (vendor-only) and Labels are appended
+// separately below since they're conditional / dynamic lists.
+const MESSAGE_NAV_ITEMS = [
+  { id: "inbox", label: "Inbox", icon: Inbox },
+  { id: "starred", label: "Starred", icon: Star },
+  { id: "important", label: "Important", icon: AlertCircle },
+  { id: "sent", label: "Sent", icon: Send },
+  { id: "scheduled", label: "Scheduled", icon: Clock },
+  { id: "drafts", label: "Drafts", icon: Pencil },
+  { id: "spam", label: "Spam", icon: AlertTriangle },
+  { id: "trash", label: "Trash", icon: Trash2 },
+];
+
 function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserAvatar, initialCid }) {
   const {
     me, conversations, ensureConversation, updateMe, showToast, openProfileCard,
-    messageFolders, deleteConversations, deleteAllConversations, moveConversationsToFolder,
-    createMessageFolder, renameMessageFolder, deleteMessageFolder,
+    messageLabels, createMessageLabel, renameMessageLabel, deleteMessageLabel,
+    toggleConversationLabel, addLabelToConversations, toggleConversationStar, toggleConversationImportant,
+    trashConversations, trashAllConversations, restoreConversations,
+    markConversationsSpam, markConversationsNotSpam, permanentlyDeleteConversations, emptyMessageTrash,
+    setConversationDraft, scheduledMessages, scheduleMessage, cancelScheduledMessage,
   } = useApp();
   const [selectedCid, setSelectedCid] = useState(initialCid || null);
   const [activeOther, setActiveOther] = useState(initialWithUserId ? { id: initialWithUserId, name: initialWithUserName, avatar: initialWithUserAvatar } : null);
@@ -9458,24 +9748,73 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
   const initRan = useRef(false);
   const scrollRef = useRef(null);
 
-  // Outlook-style list management: a folder filter row, a checkbox select
-  // mode for bulk actions, and a per-row "⋮" for the single-conversation
-  // version of the same actions — no long-press anywhere in this list.
-  const [activeFolderId, setActiveFolderId] = useState("all"); // "all" | null (Unfiled) | a folder id
+  // Gmail-style layout: a nav rail of views (Inbox/Starred/.../Trash, plus
+  // Purchases for vendors and a Labels section) instead of the old single
+  // folder-chip row, a checkbox select mode for bulk actions, and a per-row
+  // "⋮" for the single-conversation version of the same actions — no
+  // long-press anywhere in this list.
+  const [view, setView] = useState("inbox"); // a MESSAGE_NAV_ITEMS id, "purchases", or a label id
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [rowMenuFor, setRowMenuFor] = useState(null);
-  const [folderPickerFor, setFolderPickerFor] = useState(null); // array of cids, or null when closed
-  const [manageFoldersOpen, setManageFoldersOpen] = useState(false);
+  const [labelPickerFor, setLabelPickerFor] = useState(null); // array of cids, or null when closed
+  const [labelCheckedIds, setLabelCheckedIds] = useState(() => new Set());
+  const [manageLabelsOpen, setManageLabelsOpen] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(null); // { cids, title, body } | null
-  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [confirmPermDelete, setConfirmPermDelete] = useState(null); // { cids, title, body } | null
+  const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
+  const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
+  const [scheduleSendOpen, setScheduleSendOpen] = useState(false);
+  const [purchaseCustomerIds, setPurchaseCustomerIds] = useState(null); // null = not a vendor / not loaded yet
+
+  // Purchases only exists for vendor accounts: it's built by cross-referencing
+  // *our own* shop's order history (private kv — only we can read it) for
+  // customers with a completed order. There's no shopper-side purchase record
+  // in the schema today, so a pure shopper account never sees this tab.
+  useEffect(() => {
+    let cancelled = false;
+    if (!me?.isVendor || !me?.shopId) {
+      setPurchaseCustomerIds(null);
+      return;
+    }
+    (async () => {
+      const orders = await getJSON(`orders:${me.shopId}`, false, []);
+      if (cancelled) return;
+      const ids = new Set((Array.isArray(orders) ? orders : []).filter((o) => o.completed).map((o) => o.customerUserId));
+      setPurchaseCustomerIds(ids);
+    })();
+    return () => { cancelled = true; };
+  }, [me?.isVendor, me?.shopId]);
+
+  const isVendorAccount = !!(me?.isVendor && me?.shopId);
 
   const visibleConversations = useMemo(() => {
-    if (activeFolderId === "all") return conversations;
-    if (activeFolderId === null) return conversations.filter((c) => !c.folderId);
-    return conversations.filter((c) => c.folderId === activeFolderId);
-  }, [conversations, activeFolderId]);
+    const notTrashedOrSpam = (c) => !c.trashed && !c.spam;
+    if (view === "inbox") return conversations.filter(notTrashedOrSpam);
+    if (view === "starred") return conversations.filter((c) => c.starred && notTrashedOrSpam(c));
+    if (view === "important") return conversations.filter((c) => c.important && notTrashedOrSpam(c));
+    if (view === "sent") return conversations.filter((c) => c.lastSenderId === me.id && notTrashedOrSpam(c));
+    if (view === "drafts") return conversations.filter((c) => (c.draft || "").trim() && notTrashedOrSpam(c));
+    if (view === "spam") return conversations.filter((c) => c.spam);
+    if (view === "trash") return conversations.filter((c) => c.trashed);
+    if (view === "purchases") return conversations.filter((c) => purchaseCustomerIds?.has(c.otherUserId) && notTrashedOrSpam(c));
+    // Anything else is a label id.
+    return conversations.filter((c) => (c.labelIds || []).includes(view) && notTrashedOrSpam(c));
+  }, [conversations, view, me?.id, purchaseCustomerIds]);
+
+  const activeLabel = messageLabels.find((l) => l.id === view) || null;
+  const viewTitle =
+    view === "inbox" ? "Inbox" :
+    view === "starred" ? "Starred" :
+    view === "important" ? "Important" :
+    view === "sent" ? "Sent" :
+    view === "drafts" ? "Drafts" :
+    view === "spam" ? "Spam" :
+    view === "trash" ? "Trash" :
+    view === "scheduled" ? "Scheduled" :
+    view === "purchases" ? "Purchases" :
+    activeLabel ? activeLabel.name : "Messages";
 
   const toggleSelect = (cid) => {
     setSelectedIds((prev) => {
@@ -9495,38 +9834,83 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
       setActiveOther(null);
     }
   };
-  const runDelete = async () => {
-    if (!confirmDelete) return;
-    await deleteConversations(confirmDelete.cids);
-    closeIfSelected(confirmDelete.cids);
+  const goToView = (v) => {
+    setView(v);
+    setSidebarOpen(false);
+    exitSelectMode();
+  };
+
+  const runTrash = async (cids) => {
+    await trashConversations(cids);
+    closeIfSelected(cids);
+    setSelectedIds((prev) => { const next = new Set(prev); cids.forEach((id) => next.delete(id)); return next; });
+    showToast(cids.length > 1 ? "Conversations moved to trash" : "Conversation moved to trash");
+  };
+  const runRestore = async (cids) => {
+    await restoreConversations(cids);
+    setSelectedIds((prev) => { const next = new Set(prev); cids.forEach((id) => next.delete(id)); return next; });
+    showToast(cids.length > 1 ? "Conversations moved to Inbox" : "Conversation moved to Inbox");
+  };
+  const runSpam = async (cids) => {
+    await markConversationsSpam(cids);
+    closeIfSelected(cids);
+    setSelectedIds((prev) => { const next = new Set(prev); cids.forEach((id) => next.delete(id)); return next; });
+    showToast("Marked as spam");
+  };
+  const runNotSpam = async (cids) => {
+    await markConversationsNotSpam(cids);
+    setSelectedIds((prev) => { const next = new Set(prev); cids.forEach((id) => next.delete(id)); return next; });
+    showToast("Marked not spam");
+  };
+  const runPermDelete = async () => {
+    if (!confirmPermDelete) return;
+    await permanentlyDeleteConversations(confirmPermDelete.cids);
+    closeIfSelected(confirmPermDelete.cids);
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      confirmDelete.cids.forEach((id) => next.delete(id));
+      confirmPermDelete.cids.forEach((id) => next.delete(id));
       return next;
     });
-    showToast(confirmDelete.cids.length > 1 ? "Conversations deleted" : "Conversation deleted");
+    showToast(confirmPermDelete.cids.length > 1 ? "Conversations deleted forever" : "Conversation deleted forever");
   };
-  const runDeleteAll = async () => {
-    await deleteAllConversations();
+  const runEmptyTrash = async () => {
+    await emptyMessageTrash();
     setSelectedCid(null);
     setActiveOther(null);
     exitSelectMode();
-    showToast("All conversations deleted");
+    showToast("Trash emptied");
   };
-  const runMove = async (folderId) => {
-    if (!folderPickerFor) return;
-    await moveConversationsToFolder(folderPickerFor, folderId);
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      folderPickerFor.forEach((id) => next.delete(id));
-      return next;
-    });
-    setFolderPickerFor(null);
-    showToast(folderId ? "Moved" : "Moved to Unfiled");
+  const runDeleteAllInbox = async () => {
+    await trashAllConversations();
+    setSelectedCid(null);
+    setActiveOther(null);
+    exitSelectMode();
+    showToast("All conversations moved to trash");
   };
-  const runCreateAndMove = async (name) => {
-    const folder = await createMessageFolder(name);
-    if (folder) await runMove(folder.id);
+
+  const openLabelPicker = (cids) => {
+    const first = conversations.find((c) => c.id === cids[0]);
+    setLabelCheckedIds(new Set(cids.length === 1 ? first?.labelIds || [] : []));
+    setLabelPickerFor(cids);
+  };
+  const runToggleLabel = (labelId) => {
+    if (!labelPickerFor) return;
+    if (labelPickerFor.length === 1) {
+      toggleConversationLabel(labelPickerFor[0], labelId);
+      setLabelCheckedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(labelId)) next.delete(labelId);
+        else next.add(labelId);
+        return next;
+      });
+    } else {
+      addLabelToConversations(labelPickerFor, labelId);
+      setLabelCheckedIds((prev) => new Set(prev).add(labelId));
+    }
+  };
+  const runCreateAndApplyLabel = async (name) => {
+    const label = await createMessageLabel(name);
+    if (label) runToggleLabel(label.id);
   };
 
   useEffect(() => {
@@ -9545,9 +9929,24 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
     }
   }, [selectedCid, conversations, activeOther]);
 
+  const activeConvo = useMemo(() => conversations.find((c) => c.id === selectedCid) || null, [conversations, selectedCid]);
+
   const { messages, send, blockedByOther, deleteMessage } = useMessages(me, selectedCid, activeOther);
   const isBlocked = !!activeOther && (me.blockedUserIds || []).includes(activeOther.id);
   const [actionTarget, setActionTarget] = useState(null);
+
+  // Compose box mirrors Gmail's autosaving drafts: prefill from whatever was
+  // saved for this thread, and push every keystroke back through the
+  // debounced setConversationDraft so switching away and back keeps it.
+  useEffect(() => {
+    setText(activeConvo?.draft || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCid]);
+
+  const handleTextChange = (v) => {
+    setText(v);
+    if (selectedCid) setConversationDraft(selectedCid, v);
+  };
 
   const copyMessage = async (m) => {
     try {
@@ -9572,8 +9971,23 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
     if (!text.trim() || isBlocked || blockedByOther) return;
     const outgoing = text;
     setText("");
+    if (selectedCid) setConversationDraft(selectedCid, "");
     const res = await send(outgoing);
     if (res && res.reason === "blocked") showToast("This person isn't accepting messages right now");
+  };
+
+  const handleScheduleSend = async (sendAt) => {
+    if (!text.trim() || !selectedCid) return;
+    await scheduleMessage(activeOther, selectedCid, text, sendAt);
+    setText("");
+    setConversationDraft(selectedCid, "");
+    setScheduleSendOpen(false);
+    showToast("Message scheduled");
+  };
+
+  const cancelSchedule = async (id) => {
+    await cancelScheduledMessage(id);
+    showToast("Send canceled");
   };
 
   // Reporting files the report with recent context, then blocks — someone you
@@ -9605,32 +10019,94 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
   };
 
   return (
-    <div className="flex-1 flex overflow-hidden">
+    <div className="flex-1 flex overflow-hidden relative">
+      {/* Gmail-style nav rail: Inbox/Starred/.../Trash, Purchases for
+         vendors, then a Labels section with create/manage entries.
+         Collapses to a slide-over on mobile via the header's hamburger. */}
+      <div
+        className={`${sidebarOpen ? "flex absolute inset-y-0 left-0 z-20 shadow-xl" : "hidden"} md:flex md:relative md:shadow-none w-60 shrink-0 flex-col border-r border-stone-200 overflow-y-auto bg-white`}
+      >
+        <div className="flex items-center justify-between px-4 pt-4 pb-2 md:hidden">
+          <span className="font-bold text-sm text-stone-700">Menu</span>
+          <button onClick={() => setSidebarOpen(false)} aria-label="Close menu" className="text-stone-400 p-1"><X size={16} /></button>
+        </div>
+        <button
+          onClick={() => { setSelectedCid(null); setActiveOther(null); setText(""); setSidebarOpen(false); }}
+          className="mx-3 mt-3 mb-1 px-4 py-2.5 rounded-2xl bg-emerald-800 text-white text-sm font-semibold flex items-center gap-2 shadow-sm hover:bg-emerald-700"
+        >
+          <Pencil size={15} /> Compose
+        </button>
+        <div className="flex flex-col gap-0.5 px-2 py-2">
+          {MESSAGE_NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => goToView(item.id)}
+              className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
+                view === item.id ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <item.icon size={16} className="shrink-0" /> {item.label}
+            </button>
+          ))}
+          {isVendorAccount && (
+            <button
+              onClick={() => goToView("purchases")}
+              className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
+                view === "purchases" ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <ShoppingBag size={16} className="shrink-0" /> Purchases
+            </button>
+          )}
+        </div>
+        <div className="px-4 pt-2 pb-1">
+          <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Labels</span>
+        </div>
+        <div className="flex flex-col gap-0.5 px-2 pb-3">
+          {messageLabels.map((l) => (
+            <button
+              key={l.id}
+              onClick={() => goToView(l.id)}
+              className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
+                view === l.id ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <Tag size={15} className="text-amber-600 shrink-0" /> <span className="truncate">{l.name}</span>
+            </button>
+          ))}
+          <button
+            onClick={async () => {
+              const name = window.prompt("New label name");
+              if (name && name.trim()) {
+                const label = await createMessageLabel(name);
+                if (label) goToView(label.id);
+              }
+            }}
+            className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
+          >
+            <Plus size={15} className="shrink-0" /> Create new label
+          </button>
+          <button
+            onClick={() => { setManageLabelsOpen(true); setSidebarOpen(false); }}
+            className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
+          >
+            <Folder size={15} className="shrink-0" /> Manage labels
+          </button>
+        </div>
+      </div>
+
+      {sidebarOpen && <div className="fixed inset-0 bg-black/30 z-10 md:hidden" onClick={() => setSidebarOpen(false)} />}
+
       <div className={`${selectedCid ? "hidden md:flex" : "flex"} w-full md:w-80 shrink-0 flex-col border-r border-stone-200 overflow-y-auto`}>
-        <div className="flex items-center justify-between px-4 pt-4 pb-1">
-          <h1 className="text-xl font-bold text-stone-900" style={displayFont}>Messages</h1>
+        <div className="flex items-center gap-2 px-4 pt-4 pb-1">
+          <button onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="md:hidden text-stone-500 p-1 -ml-1"><Menu size={18} /></button>
+          <h1 className="text-xl font-bold text-stone-900 flex-1" style={displayFont}>{view === "inbox" ? "Messages" : viewTitle}</h1>
           {conversations.length > 0 && (
             <button onClick={() => setOverflowOpen(true)} aria-label="Messages options" className="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100">
               <MoreVertical size={18} />
             </button>
           )}
         </div>
-
-        {conversations.length > 0 && (
-          <div className="flex items-center gap-1.5 px-4 pb-2 overflow-x-auto">
-            {[{ id: "all", name: "All" }, { id: null, name: "Unfiled" }, ...messageFolders].map((f) => (
-              <button
-                key={f.id === null ? "unfiled" : f.id}
-                onClick={() => setActiveFolderId(f.id)}
-                className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold transition ${
-                  activeFolderId === f.id ? "bg-stone-800 text-white" : "bg-stone-100 text-stone-500 hover:bg-stone-200"
-                }`}
-              >
-                {f.name}
-              </button>
-            ))}
-          </div>
-        )}
 
         {selectMode && (
           <div className="flex items-center gap-1.5 px-4 py-2 border-y border-stone-200 bg-stone-50 flex-wrap">
@@ -9642,33 +10118,76 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
               Select all
             </button>
             <button
-              onClick={() => setFolderPickerFor(Array.from(selectedIds))}
+              onClick={() => openLabelPicker(Array.from(selectedIds))}
               disabled={selectedIds.size === 0}
               className="text-xs font-semibold text-stone-600 disabled:opacity-40 ml-1"
             >
-              Move
+              Labels
             </button>
-            <button
-              onClick={() =>
-                setConfirmDelete({
-                  cids: Array.from(selectedIds),
-                  title: `Delete ${selectedIds.size} conversation${selectedIds.size === 1 ? "" : "s"}?`,
-                  body: "They'll be removed from your history. The other person keeps their side of it.",
-                })
-              }
-              disabled={selectedIds.size === 0}
-              className="text-xs font-semibold text-rose-600 disabled:opacity-40"
-            >
-              Delete
-            </button>
+            {view === "trash" ? (
+              <>
+                <button onClick={() => runRestore(Array.from(selectedIds))} disabled={selectedIds.size === 0} className="text-xs font-semibold text-emerald-700 disabled:opacity-40">
+                  Move to Inbox
+                </button>
+                <button
+                  onClick={() => setConfirmPermDelete({ cids: Array.from(selectedIds), title: `Delete ${selectedIds.size} conversation${selectedIds.size === 1 ? "" : "s"} forever?`, body: "This can't be undone." })}
+                  disabled={selectedIds.size === 0}
+                  className="text-xs font-semibold text-rose-600 disabled:opacity-40"
+                >
+                  Delete forever
+                </button>
+              </>
+            ) : view === "spam" ? (
+              <>
+                <button onClick={() => runNotSpam(Array.from(selectedIds))} disabled={selectedIds.size === 0} className="text-xs font-semibold text-emerald-700 disabled:opacity-40">
+                  Not spam
+                </button>
+                <button
+                  onClick={() => setConfirmPermDelete({ cids: Array.from(selectedIds), title: `Delete ${selectedIds.size} conversation${selectedIds.size === 1 ? "" : "s"} forever?`, body: "This can't be undone." })}
+                  disabled={selectedIds.size === 0}
+                  className="text-xs font-semibold text-rose-600 disabled:opacity-40"
+                >
+                  Delete forever
+                </button>
+              </>
+            ) : (
+              <>
+                <button onClick={() => runSpam(Array.from(selectedIds))} disabled={selectedIds.size === 0} className="text-xs font-semibold text-amber-700 disabled:opacity-40">
+                  Spam
+                </button>
+                <button onClick={() => runTrash(Array.from(selectedIds))} disabled={selectedIds.size === 0} className="text-xs font-semibold text-rose-600 disabled:opacity-40">
+                  Trash
+                </button>
+              </>
+            )}
             <button onClick={exitSelectMode} className="text-xs font-semibold text-stone-400 ml-auto">Cancel</button>
           </div>
         )}
 
-        {conversations.length === 0 ? (
+        {view === "scheduled" ? (
+          scheduledMessages.length === 0 ? (
+            <EmptyState icon={Clock} title="Nothing scheduled" body="Schedule a message from the compose box's clock icon." />
+          ) : (
+            scheduledMessages.map((s) => (
+              <div key={s.id} className="flex items-center gap-3 px-4 py-3 border-b border-stone-100">
+                <Avatar emoji={s.otherUserAvatar} name={s.otherUserName} />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-stone-800 truncate">{s.otherUserName}</p>
+                  <p className="text-xs text-stone-400 truncate">{s.body}</p>
+                  <p className="cs-t10 text-emerald-700 font-semibold mt-0.5">Sends {new Date(s.sendAt).toLocaleString()}</p>
+                </div>
+                <button onClick={() => cancelSchedule(s.id)} className="shrink-0 text-xs font-semibold text-rose-600">Cancel</button>
+              </div>
+            ))
+          )
+        ) : conversations.length === 0 ? (
           <EmptyState icon={MessageCircle} title="No conversations yet" body="Message a vendor from any shop or listing page." />
         ) : visibleConversations.length === 0 ? (
-          <EmptyState icon={Folder} title="Nothing in this folder" body="Move a conversation here, or pick a different folder above." />
+          <EmptyState
+            icon={view === "trash" ? Trash2 : view === "spam" ? AlertTriangle : view === "purchases" ? ShoppingBag : Inbox}
+            title={`Nothing in ${viewTitle}`}
+            body={view === "purchases" && !isVendorAccount ? "Purchases tracking is available for shop owners right now." : "Nothing here yet."}
+          />
         ) : (
           visibleConversations.map((c) => (
             <div
@@ -9690,6 +10209,13 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
                 </span>
               )}
               <button
+                onClick={(e) => { e.stopPropagation(); toggleConversationStar(c.id); }}
+                aria-label={c.starred ? "Unstar" : "Star"}
+                className="shrink-0 text-stone-300 hover:text-amber-400"
+              >
+                <Star size={15} className={c.starred ? "fill-amber-400 text-amber-400" : ""} />
+              </button>
+              <button
                 onClick={(e) => { e.stopPropagation(); openProfileCard({ id: c.otherUserId, name: c.otherUserName, avatar: c.otherUserAvatar }); }}
                 aria-label={`View ${c.otherUserName}'s profile`}
                 className="shrink-0"
@@ -9697,8 +10223,21 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
                 <Avatar emoji={c.otherUserAvatar} name={c.otherUserName} />
               </button>
               <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm text-stone-800 truncate">{c.otherUserName}</p>
-                <p className="text-xs text-stone-400 truncate">{c.lastMessage || "Say hello…"}</p>
+                <p className="font-semibold text-sm text-stone-800 truncate flex items-center gap-1.5">
+                  <span className="truncate">{c.otherUserName}</span>
+                  {(c.labelIds || []).slice(0, 2).map((lid) => {
+                    const l = messageLabels.find((x) => x.id === lid);
+                    return l ? (
+                      <span key={lid} className="cs-t10 bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold shrink-0">
+                        {l.name}
+                      </span>
+                    ) : null;
+                  })}
+                </p>
+                <p className="text-xs text-stone-400 truncate">
+                  {view === "drafts" && c.draft ? <span className="text-rose-500 font-semibold">Draft: </span> : null}
+                  {view === "drafts" && c.draft ? c.draft : c.lastMessage || "Say hello…"}
+                </p>
               </div>
               <span className="cs-t10 text-stone-400 shrink-0">{timeAgo(c.lastAt)}</span>
               {!selectMode && (
@@ -9764,10 +10303,11 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
             <div className="p-3 border-t border-stone-200 flex items-end gap-2">
               <TextField
                 value={text}
-                onChange={setText}
+                onChange={handleTextChange}
                 onSubmit={(v) => {
                   if (!v.trim() || isBlocked || blockedByOther) return;
                   setText("");
+                  if (selectedCid) setConversationDraft(selectedCid, "");
                   send(v).then((res) => {
                     if (res && res.reason === "blocked") showToast("This person isn't accepting messages right now");
                   });
@@ -9779,6 +10319,14 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
                 placeholder="Type a message…"
                 className="flex-1 bg-stone-100 rounded-2xl px-4 py-2.5 text-sm outline-none resize-none leading-6"
               />
+              <button
+                onClick={() => setScheduleSendOpen(true)}
+                disabled={!text.trim()}
+                className="text-stone-400 hover:text-stone-700 disabled:opacity-30 rounded-full w-9 h-9 flex items-center justify-center shrink-0 mb-0.5"
+                aria-label="Schedule send"
+              >
+                <Clock size={17} />
+              </button>
               <button onClick={handleSend} className="bg-emerald-800 text-white rounded-full w-10 h-10 flex items-center justify-center shrink-0 mb-0.5" aria-label="Send"><Send size={16} /></button>
             </div>
           )}
@@ -9798,38 +10346,39 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
 
       <ConversationActionSheet
         conversation={rowMenuFor}
+        view={view}
         onClose={() => setRowMenuFor(null)}
-        onMove={() => {
-          setFolderPickerFor([rowMenuFor.id]);
-          setRowMenuFor(null);
-        }}
-        onDelete={() => {
-          setConfirmDelete({
-            cids: [rowMenuFor.id],
-            title: `Delete conversation with ${rowMenuFor.otherUserName}?`,
-            body: "It'll be removed from your history. The other person keeps their side of it.",
-          });
+        onStar={() => { toggleConversationStar(rowMenuFor.id); setRowMenuFor(null); }}
+        onImportant={() => { toggleConversationImportant(rowMenuFor.id); setRowMenuFor(null); }}
+        onLabels={() => { openLabelPicker([rowMenuFor.id]); setRowMenuFor(null); }}
+        onSpam={() => { runSpam([rowMenuFor.id]); setRowMenuFor(null); }}
+        onNotSpam={() => { runNotSpam([rowMenuFor.id]); setRowMenuFor(null); }}
+        onTrash={() => { runTrash([rowMenuFor.id]); setRowMenuFor(null); }}
+        onRestore={() => { runRestore([rowMenuFor.id]); setRowMenuFor(null); }}
+        onDeleteForever={() => {
+          setConfirmPermDelete({ cids: [rowMenuFor.id], title: `Delete conversation with ${rowMenuFor.otherUserName} forever?`, body: "This can't be undone." });
           setRowMenuFor(null);
         }}
       />
 
-      <FolderPickerModal
-        open={!!folderPickerFor}
-        folders={messageFolders}
-        count={folderPickerFor?.length || 0}
-        onClose={() => setFolderPickerFor(null)}
-        onPick={runMove}
-        onCreateAndPick={runCreateAndMove}
+      <LabelPickerModal
+        open={!!labelPickerFor}
+        labels={messageLabels}
+        count={labelPickerFor?.length || 0}
+        checkedIds={labelCheckedIds}
+        onClose={() => setLabelPickerFor(null)}
+        onToggle={runToggleLabel}
+        onCreateAndApply={runCreateAndApplyLabel}
       />
 
-      <ManageFoldersModal
-        open={manageFoldersOpen}
-        folders={messageFolders}
-        onClose={() => setManageFoldersOpen(false)}
-        onRename={renameMessageFolder}
+      <ManageLabelsModal
+        open={manageLabelsOpen}
+        labels={messageLabels}
+        onClose={() => setManageLabelsOpen(false)}
+        onRename={renameMessageLabel}
         onDelete={(id) => {
-          if (activeFolderId === id) setActiveFolderId("all");
-          deleteMessageFolder(id);
+          if (view === id) setView("inbox");
+          deleteMessageLabel(id);
         }}
       />
 
@@ -9840,32 +10389,46 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
           setSelectMode(true);
           setOverflowOpen(false);
         }}
-        onManageFolders={() => {
-          setManageFoldersOpen(true);
+        onManageLabels={() => {
+          setManageLabelsOpen(true);
           setOverflowOpen(false);
         }}
         onDeleteAll={() => {
-          setConfirmDeleteAll(true);
           setOverflowOpen(false);
+          if (view === "trash") setConfirmEmptyTrash(true);
+          else setConfirmDeleteAllOpen(true);
         }}
+        inTrash={view === "trash"}
       />
 
       <ConfirmModal
-        open={!!confirmDelete}
-        title={confirmDelete?.title}
-        body={confirmDelete?.body}
-        onClose={() => setConfirmDelete(null)}
-        onConfirm={runDelete}
+        open={!!confirmPermDelete}
+        title={confirmPermDelete?.title}
+        body={confirmPermDelete?.body}
+        confirmLabel="Delete forever"
+        onClose={() => setConfirmPermDelete(null)}
+        onConfirm={runPermDelete}
       />
 
       <ConfirmModal
-        open={confirmDeleteAll}
+        open={confirmEmptyTrash}
+        title="Empty trash?"
+        body="Every conversation in Trash will be deleted forever. This can't be undone."
+        confirmLabel="Empty trash"
+        onClose={() => setConfirmEmptyTrash(false)}
+        onConfirm={runEmptyTrash}
+      />
+
+      <ConfirmModal
+        open={confirmDeleteAllOpen}
         title="Delete all conversations?"
-        body="Every conversation will be removed from your history. The people you talked with keep their side of it."
+        body="Every conversation will be moved to Trash, where it's deleted forever after 30 days. The people you talked with keep their side of it."
         confirmLabel="Delete all"
-        onClose={() => setConfirmDeleteAll(false)}
-        onConfirm={runDeleteAll}
+        onClose={() => setConfirmDeleteAllOpen(false)}
+        onConfirm={runDeleteAllInbox}
       />
+
+      <ScheduleSendModal open={scheduleSendOpen} onClose={() => setScheduleSendOpen(false)} onSchedule={handleScheduleSend} />
     </div>
   );
 }
@@ -13349,6 +13912,65 @@ function ymd(year, month, day) {
   return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+// ---- Week/day time-grid helpers, added for the Google-style Calendar
+// rebuild — month view already had everything it needed above.
+function addDaysToDate(date, n) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d;
+}
+function startOfWeek(date) {
+  const d = new Date(date);
+  d.setDate(d.getDate() - d.getDay());
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function dateToYmd(d) {
+  return ymd(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function parseYmdLocal(str) {
+  const [y, m, d] = (str || "").split("-").map(Number);
+  return new Date(y || 1970, (m || 1) - 1, d || 1);
+}
+function timeToMinutes(t) {
+  if (!t) return null;
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + (m || 0);
+}
+function formatHourLabel(hour) {
+  const h = hour % 24;
+  const period = h < 12 ? "AM" : "PM";
+  const display = h % 12 === 0 ? 12 : h % 12;
+  return `${display} ${period}`;
+}
+const CALENDAR_DEFAULT_EVENT_MINUTES = 60;
+// Greedy column assignment so same-day overlapping events sit side by side
+// instead of stacking on top of each other, the same visual Google's week/day
+// grid uses. Not a perfect minimal-column solver, but events per day here are
+// few enough that it never needs to be.
+function layoutTimedEvents(events) {
+  const withTimes = (events || [])
+    .map((ev) => {
+      const start = timeToMinutes(ev.time);
+      return start == null ? null : { ev, start, end: start + CALENDAR_DEFAULT_EVENT_MINUTES };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.start - b.start);
+  const columnEnds = [];
+  const placed = withTimes.map((item) => {
+    let col = columnEnds.findIndex((endTime) => endTime <= item.start);
+    if (col === -1) {
+      col = columnEnds.length;
+      columnEnds.push(item.end);
+    } else {
+      columnEnds[col] = item.end;
+    }
+    return { ...item, col };
+  });
+  const totalCols = columnEnds.length || 1;
+  return placed.map((p) => ({ ...p, totalCols }));
+}
+
 // A millisecond timestamp as a "YYYY-MM-DDTHH:mm" string in local time, for
 // pre-filling a <input type="datetime-local"> — e.g. a custom reminder time.
 function toDatetimeLocalValue(ms) {
@@ -13418,10 +14040,203 @@ function googleCalendarUrl(ev) {
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
+// Google's own compact month-picker: no event detail, just a dot under any
+// day that has something on it. Steps its own month independently of
+// whatever the main view is showing, exactly like Google Calendar's sidebar.
+function MiniMonthCalendar({ cursor, onPrevMonth, onNextMonth, selectedDate, onSelectDate, eventsByDate }) {
+  const first = startOfMonthWeekday(cursor.year, cursor.month);
+  const total = daysInMonth(cursor.year, cursor.month);
+  const cells = [];
+  for (let i = 0; i < first; i++) cells.push(null);
+  for (let d = 1; d <= total; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const monthLabel = new Date(cursor.year, cursor.month, 1).toLocaleDateString([], { month: "long", year: "numeric" });
+  const todayStr = dateToYmd(new Date());
+
+  return (
+    <div className="border border-stone-300 rounded-2xl p-3 bg-white">
+      <div className="flex items-center justify-between mb-2">
+        <p className="cs-t11 font-bold text-stone-700">{monthLabel}</p>
+        <div className="flex items-center gap-0.5">
+          <button onClick={onPrevMonth} aria-label="Previous month" className="w-6 h-6 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
+            <ChevronLeft size={13} />
+          </button>
+          <button onClick={onNextMonth} aria-label="Next month" className="w-6 h-6 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
+            <ChevronRight size={13} />
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-y-0.5">
+        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+          <div key={i} className="text-center cs-t9 font-bold text-stone-400">{d}</div>
+        ))}
+        {cells.map((day, i) => {
+          if (day == null) return <div key={i} />;
+          const dateStr = ymd(cursor.year, cursor.month, day);
+          const isToday = dateStr === todayStr;
+          const isSelected = dateStr === selectedDate;
+          const hasEvents = (eventsByDate[dateStr] || []).length > 0;
+          return (
+            <button
+              key={i}
+              onClick={() => onSelectDate(dateStr)}
+              className={`relative w-6 h-6 mx-auto my-0.5 rounded-full cs-t10 font-semibold flex items-center justify-center transition ${
+                isSelected ? "bg-emerald-700 text-white" : isToday ? "text-emerald-700 font-bold" : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              {day}
+              {hasEvents && !isSelected && <span className="absolute bottom-0 w-1 h-1 rounded-full bg-amber-500" />}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// The hourly grid shared by Week (7 columns) and Day (1 column) views — an
+// all-day strip on top for events with no time, then a scrollable 24-hour
+// grid below with a live red "now" line, matching Google Calendar's layout.
+function TimeGridView({ days, eventsByDate, orders, onOpenEvent, onAddNote, now }) {
+  const HOUR_HEIGHT = 48;
+  const scrollRef = useRef(null);
+  const todayStr = dateToYmd(new Date());
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 7 * HOUR_HEIGHT;
+  }, []);
+
+  const nowDate = new Date(now || Date.now());
+  const nowMinutes = nowDate.getHours() * 60 + nowDate.getMinutes();
+  const nowYmd = dateToYmd(nowDate);
+
+  return (
+    <div className="border border-stone-300 rounded-2xl overflow-hidden bg-white">
+      <div className="flex border-b border-stone-300">
+        <div className="w-12 sm:w-14 shrink-0 border-r border-stone-300" />
+        {days.map((d) => {
+          const dateStr = dateToYmd(d);
+          const isToday = dateStr === todayStr;
+          const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+          return (
+            <div key={dateStr} className={`flex-1 min-w-0 text-center py-2 border-r border-stone-200 last:border-r-0 ${isToday ? "bg-emerald-50" : isWeekend ? "bg-stone-100" : "bg-stone-50"}`}>
+              <p className="cs-t9 font-bold text-stone-400 uppercase">{d.toLocaleDateString([], { weekday: "short" })}</p>
+              <p className={`text-sm font-bold mt-0.5 inline-flex items-center justify-center w-7 h-7 rounded-full ${isToday ? "bg-emerald-700 text-white" : "text-stone-700"}`}>
+                {d.getDate()}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex border-b border-stone-300">
+        <div className="w-12 sm:w-14 shrink-0 border-r border-stone-300 flex items-center justify-center cs-t9 text-stone-400">All day</div>
+        {days.map((d) => {
+          const dateStr = dateToYmd(d);
+          const allDayEvents = (eventsByDate[dateStr] || []).filter((ev) => !ev.time);
+          return (
+            <div key={dateStr} className="flex-1 min-w-0 border-r border-stone-200 last:border-r-0 p-1 flex flex-col gap-1 min-h-[32px]">
+              {allDayEvents.map((ev) => (
+                <button
+                  key={ev.id}
+                  onClick={() => onOpenEvent(ev)}
+                  className={`text-left cs-t10 font-semibold truncate px-1.5 py-0.5 rounded ${ev.kind === "order" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}
+                >
+                  {ev.title}
+                </button>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+
+      <div ref={scrollRef} className="flex overflow-y-auto" style={{ maxHeight: 560 }}>
+        <div className="w-12 sm:w-14 shrink-0 border-r border-stone-300">
+          {Array.from({ length: 24 }).map((_, h) => (
+            <div key={h} style={{ height: HOUR_HEIGHT }} className="relative">
+              {h > 0 && <span className="absolute -top-2 right-1 cs-t9 text-stone-400">{formatHourLabel(h)}</span>}
+            </div>
+          ))}
+        </div>
+        {days.map((d) => {
+          const dateStr = dateToYmd(d);
+          const timedEvents = layoutTimedEvents(eventsByDate[dateStr] || []);
+          const isToday = dateStr === todayStr;
+          const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+          return (
+            <div
+              key={dateStr}
+              className={`flex-1 min-w-0 border-r border-stone-200 last:border-r-0 relative ${isWeekend ? "bg-stone-50" : ""}`}
+              style={{ height: HOUR_HEIGHT * 24 }}
+            >
+              {Array.from({ length: 24 }).map((_, h) => (
+                <button
+                  key={h}
+                  onClick={() => onAddNote(dateStr, `${pad2(h)}:00`)}
+                  style={{ top: h * HOUR_HEIGHT, height: HOUR_HEIGHT }}
+                  className="absolute left-0 right-0 border-t border-stone-200 hover:bg-stone-100/70 transition"
+                  aria-label={`Add event at ${formatHourLabel(h)} on ${dateStr}`}
+                />
+              ))}
+              {isToday && dateStr === nowYmd && (
+                <div className="absolute left-0 right-0 z-10 flex items-center pointer-events-none" style={{ top: (nowMinutes / 60) * HOUR_HEIGHT }}>
+                  <span className="w-2 h-2 rounded-full bg-red-500 -ml-1 shrink-0" />
+                  <span className="flex-1 h-px bg-red-500" />
+                </div>
+              )}
+              {timedEvents.map(({ ev, start, totalCols, col }) => {
+                const linkedOrder = ev.kind === "order" ? orders?.orders.find((o) => o.id === ev.orderId) : null;
+                const urgency = urgencyFor(ev.date, ev.time, ev.kind === "order" ? !!linkedOrder?.completed : false, now);
+                const widthPct = 100 / totalCols;
+                return (
+                  <button
+                    key={ev.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenEvent(ev);
+                    }}
+                    style={{
+                      top: (start / 60) * HOUR_HEIGHT + 1,
+                      height: (CALENDAR_DEFAULT_EVENT_MINUTES / 60) * HOUR_HEIGHT - 2,
+                      left: `${col * widthPct}%`,
+                      width: `${widthPct}%`,
+                    }}
+                    className={`absolute z-[1] text-left rounded-lg px-1.5 py-1 overflow-hidden border-l-4 shadow-sm ${
+                      urgency === "overdue"
+                        ? "border-l-red-500 bg-red-100 text-red-700"
+                        : urgency === "soon"
+                        ? "border-l-orange-400 bg-orange-100 text-orange-700"
+                        : ev.kind === "order"
+                        ? "border-l-emerald-600 bg-emerald-100 text-emerald-800"
+                        : "border-l-amber-500 bg-amber-100 text-amber-800"
+                    }`}
+                  >
+                    <p className="cs-t9 font-bold truncate">{ev.time} {ev.title}</p>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const CALENDAR_VIEW_MODES = [
+  { id: "month", label: "Month" },
+  { id: "week", label: "Week" },
+  { id: "day", label: "Day" },
+];
+
 function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now }) {
   const { showToast } = useApp();
   const today = new Date();
+  const [viewMode, setViewMode] = useState("month");
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [cursor, setCursor] = useState({ year: today.getFullYear(), month: today.getMonth() });
+  const [focusDate, setFocusDate] = useState(dateToYmd(today));
+  const [miniCursor, setMiniCursor] = useState({ year: today.getFullYear(), month: today.getMonth() });
 
   const eventsByDate = useMemo(() => {
     const map = {};
@@ -13439,13 +14254,54 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
   while (cells.length % 7 !== 0) cells.push(null);
 
   const monthLabel = new Date(cursor.year, cursor.month, 1).toLocaleDateString([], { month: "long", year: "numeric" });
-  const todayStr = ymd(today.getFullYear(), today.getMonth(), today.getDate());
+  const todayStr = dateToYmd(today);
+
+  const focusDateObj = parseYmdLocal(focusDate);
+  const weekStart = startOfWeek(focusDateObj);
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDaysToDate(weekStart, i)), [weekStart.getTime()]);
+  const weekEnd = weekDays[6];
+  const weekLabel =
+    weekStart.getMonth() === weekEnd.getMonth()
+      ? `${weekStart.toLocaleDateString([], { month: "long" })} ${weekStart.getDate()}–${weekEnd.getDate()}, ${weekStart.getFullYear()}`
+      : `${weekStart.toLocaleDateString([], { month: "short", day: "numeric" })} – ${weekEnd.toLocaleDateString([], { month: "short", day: "numeric" })}, ${weekEnd.getFullYear()}`;
+  const dayLabel = focusDateObj.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  const headerLabel = viewMode === "month" ? monthLabel : viewMode === "week" ? weekLabel : dayLabel;
 
   const goMonth = (delta) => {
     setCursor((c) => {
       const d = new Date(c.year, c.month + delta, 1);
       return { year: d.getFullYear(), month: d.getMonth() };
     });
+  };
+  const goPrev = () => {
+    if (viewMode === "month") goMonth(-1);
+    else if (viewMode === "week") setFocusDate((f) => dateToYmd(addDaysToDate(parseYmdLocal(f), -7)));
+    else setFocusDate((f) => dateToYmd(addDaysToDate(parseYmdLocal(f), -1)));
+  };
+  const goNext = () => {
+    if (viewMode === "month") goMonth(1);
+    else if (viewMode === "week") setFocusDate((f) => dateToYmd(addDaysToDate(parseYmdLocal(f), 7)));
+    else setFocusDate((f) => dateToYmd(addDaysToDate(parseYmdLocal(f), 1)));
+  };
+  const goToday = () => {
+    const t = new Date();
+    setCursor({ year: t.getFullYear(), month: t.getMonth() });
+    setFocusDate(dateToYmd(t));
+    setMiniCursor({ year: t.getFullYear(), month: t.getMonth() });
+  };
+
+  // Keep the mini calendar's month synced to whichever main view is active,
+  // so switching into Week/Day always shows the right month without an extra tap.
+  useEffect(() => {
+    if (viewMode === "month") setMiniCursor({ year: cursor.year, month: cursor.month });
+    else setMiniCursor({ year: focusDateObj.getFullYear(), month: focusDateObj.getMonth() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, cursor.year, cursor.month, focusDate]);
+
+  const handleMiniSelect = (dateStr) => {
+    setFocusDate(dateStr);
+    const d = parseYmdLocal(dateStr);
+    setCursor({ year: d.getFullYear(), month: d.getMonth() });
   };
 
   const handleExport = (e) => {
@@ -13461,75 +14317,141 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
   };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <button onClick={() => goMonth(-1)} aria-label="Previous month" className="w-8 h-8 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
-          <ChevronLeft size={18} />
+    <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+      {/* Sidebar: mini month calendar, create button, and export — Google's left rail */}
+      <div className="sm:w-52 shrink-0 flex flex-col gap-3 order-2 sm:order-1">
+        <button
+          onClick={() => onAddNote(focusDate)}
+          className="flex items-center gap-2 justify-center bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-2xl text-sm shadow-sm"
+        >
+          <Plus size={15} /> Create
         </button>
-        <p className="font-bold text-stone-800" style={displayFont}>{monthLabel}</p>
-        <button onClick={() => goMonth(1)} aria-label="Next month" className="w-8 h-8 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
-          <ChevronRight size={18} />
-        </button>
-      </div>
-      <div className="grid grid-cols-7 gap-1 mb-1">
-        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-          <div key={i} className="text-center cs-t10 font-bold text-stone-400 py-1">{d}</div>
-        ))}
-      </div>
-      {/* Outlook-style: tapping the day itself (not an event) opens a full
-          day view; tapping an event chip jumps straight to that event. */}
-      <div className="grid grid-cols-7 gap-1">
-        {cells.map((day, i) => {
-          if (day == null) return <div key={i} />;
-          const dateStr = ymd(cursor.year, cursor.month, day);
-          const evs = eventsByDate[dateStr] || [];
-          const isToday = dateStr === todayStr;
-          return (
-            <button
-              key={i}
-              onClick={() => onOpenDay(dateStr)}
-              className={`aspect-square rounded-xl border p-1 flex flex-col items-start gap-0.5 overflow-hidden text-left transition ${
-                isToday ? "border-emerald-300" : "border-stone-100 hover:border-stone-200"
-              }`}
-            >
-              <span className={`cs-t11 font-bold ${isToday ? "text-emerald-800" : "text-stone-600"}`}>{day}</span>
-              <div className="flex flex-col gap-0.5 w-full">
-                {evs.slice(0, 2).map((ev) => {
-                  const linkedOrder = ev.kind === "order" ? orders?.orders.find((o) => o.id === ev.orderId) : null;
-                  const urgency = urgencyFor(ev.date, ev.time, ev.kind === "order" ? !!linkedOrder?.completed : false, now);
-                  return (
-                    <span
-                      key={ev.id}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenEvent(ev);
-                      }}
-                      className={`cs-t9 truncate w-full rounded px-1 cursor-pointer border-l-2 ${
-                        urgency === "overdue"
-                          ? "border-l-red-500 bg-red-100 text-red-700"
-                          : urgency === "soon"
-                          ? "border-l-orange-400 bg-orange-100 text-orange-700"
-                          : `border-l-transparent ${ev.kind === "order" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`
-                      }`}
-                    >
-                      {ev.title}
-                    </span>
-                  );
-                })}
-                {evs.length > 2 && <span className="cs-t9 text-stone-400">+{evs.length - 2} more</span>}
-              </div>
-            </button>
-          );
-        })}
+        <MiniMonthCalendar
+          cursor={miniCursor}
+          onPrevMonth={() => setMiniCursor((c) => { const d = new Date(c.year, c.month - 1, 1); return { year: d.getFullYear(), month: d.getMonth() }; })}
+          onNextMonth={() => setMiniCursor((c) => { const d = new Date(c.year, c.month + 1, 1); return { year: d.getFullYear(), month: d.getMonth() }; })}
+          selectedDate={viewMode === "month" ? null : focusDate}
+          onSelectDate={handleMiniSelect}
+          eventsByDate={eventsByDate}
+        />
+        <div className="border border-stone-300 rounded-2xl p-3 bg-white">
+          <label className="cs-t11 font-semibold text-stone-500 mb-1.5 block">Sync to your calendar app</label>
+          <select onChange={handleExport} defaultValue="" className="w-full border border-stone-200 rounded-xl px-2 py-2 text-xs outline-none focus:border-emerald-700">
+            <option value="">Choose an option…</option>
+            <option value="ics">Download .ics (Google, Outlook, Apple)</option>
+            <option value="google">Import into Google Calendar</option>
+          </select>
+        </div>
       </div>
 
-      <div className="mt-5 flex items-center gap-2 flex-wrap">
-        <label className="cs-t11 font-semibold text-stone-500 shrink-0">Sync to your calendar app</label>
-        <select onChange={handleExport} defaultValue="" className="flex-1 min-w-[180px] border border-stone-200 rounded-xl px-2 py-2 text-xs outline-none focus:border-emerald-700">
-          <option value="">Choose an option…</option>
-          <option value="ics">Download .ics (Google, Outlook, Apple)</option>
-          <option value="google">Import into Google Calendar</option>
-        </select>
+      {/* Main calendar surface */}
+      <div className="flex-1 min-w-0 order-1 sm:order-2">
+        <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button onClick={goToday} className="px-3 py-1.5 rounded-full border border-stone-300 text-xs font-semibold text-stone-600 hover:bg-stone-100">
+              Today
+            </button>
+            <button onClick={goPrev} aria-label="Previous" className="w-8 h-8 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
+              <ChevronLeft size={18} />
+            </button>
+            <button onClick={goNext} aria-label="Next" className="w-8 h-8 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
+              <ChevronRight size={18} />
+            </button>
+            <p className="font-bold text-stone-800 ml-1" style={displayFont}>{headerLabel}</p>
+          </div>
+          <div className="relative">
+            <button
+              onClick={() => setViewMenuOpen((v) => !v)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-stone-300 text-xs font-semibold text-stone-600 hover:bg-stone-100"
+            >
+              {CALENDAR_VIEW_MODES.find((m) => m.id === viewMode)?.label} <ChevronDown size={13} />
+            </button>
+            {viewMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setViewMenuOpen(false)} />
+                <div className="absolute right-0 mt-1 bg-white border border-stone-200 rounded-xl shadow-lg py-1 z-20 min-w-[110px]">
+                  {CALENDAR_VIEW_MODES.map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => { setViewMode(m.id); setViewMenuOpen(false); }}
+                      className={`w-full text-left px-3 py-1.5 text-sm font-semibold ${viewMode === m.id ? "text-emerald-800 bg-emerald-50" : "text-stone-600 hover:bg-stone-50"}`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {viewMode === "month" && (
+          <div className="border border-stone-300 rounded-2xl overflow-hidden bg-white">
+            <div className="grid grid-cols-7 border-b border-stone-300 bg-stone-100">
+              {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+                <div key={i} className="text-center cs-t10 font-bold text-stone-500 py-2">{d}</div>
+              ))}
+            </div>
+            {/* Outlook-style: tapping the day itself (not an event) opens a full
+                day agenda; tapping an event chip jumps straight to that event. */}
+            <div className="grid grid-cols-7">
+              {cells.map((day, i) => {
+                if (day == null) return <div key={i} className="h-24 bg-stone-50/60 border-r border-b border-stone-200" />;
+                const dateStr = ymd(cursor.year, cursor.month, day);
+                const evs = eventsByDate[dateStr] || [];
+                const isToday = dateStr === todayStr;
+                const dow = (first + day - 1) % 7;
+                const isWeekend = dow === 0 || dow === 6;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => onOpenDay(dateStr)}
+                    className={`h-24 border-r border-b border-stone-200 p-1 flex flex-col items-start gap-0.5 overflow-hidden text-left transition hover:bg-stone-100 ${
+                      isWeekend ? "bg-stone-50/60" : "bg-white"
+                    }`}
+                  >
+                    <span className={`cs-t11 font-bold w-5 h-5 flex items-center justify-center rounded-full ${isToday ? "bg-emerald-700 text-white" : "text-stone-600"}`}>
+                      {day}
+                    </span>
+                    <div className="flex flex-col gap-0.5 w-full">
+                      {evs.slice(0, 2).map((ev) => {
+                        const linkedOrder = ev.kind === "order" ? orders?.orders.find((o) => o.id === ev.orderId) : null;
+                        const urgency = urgencyFor(ev.date, ev.time, ev.kind === "order" ? !!linkedOrder?.completed : false, now);
+                        return (
+                          <span
+                            key={ev.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenEvent(ev);
+                            }}
+                            className={`cs-t9 truncate w-full rounded px-1 cursor-pointer border-l-2 ${
+                              urgency === "overdue"
+                                ? "border-l-red-500 bg-red-100 text-red-700"
+                                : urgency === "soon"
+                                ? "border-l-orange-400 bg-orange-100 text-orange-700"
+                                : `border-l-transparent ${ev.kind === "order" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`
+                            }`}
+                          >
+                            {ev.title}
+                          </span>
+                        );
+                      })}
+                      {evs.length > 2 && <span className="cs-t9 text-stone-400">+{evs.length - 2} more</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {viewMode === "week" && (
+          <TimeGridView days={weekDays} eventsByDate={eventsByDate} orders={orders} onOpenEvent={onOpenEvent} onAddNote={onAddNote} now={now} />
+        )}
+
+        {viewMode === "day" && (
+          <TimeGridView days={[focusDateObj]} eventsByDate={eventsByDate} orders={orders} onOpenEvent={onOpenEvent} onAddNote={onAddNote} now={now} />
+        )}
       </div>
     </div>
   );
@@ -13768,7 +14690,7 @@ function EventDetailModal({ open, onClose, event, order, onManageOrder, onEditNo
   );
 }
 
-function CalendarNoteModal({ open, onClose, onSave, initialDate, initial }) {
+function CalendarNoteModal({ open, onClose, onSave, initialDate, initialTime, initial }) {
   const [title, setTitle] = useState("");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
@@ -13781,7 +14703,7 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate, initial }) {
     if (!open) return;
     setTitle(initial?.title || "");
     setDate(initial?.date || initialDate || "");
-    setTime(initial?.time || "");
+    setTime(initial?.time || initialTime || "");
     setNotes(initial?.notes || "");
     if (initial?.reminderAt != null) {
       setReminder("custom");
@@ -13790,7 +14712,7 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate, initial }) {
       setReminder(initial?.reminderMinutesBefore == null ? "" : String(initial.reminderMinutesBefore));
       setReminderAt("");
     }
-  }, [open, initial, initialDate]);
+  }, [open, initial, initialDate, initialTime]);
 
   const canSave = title.trim().length > 0 && !!date && (reminder !== "custom" || !!reminderAt);
 
@@ -14307,7 +15229,7 @@ function OrdersScreen({ navigate, initialTab }) {
             calendar={calendar}
             orders={orders}
             now={nowTick}
-            onAddNote={(date) => setNoteModal({ mode: "add", date })}
+            onAddNote={(date, time) => setNoteModal({ mode: "add", date, time })}
             onOpenEvent={(ev) => setEventDetail(ev)}
             onOpenDay={(date) => setDayView(date)}
           />
@@ -14342,6 +15264,7 @@ function OrdersScreen({ navigate, initialTab }) {
           open
           onClose={() => setNoteModal(null)}
           initialDate={noteModal.mode === "add" ? noteModal.date : null}
+          initialTime={noteModal.mode === "add" ? noteModal.time : null}
           initial={noteModal.mode === "edit" ? noteModal.event : null}
           onSave={(draft) => (noteModal.mode === "edit" ? calendar.updateEvent(noteModal.event.id, draft) : calendar.addEvent(draft))}
         />
@@ -17067,13 +17990,25 @@ function RootShell() {
     showToast,
     conversations: convo.conversations,
     ensureConversation: convo.ensureConversation,
-    messageFolders: convo.folders,
-    deleteConversations: convo.deleteConversations,
-    deleteAllConversations: convo.deleteAllConversations,
-    moveConversationsToFolder: convo.moveConversationsToFolder,
-    createMessageFolder: convo.createFolder,
-    renameMessageFolder: convo.renameFolder,
-    deleteMessageFolder: convo.deleteFolder,
+    messageLabels: convo.labels,
+    createMessageLabel: convo.createLabel,
+    renameMessageLabel: convo.renameLabel,
+    deleteMessageLabel: convo.deleteLabel,
+    toggleConversationLabel: convo.toggleLabel,
+    addLabelToConversations: convo.addLabelToConversations,
+    toggleConversationStar: convo.toggleStar,
+    toggleConversationImportant: convo.toggleImportant,
+    trashConversations: convo.trashConversations,
+    trashAllConversations: convo.trashAllConversations,
+    restoreConversations: convo.restoreConversations,
+    markConversationsSpam: convo.markAsSpam,
+    markConversationsNotSpam: convo.markNotSpam,
+    permanentlyDeleteConversations: convo.permanentlyDeleteConversations,
+    emptyMessageTrash: convo.emptyTrash,
+    setConversationDraft: convo.setDraft,
+    scheduledMessages: convo.scheduled,
+    scheduleMessage: convo.scheduleMessage,
+    cancelScheduledMessage: convo.cancelScheduledMessage,
   };
 
   if (meLoading) return <LoadingScreen />;
