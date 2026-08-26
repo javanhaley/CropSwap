@@ -9,6 +9,7 @@ import {
   Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check, ChevronUp,
   AlertTriangle, Image as ImageIcon, Video, PlayCircle,
   DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark, Rss,
+  Folder, MoreVertical,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -3824,20 +3825,45 @@ function useReviews(entityType, entityId, onStatsChange, viewerId) {
 function useConversations(me) {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [folders, setFolders] = useState([]);
+  const listRef = useRef([]);
 
   const load = useCallback(async () => {
     if (!me) return;
     const rec = await getJSON(`conversationsFor:${me.id}`, true, seedConversations(me.id));
-    setList(Array.isArray(rec) ? rec : []);
+    const safe = Array.isArray(rec) ? rec : [];
+    listRef.current = safe;
+    setList(safe);
     setLoading(false);
+  }, [me]);
+
+  // Folders are purely a personal organizing tool — which folder a
+  // conversation sits in only matters to the person who filed it there — so
+  // they live in the row-owned kv table (like savedSearches), never in
+  // shared_kv where the other side of the conversation could see or touch
+  // them.
+  const loadFolders = useCallback(async () => {
+    if (!me) return;
+    const rec = await getJSON(`messageFolders:${me.id}`, false, []);
+    setFolders(Array.isArray(rec) ? rec : []);
   }, [me]);
 
   useEffect(() => {
     load();
+    loadFolders();
     if (!me) return;
     const iv = setInterval(load, 20000);
     return () => clearInterval(iv);
-  }, [load, me]);
+  }, [load, loadFolders, me]);
+
+  const persistList = useCallback(
+    async (next) => {
+      listRef.current = next;
+      setList(next);
+      if (me) await setJSON(`conversationsFor:${me.id}`, next, true);
+    },
+    [me]
+  );
 
   const ensureConversation = useCallback(
     async (otherUser) => {
@@ -3857,7 +3883,8 @@ function useConversations(me) {
             true
           );
         }
-        setList([entry, ...mine]);
+        listRef.current = [entry, ...mine];
+        setList(listRef.current);
 
         // First-ever contact with a Premium vendor auto-subscribes the
         // customer to that vendor's mailing list — removable only by the
@@ -3883,7 +3910,82 @@ function useConversations(me) {
     [me]
   );
 
-  return { conversations: list, loading, ensureConversation, refresh: load };
+  // Delete-for-me only, same principle as message deletion (see
+  // useMessages): this just drops entries from *my* copy of the
+  // conversation index. The other person's copy, and the shared message
+  // thread itself, are untouched — they still have their side of it.
+  const deleteConversations = useCallback(
+    async (cids) => {
+      const drop = new Set(cids);
+      await persistList(listRef.current.filter((c) => !drop.has(c.id)));
+    },
+    [persistList]
+  );
+
+  const deleteAllConversations = useCallback(async () => {
+    await persistList([]);
+  }, [persistList]);
+
+  const moveConversationsToFolder = useCallback(
+    async (cids, folderId) => {
+      const set = new Set(cids);
+      await persistList(listRef.current.map((c) => (set.has(c.id) ? { ...c, folderId: folderId || null } : c)));
+    },
+    [persistList]
+  );
+
+  const persistFolders = useCallback(
+    async (next) => {
+      setFolders(next);
+      if (me) await setJSON(`messageFolders:${me.id}`, next, false);
+    },
+    [me]
+  );
+
+  const createFolder = useCallback(
+    async (name) => {
+      const trimmed = (name || "").trim();
+      if (!trimmed) return null;
+      const folder = { id: uid("fold"), name: trimmed, createdAt: Date.now() };
+      await persistFolders([...folders, folder]);
+      return folder;
+    },
+    [folders, persistFolders]
+  );
+
+  const renameFolder = useCallback(
+    async (id, name) => {
+      const trimmed = (name || "").trim();
+      if (!trimmed) return;
+      await persistFolders(folders.map((f) => (f.id === id ? { ...f, name: trimmed } : f)));
+    },
+    [folders, persistFolders]
+  );
+
+  // Deleting a folder never deletes the conversations in it — they just
+  // fall back to Unfiled, the same way emptying a mail folder doesn't
+  // delete the mail.
+  const deleteFolder = useCallback(
+    async (id) => {
+      await persistFolders(folders.filter((f) => f.id !== id));
+      await persistList(listRef.current.map((c) => (c.folderId === id ? { ...c, folderId: null } : c)));
+    },
+    [folders, persistFolders, persistList]
+  );
+
+  return {
+    conversations: list,
+    loading,
+    ensureConversation,
+    refresh: load,
+    folders,
+    deleteConversations,
+    deleteAllConversations,
+    moveConversationsToFolder,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+  };
 }
 
 function useMessages(me, cid, otherUser) {
@@ -3988,7 +4090,11 @@ function useMessages(me, cid, otherUser) {
       const summaryUpdate = async (userId, otherName, otherAvatar) => {
         const list = await getJSON(`conversationsFor:${userId}`, true, []);
         const idx = list.findIndex((c) => c.id === cid);
-        const entry = { id: cid, otherUserId: userId === me.id ? otherUser?.id : me.id, otherUserName: otherName, otherUserAvatar: otherAvatar, lastMessage: msg.body, lastAt: msg.createdAt };
+        // Spread the existing entry first so per-viewer organizing fields
+        // (folderId) survive a new message bumping this conversation to the
+        // top — otherwise every reply would silently un-file it.
+        const base = idx >= 0 ? list[idx] : {};
+        const entry = { ...base, id: cid, otherUserId: userId === me.id ? otherUser?.id : me.id, otherUserName: otherName, otherUserAvatar: otherAvatar, lastMessage: msg.body, lastAt: msg.createdAt };
         const next2 = idx >= 0 ? [entry, ...list.slice(0, idx), ...list.slice(idx + 1)] : [entry, ...list];
         await setJSON(`conversationsFor:${userId}`, next2, true);
       };
@@ -4124,7 +4230,8 @@ async function deliverBroadcastMessage(fromUser, toUserId, toUserName, toUserAva
   const summaryUpdate = async (userId, otherId, otherName, otherAvatar) => {
     const list2 = await getJSON(`conversationsFor:${userId}`, true, []);
     const idx = list2.findIndex((c) => c.id === cid);
-    const entry = { id: cid, otherUserId: otherId, otherUserName: otherName, otherUserAvatar: otherAvatar, lastMessage: body, lastAt: msg.createdAt };
+    const base = idx >= 0 ? list2[idx] : {};
+    const entry = { ...base, id: cid, otherUserId: otherId, otherUserName: otherName, otherUserAvatar: otherAvatar, lastMessage: body, lastAt: msg.createdAt };
     const next2 = idx >= 0 ? [entry, ...list2.slice(0, idx), ...list2.slice(idx + 1)] : [entry, ...list2];
     await setJSON(`conversationsFor:${userId}`, next2, true);
   };
@@ -9140,14 +9247,287 @@ function MessageBubble({ message, isMine, onLongPress }) {
   );
 }
 
+// A small, reusable "are you sure?" card — same look as the storefront/listing
+// delete confirms elsewhere in the app — for the genuinely destructive
+// conversation-history actions (delete one, delete several, delete all).
+function ConfirmModal({ open, title, body, confirmLabel = "Delete", onConfirm, onClose }) {
+  const [working, setWorking] = useState(false);
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 cs-z-pop flex items-center justify-center p-4 cs-fade-anim"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="cs-modal-anim bg-white rounded-2xl w-full max-w-xs p-5">
+        <h3 className="text-base font-bold text-stone-900 mb-1" style={displayFont}>{title}</h3>
+        <p className="text-sm text-stone-600 mb-4">{body}</p>
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-stone-200 font-semibold text-stone-600 text-sm">
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              setWorking(true);
+              await onConfirm();
+              setWorking(false);
+              onClose();
+            }}
+            disabled={working}
+            className="flex-1 py-2.5 rounded-xl bg-rose-600 text-white font-semibold text-sm disabled:opacity-50"
+          >
+            {working ? "Deleting…" : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The quick, single-tap alternative to a long-press: a "⋮" on every
+// conversation row opens this sheet immediately, no hold required.
+function ConversationActionSheet({ conversation, onClose, onMove, onDelete }) {
+  return (
+    <Modal open={!!conversation} onClose={onClose} labelledBy="convo-action-title">
+      <div className="p-6">
+        <h2 id="convo-action-title" className="sr-only">Conversation actions</h2>
+        {conversation && <p className="text-xs text-stone-400 mb-4 line-clamp-1">{conversation.otherUserName}</p>}
+        <div className="flex flex-col gap-2">
+          <button onClick={onMove} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <Folder size={15} /> Move to folder
+          </button>
+          <button onClick={onDelete} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
+            <Trash2 size={15} /> Delete conversation
+          </button>
+        </div>
+        <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Shared by both the single-row "⋮" action and the bulk select-mode toolbar —
+// pick an existing folder, drop back to Unfiled, or spin up a brand new
+// folder and move straight into it in one tap.
+function FolderPickerModal({ open, folders, count, onClose, onPick, onCreateAndPick }) {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  useEffect(() => {
+    if (!open) {
+      setCreating(false);
+      setName("");
+    }
+  }, [open]);
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="folder-picker-title">
+      <div className="p-6">
+        <h2 id="folder-picker-title" className="text-base font-bold text-stone-900 mb-3" style={displayFont}>
+          Move {count > 1 ? `${count} conversations` : "conversation"} to…
+        </h2>
+        <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+          <button onClick={() => onPick(null)} className="text-left px-4 py-2.5 rounded-xl hover:bg-stone-50 text-sm font-semibold text-stone-700 flex items-center gap-2">
+            <Archive size={15} className="text-stone-400" /> Unfiled
+          </button>
+          {folders.map((f) => (
+            <button key={f.id} onClick={() => onPick(f.id)} className="text-left px-4 py-2.5 rounded-xl hover:bg-stone-50 text-sm font-semibold text-stone-700 flex items-center gap-2">
+              <Folder size={15} className="text-amber-600" /> {f.name}
+            </button>
+          ))}
+        </div>
+        {creating ? (
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-stone-100">
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && name.trim() && onCreateAndPick(name)}
+              placeholder="Folder name"
+              className="flex-1 border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-700"
+            />
+            <button
+              onClick={() => name.trim() && onCreateAndPick(name)}
+              disabled={!name.trim()}
+              className="px-3 py-2 rounded-xl bg-emerald-800 text-white text-sm font-semibold disabled:opacity-40"
+            >
+              Create
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => setCreating(true)} className="w-full text-left px-4 py-2.5 mt-2 pt-3 border-t border-stone-100 text-sm font-semibold text-emerald-700 flex items-center gap-2">
+            <Plus size={15} /> New folder
+          </button>
+        )}
+        <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Rename or delete folders themselves — deleting one just sends its
+// conversations back to Unfiled, so no destructive confirm is needed here.
+function ManageFoldersModal({ open, folders, onClose, onRename, onDelete }) {
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState("");
+  useEffect(() => {
+    if (!open) {
+      setEditingId(null);
+      setDraft("");
+    }
+  }, [open]);
+  const commit = (id) => {
+    if (draft.trim()) onRename(id, draft);
+    setEditingId(null);
+  };
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="manage-folders-title">
+      <div className="p-6">
+        <h2 id="manage-folders-title" className="text-base font-bold text-stone-900 mb-3" style={displayFont}>Manage folders</h2>
+        {folders.length === 0 ? (
+          <p className="text-sm text-stone-400 py-4 text-center">No folders yet — create one from the folder picker when moving a conversation.</p>
+        ) : (
+          <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
+            {folders.map((f) => (
+              <div key={f.id} className="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-stone-50">
+                <Folder size={15} className="text-amber-600 shrink-0" />
+                {editingId === f.id ? (
+                  <input
+                    autoFocus
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onBlur={() => commit(f.id)}
+                    onKeyDown={(e) => e.key === "Enter" && commit(f.id)}
+                    className="flex-1 border border-stone-200 rounded-lg px-2 py-1 text-sm outline-none focus:border-emerald-700"
+                  />
+                ) : (
+                  <button
+                    onClick={() => {
+                      setEditingId(f.id);
+                      setDraft(f.name);
+                    }}
+                    className="flex-1 text-left text-sm font-semibold text-stone-800 truncate"
+                  >
+                    {f.name}
+                  </button>
+                )}
+                <button onClick={() => onDelete(f.id)} aria-label={`Delete ${f.name} folder`} className="text-stone-400 hover:text-rose-600 shrink-0 p-1">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={onClose} className="w-full mt-4 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Done</button>
+      </div>
+    </Modal>
+  );
+}
+
+// The Messages list's top-level "⋯" — one tap away, everything the bulk
+// toolbar doesn't already cover.
+function MessagesOverflowMenu({ open, onClose, onSelect, onManageFolders, onDeleteAll }) {
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="messages-menu-title">
+      <div className="p-6">
+        <h2 id="messages-menu-title" className="sr-only">Messages options</h2>
+        <div className="flex flex-col gap-2">
+          <button onClick={onSelect} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <Check size={15} /> Select conversations
+          </button>
+          <button onClick={onManageFolders} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <Folder size={15} /> Manage folders
+          </button>
+          <button onClick={onDeleteAll} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
+            <Trash2 size={15} /> Delete all conversations
+          </button>
+        </div>
+        <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
 function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserAvatar, initialCid }) {
-  const { me, conversations, ensureConversation, updateMe, showToast, openProfileCard } = useApp();
+  const {
+    me, conversations, ensureConversation, updateMe, showToast, openProfileCard,
+    messageFolders, deleteConversations, deleteAllConversations, moveConversationsToFolder,
+    createMessageFolder, renameMessageFolder, deleteMessageFolder,
+  } = useApp();
   const [selectedCid, setSelectedCid] = useState(initialCid || null);
   const [activeOther, setActiveOther] = useState(initialWithUserId ? { id: initialWithUserId, name: initialWithUserName, avatar: initialWithUserAvatar } : null);
   const [text, setText] = useState("");
   const [showSafetyNote, setShowSafetyNote] = useState(true);
   const initRan = useRef(false);
   const scrollRef = useRef(null);
+
+  // Outlook-style list management: a folder filter row, a checkbox select
+  // mode for bulk actions, and a per-row "⋮" for the single-conversation
+  // version of the same actions — no long-press anywhere in this list.
+  const [activeFolderId, setActiveFolderId] = useState("all"); // "all" | null (Unfiled) | a folder id
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [rowMenuFor, setRowMenuFor] = useState(null);
+  const [folderPickerFor, setFolderPickerFor] = useState(null); // array of cids, or null when closed
+  const [manageFoldersOpen, setManageFoldersOpen] = useState(false);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null); // { cids, title, body } | null
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+
+  const visibleConversations = useMemo(() => {
+    if (activeFolderId === "all") return conversations;
+    if (activeFolderId === null) return conversations.filter((c) => !c.folderId);
+    return conversations.filter((c) => c.folderId === activeFolderId);
+  }, [conversations, activeFolderId]);
+
+  const toggleSelect = (cid) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cid)) next.delete(cid);
+      else next.add(cid);
+      return next;
+    });
+  };
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+  const closeIfSelected = (cids) => {
+    if (selectedCid && cids.includes(selectedCid)) {
+      setSelectedCid(null);
+      setActiveOther(null);
+    }
+  };
+  const runDelete = async () => {
+    if (!confirmDelete) return;
+    await deleteConversations(confirmDelete.cids);
+    closeIfSelected(confirmDelete.cids);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      confirmDelete.cids.forEach((id) => next.delete(id));
+      return next;
+    });
+    showToast(confirmDelete.cids.length > 1 ? "Conversations deleted" : "Conversation deleted");
+  };
+  const runDeleteAll = async () => {
+    await deleteAllConversations();
+    setSelectedCid(null);
+    setActiveOther(null);
+    exitSelectMode();
+    showToast("All conversations deleted");
+  };
+  const runMove = async (folderId) => {
+    if (!folderPickerFor) return;
+    await moveConversationsToFolder(folderPickerFor, folderId);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      folderPickerFor.forEach((id) => next.delete(id));
+      return next;
+    });
+    setFolderPickerFor(null);
+    showToast(folderId ? "Moved" : "Moved to Unfiled");
+  };
+  const runCreateAndMove = async (name) => {
+    const folder = await createMessageFolder(name);
+    if (folder) await runMove(folder.id);
+  };
 
   useEffect(() => {
     if (initRan.current || !initialWithUserId) return;
@@ -9227,19 +9607,88 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
   return (
     <div className="flex-1 flex overflow-hidden">
       <div className={`${selectedCid ? "hidden md:flex" : "flex"} w-full md:w-80 shrink-0 flex-col border-r border-stone-200 overflow-y-auto`}>
-        <h1 className="text-xl font-bold text-stone-900 px-4 pt-4 pb-3" style={displayFont}>Messages</h1>
+        <div className="flex items-center justify-between px-4 pt-4 pb-1">
+          <h1 className="text-xl font-bold text-stone-900" style={displayFont}>Messages</h1>
+          {conversations.length > 0 && (
+            <button onClick={() => setOverflowOpen(true)} aria-label="Messages options" className="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100">
+              <MoreVertical size={18} />
+            </button>
+          )}
+        </div>
+
+        {conversations.length > 0 && (
+          <div className="flex items-center gap-1.5 px-4 pb-2 overflow-x-auto">
+            {[{ id: "all", name: "All" }, { id: null, name: "Unfiled" }, ...messageFolders].map((f) => (
+              <button
+                key={f.id === null ? "unfiled" : f.id}
+                onClick={() => setActiveFolderId(f.id)}
+                className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold transition ${
+                  activeFolderId === f.id ? "bg-stone-800 text-white" : "bg-stone-100 text-stone-500 hover:bg-stone-200"
+                }`}
+              >
+                {f.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selectMode && (
+          <div className="flex items-center gap-1.5 px-4 py-2 border-y border-stone-200 bg-stone-50 flex-wrap">
+            <span className="text-xs font-semibold text-stone-600 mr-1">{selectedIds.size} selected</span>
+            <button
+              onClick={() => setSelectedIds(new Set(visibleConversations.map((c) => c.id)))}
+              className="text-xs font-semibold text-emerald-700"
+            >
+              Select all
+            </button>
+            <button
+              onClick={() => setFolderPickerFor(Array.from(selectedIds))}
+              disabled={selectedIds.size === 0}
+              className="text-xs font-semibold text-stone-600 disabled:opacity-40 ml-1"
+            >
+              Move
+            </button>
+            <button
+              onClick={() =>
+                setConfirmDelete({
+                  cids: Array.from(selectedIds),
+                  title: `Delete ${selectedIds.size} conversation${selectedIds.size === 1 ? "" : "s"}?`,
+                  body: "They'll be removed from your history. The other person keeps their side of it.",
+                })
+              }
+              disabled={selectedIds.size === 0}
+              className="text-xs font-semibold text-rose-600 disabled:opacity-40"
+            >
+              Delete
+            </button>
+            <button onClick={exitSelectMode} className="text-xs font-semibold text-stone-400 ml-auto">Cancel</button>
+          </div>
+        )}
+
         {conversations.length === 0 ? (
           <EmptyState icon={MessageCircle} title="No conversations yet" body="Message a vendor from any shop or listing page." />
+        ) : visibleConversations.length === 0 ? (
+          <EmptyState icon={Folder} title="Nothing in this folder" body="Move a conversation here, or pick a different folder above." />
         ) : (
-          conversations.map((c) => (
+          visibleConversations.map((c) => (
             <div
               key={c.id}
               role="button"
               tabIndex={0}
-              onClick={() => openConvo(c)}
-              onKeyDown={(e) => { if (e.key === "Enter") openConvo(c); }}
+              onClick={() => (selectMode ? toggleSelect(c.id) : openConvo(c))}
+              onKeyDown={(e) => { if (e.key === "Enter") (selectMode ? toggleSelect(c.id) : openConvo(c)); }}
               className={`flex items-center gap-3 px-4 py-3 text-left hover:bg-stone-50 transition cursor-pointer ${selectedCid === c.id ? "bg-stone-50" : ""}`}
             >
+              {selectMode && (
+                <span
+                  aria-hidden="true"
+                  className={`shrink-0 w-5 h-5 rounded-md border-2 flex items-center justify-center ${
+                    selectedIds.has(c.id) ? "bg-emerald-700 border-emerald-700" : "border-stone-300"
+                  }`}
+                >
+                  {selectedIds.has(c.id) && <Check size={13} className="text-white" />}
+                </span>
+              )}
               <button
                 onClick={(e) => { e.stopPropagation(); openProfileCard({ id: c.otherUserId, name: c.otherUserName, avatar: c.otherUserAvatar }); }}
                 aria-label={`View ${c.otherUserName}'s profile`}
@@ -9252,6 +9701,15 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
                 <p className="text-xs text-stone-400 truncate">{c.lastMessage || "Say hello…"}</p>
               </div>
               <span className="cs-t10 text-stone-400 shrink-0">{timeAgo(c.lastAt)}</span>
+              {!selectMode && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setRowMenuFor(c); }}
+                  aria-label="Conversation options"
+                  className="shrink-0 text-stone-300 hover:text-stone-600 p-1 -mr-1"
+                >
+                  <MoreVertical size={16} />
+                </button>
+              )}
             </div>
           ))
         )}
@@ -9336,6 +9794,77 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
         onClose={() => setActionTarget(null)}
         onCopy={() => copyMessage(actionTarget)}
         onDelete={() => confirmDeleteMessage(actionTarget)}
+      />
+
+      <ConversationActionSheet
+        conversation={rowMenuFor}
+        onClose={() => setRowMenuFor(null)}
+        onMove={() => {
+          setFolderPickerFor([rowMenuFor.id]);
+          setRowMenuFor(null);
+        }}
+        onDelete={() => {
+          setConfirmDelete({
+            cids: [rowMenuFor.id],
+            title: `Delete conversation with ${rowMenuFor.otherUserName}?`,
+            body: "It'll be removed from your history. The other person keeps their side of it.",
+          });
+          setRowMenuFor(null);
+        }}
+      />
+
+      <FolderPickerModal
+        open={!!folderPickerFor}
+        folders={messageFolders}
+        count={folderPickerFor?.length || 0}
+        onClose={() => setFolderPickerFor(null)}
+        onPick={runMove}
+        onCreateAndPick={runCreateAndMove}
+      />
+
+      <ManageFoldersModal
+        open={manageFoldersOpen}
+        folders={messageFolders}
+        onClose={() => setManageFoldersOpen(false)}
+        onRename={renameMessageFolder}
+        onDelete={(id) => {
+          if (activeFolderId === id) setActiveFolderId("all");
+          deleteMessageFolder(id);
+        }}
+      />
+
+      <MessagesOverflowMenu
+        open={overflowOpen}
+        onClose={() => setOverflowOpen(false)}
+        onSelect={() => {
+          setSelectMode(true);
+          setOverflowOpen(false);
+        }}
+        onManageFolders={() => {
+          setManageFoldersOpen(true);
+          setOverflowOpen(false);
+        }}
+        onDeleteAll={() => {
+          setConfirmDeleteAll(true);
+          setOverflowOpen(false);
+        }}
+      />
+
+      <ConfirmModal
+        open={!!confirmDelete}
+        title={confirmDelete?.title}
+        body={confirmDelete?.body}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={runDelete}
+      />
+
+      <ConfirmModal
+        open={confirmDeleteAll}
+        title="Delete all conversations?"
+        body="Every conversation will be removed from your history. The people you talked with keep their side of it."
+        confirmLabel="Delete all"
+        onClose={() => setConfirmDeleteAll(false)}
+        onConfirm={runDeleteAll}
       />
     </div>
   );
@@ -16538,6 +17067,13 @@ function RootShell() {
     showToast,
     conversations: convo.conversations,
     ensureConversation: convo.ensureConversation,
+    messageFolders: convo.folders,
+    deleteConversations: convo.deleteConversations,
+    deleteAllConversations: convo.deleteAllConversations,
+    moveConversationsToFolder: convo.moveConversationsToFolder,
+    createMessageFolder: convo.createFolder,
+    renameMessageFolder: convo.renameFolder,
+    deleteMessageFolder: convo.deleteFolder,
   };
 
   if (meLoading) return <LoadingScreen />;
