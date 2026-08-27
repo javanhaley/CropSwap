@@ -6416,50 +6416,6 @@ function ExploreView({ navigate }) {
 
         <p className="text-xs text-stone-400 font-medium mb-3">{sorted.length} listing{sorted.length === 1 ? "" : "s"}{userLoc ? ` near ${userLoc.label}` : ""}</p>
 
-        <div className="flex items-center gap-2 flex-wrap mb-4">
-          <div className="flex gap-1 bg-stone-100 rounded-full p-1 shrink-0">
-            {[
-              { id: "grid", label: "Listings" },
-              { id: "shops", label: "Shops" },
-              { id: "map", label: "Map" },
-            ].map((m) => (
-              <button
-                key={m.id}
-                onClick={() => setView(m.id)}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition ${view === m.id ? "bg-white shadow text-stone-900" : "text-stone-500"}`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-          {/* Quick jumps to a vendor's other screens — plain nav, not part of
-              the Listings/Shops/Map view toggle above. */}
-          <button
-            onClick={() => navigate({ screen: "favorites" })}
-            className="shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-600 hover:bg-stone-50 transition flex items-center gap-1.5"
-          >
-            <Heart size={13} /> Favorites
-          </button>
-          <button
-            onClick={() => navigate({ screen: "dashboard" })}
-            className="shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-600 hover:bg-stone-50 transition flex items-center gap-1.5"
-          >
-            <TrendingUp size={13} /> Dashboard
-          </button>
-          <button
-            onClick={() => navigate({ screen: "store" })}
-            className="shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-600 hover:bg-stone-50 transition flex items-center gap-1.5"
-          >
-            <Store size={13} /> {me?.isVendor ? "My Store" : "Start Selling"}
-          </button>
-          <button
-            onClick={() => navigate({ screen: "plans" })}
-            className="shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-600 hover:bg-stone-50 transition flex items-center gap-1.5"
-          >
-            <Crown size={13} /> My Plan
-          </button>
-        </div>
-
         {view === "shops" ? (
           shopResults.length === 0 ? (
             <EmptyState icon={Store} title="No shops match" body="Try widening your distance or lowering the rating filter." action={<button onClick={() => setFilters(DEFAULT_FILTERS)} className="text-sm font-semibold text-emerald-800">Clear filters</button>} />
@@ -7873,44 +7829,44 @@ function ShopProfileView({ shopId, navigate }) {
 
         <div className="flex items-center gap-2 flex-wrap mt-4">
           <FavoriteHeart active={isFav} count={shop.favoriteCount || 0} onToggle={() => toggleFavorite("shop", shop)} size="lg" />
-          <button onClick={handleShare} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+          <button onClick={handleShare} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
             <Share2 size={15} /> Share{shop.shareCount > 0 ? ` · ${shop.shareCount}` : ""}
           </button>
           {!isOwner && (
             <button
               onClick={() => navigate({ screen: "messages", withUserId: shop.ownerId, withUserName: shop.name, withUserAvatar: shop.emoji })}
-              className="flex items-center gap-1.5 bg-emerald-800 text-white rounded-xl px-4 py-2.5 font-semibold text-sm"
+              className="flex items-center gap-1.5 bg-emerald-800 text-white rounded-full px-4 py-2 font-semibold text-sm"
             >
               <MessageCircle size={15} /> Message
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "dashboard" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+            <button onClick={() => navigate({ screen: "dashboard" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <TrendingUp size={15} /> Dashboard
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "orders", tab: "orders" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+            <button onClick={() => navigate({ screen: "orders", tab: "orders" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <ClipboardList size={15} /> Orders
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "orders", tab: "calendar" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+            <button onClick={() => navigate({ screen: "orders", tab: "calendar" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <Calendar size={15} /> Calendar
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "orders", tab: "inventory" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+            <button onClick={() => navigate({ screen: "orders", tab: "inventory" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <Boxes size={15} /> Inventory
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "ads" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+            <button onClick={() => navigate({ screen: "ads" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <Megaphone size={15} /> Sponsored Ads
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "plans" })} className="flex items-center gap-1.5 border border-stone-200 rounded-xl px-4 py-2.5 font-semibold text-sm text-stone-700">
+            <button onClick={() => navigate({ screen: "plans" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <Sparkles size={15} /> My Plan
             </button>
           )}
