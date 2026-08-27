@@ -12520,6 +12520,16 @@ const PANEL_PERIODS = [
   { id: "1y", label: "1Y" },
   { id: "all", label: "All" },
 ];
+// Bucket size for the "Sponsored ads: clicks & spend" panel — spans the
+// full history of a shop's campaigns (from the earliest campaign's start to
+// now), just re-sliced at a different granularity, independent of every
+// other range/period control on the dashboard.
+const AD_CLICK_GRANULARITIES = [
+  { id: "day", label: "Daily" },
+  { id: "week", label: "Weekly" },
+  { id: "month", label: "Monthly" },
+  { id: "year", label: "Yearly" },
+];
 // Trailing window (not calendar-aligned) for a PANEL_PERIODS preset, or an
 // exact calendar month for a "month:YYYY-MM" id from the month dropdown.
 // `earliestMs` (typically the shop's createdAt) anchors "All" so it doesn't
@@ -16165,6 +16175,10 @@ function buildDemoDashboardData() {
   const campaigns = [
     { id: "demo-camp-0", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Peak-season tomatoes", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 3 * DAY, endsAt: now + 4 * DAY, createdAt: now - 3 * DAY },
     { id: "demo-camp-1", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Local honey harvest", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 30 * DAY, endsAt: now - 23 * DAY, createdAt: now - 30 * DAY },
+    { id: "demo-camp-2", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Sweet corn season", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 70 * DAY, endsAt: now - 63 * DAY, createdAt: now - 70 * DAY },
+    { id: "demo-camp-3", shopId: shop.id, productId: products[0].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Tomato relaunch", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 140 * DAY, endsAt: now - 133 * DAY, createdAt: now - 140 * DAY },
+    { id: "demo-camp-4", shopId: shop.id, productId: products[4].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Strawberry jam push", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 220 * DAY, endsAt: now - 213 * DAY, createdAt: now - 220 * DAY },
+    { id: "demo-camp-5", shopId: shop.id, productId: products[1].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Fresh eggs feature", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 320 * DAY, endsAt: now - 313 * DAY, createdAt: now - 320 * DAY },
   ];
 
   return { shop, products, events, orders, reviews, avgRating, inventory, campaigns };
@@ -16224,6 +16238,10 @@ function VendorDashboard({ navigate }) {
   const [favoritesCustomEvents, setFavoritesCustomEvents] = useState([]);
   const [salesPeriod, setSalesPeriod] = useState("current");
   const [weekdayPeriod, setWeekdayPeriod] = useState("current");
+  // Granularity toggle + fetched click events for the "Sponsored ads:
+  // clicks & spend" panel — see the sponsoredClicks memos below.
+  const [adGranularity, setAdGranularity] = useState("day");
+  const [sponsoredClickEvents, setSponsoredClickEvents] = useState([]);
 
   const nowMs = Date.now();
   const sinceMs = nowMs - range.ms;
@@ -16822,23 +16840,66 @@ function VendorDashboard({ navigate }) {
   }, [completedOrders]);
 
   const myCampaigns = useMemo(() => (isDemo ? demo.campaigns : (sponsorships || []).filter((c) => c.shopId === shop?.id)), [sponsorships, shop, isDemo, demo]);
-  const campaignsInRange = useMemo(
-    () => myCampaigns.filter((c) => {
-      const t = c.startedAt || c.createdAt || 0;
-      return t >= sinceMs && t <= nowMs;
-    }),
-    [myCampaigns, sinceMs, nowMs]
-  );
-  const adSpend = useMemo(() => campaignsInRange.reduce((sum, c) => sum + (Number(c.amount) || 0), 0), [campaignsInRange]);
   const adSpendAllTime = useMemo(() => myCampaigns.reduce((sum, c) => sum + (Number(c.amount) || 0), 0), [myCampaigns]);
   const activeCampaignsNow = useMemo(() => myCampaigns.filter((c) => sponsorIsLive(c, nowMs)), [myCampaigns, nowMs]);
-  // Blended metrics, not last-click attribution — CropSwap doesn't track
-  // ad-click-to-purchase paths, so this is spend vs. overall shop
-  // performance in the same window, same honest caveat the funnel/heatmap
-  // panels already carry.
-  const blendedRoas = adSpend > 0 ? totalRevenue / adSpend : null;
-  const blendedCac = adSpend > 0 && customerBreakdown.newCount > 0 ? adSpend / customerBreakdown.newCount : null;
-  const ltvToCac = blendedCac && avgCustomerLTV ? avgCustomerLTV / blendedCac : null;
+  const earliestCampaignStart = useMemo(
+    () => (myCampaigns.length ? Math.min(...myCampaigns.map((c) => c.startedAt || c.createdAt || nowMs)) : null),
+    [myCampaigns, nowMs]
+  );
+
+  // Fetches this shop's own product-view events since its earliest campaign
+  // started — the raw material for "clicks while sponsored" below. Not real
+  // ad-pixel tracking (CropSwap doesn't have per-click attribution yet — see
+  // the honest caveat on the panel itself), just this shop's own listing
+  // views, later narrowed down to the exact windows each product was
+  // actually being sponsored.
+  useEffect(() => {
+    if (!shop || earliestCampaignStart == null) {
+      setSponsoredClickEvents([]);
+      return;
+    }
+    let cancelled = false;
+    const req = isDemo
+      ? Promise.resolve(filterDemoEvents(demo.events, ["view_product"], earliestCampaignStart, nowMs))
+      : fetchAnalyticsEvents({ types: ["view_product"], shopId: shop.id, sinceMs: earliestCampaignStart });
+    req.then((ev) => {
+      if (!cancelled) setSponsoredClickEvents(ev);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shop?.id, earliestCampaignStart, isDemo]);
+
+  // Each campaign's own live window (clamped to "now" if it's still
+  // running) — a view only counts as a sponsored click if it landed on that
+  // exact product while that exact campaign was actually live.
+  const sponsoredWindows = useMemo(
+    () => myCampaigns.map((c) => ({ productId: c.productId, from: c.startedAt || c.createdAt || 0, to: Math.min(c.endsAt || nowMs, nowMs) })),
+    [myCampaigns, nowMs]
+  );
+  const sponsoredClicks = useMemo(() => {
+    if (!sponsoredWindows.length) return [];
+    return sponsoredClickEvents.filter((e) => {
+      const t = new Date(e.created_at).getTime();
+      return sponsoredWindows.some((w) => e.entity_id === w.productId && t >= w.from && t <= w.to);
+    });
+  }, [sponsoredClickEvents, sponsoredWindows]);
+  // Re-sliced by the Daily/Weekly/Monthly/Yearly toggle, spanning every
+  // campaign this shop has ever run.
+  const sponsoredClicksSeries = useMemo(
+    () => (earliestCampaignStart == null ? [] : bucketSeries(sponsoredClicks, adGranularity, earliestCampaignStart, nowMs)),
+    [sponsoredClicks, adGranularity, earliestCampaignStart, nowMs]
+  );
+  // Each campaign's full cost, bucketed on the day it started — a lump sum
+  // rather than spread across its run, matching how it's actually charged.
+  const sponsoredSpendSeries = useMemo(
+    () =>
+      earliestCampaignStart == null
+        ? []
+        : bucketValueSeries(myCampaigns, adGranularity, earliestCampaignStart, nowMs, (c) => c.startedAt || c.createdAt || 0, (c) => Number(c.amount) || 0),
+    [myCampaigns, adGranularity, earliestCampaignStart, nowMs]
+  );
 
   if (!shop) {
     return (
@@ -17221,27 +17282,70 @@ function VendorDashboard({ navigate }) {
         )}
 
         <DashPanel
-          title="Sponsored ads performance"
+          title="Sponsored ads: clicks & spend"
           icon={Megaphone}
           className="mb-4"
-          info="Blended performance for your Sponsored Ads spend — not last-click attribution (CropSwap doesn't track ad-click-to-purchase paths), just ad spend measured against overall shop performance in the same window. Directionally useful, not a precise per-ad number."
+          info="Clicks are this shop's own listing views that landed on a product during a window when it was actually being sponsored — not real ad-pixel attribution (CropSwap doesn't yet track ad clicks separately from organic ones), so treat this as a directional read on engagement while each campaign ran, not a precise per-click number. Spend is charged in full on the day each campaign started."
           right={
             <button onClick={() => navigate(isDemo ? { screen: "store" } : { screen: "ads" })} className="text-xs font-bold text-emerald-800 shrink-0">
               Manage ads →
             </button>
           }
         >
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 mb-3">
+          <div className="grid grid-cols-2 gap-2.5 mb-3">
             <DigestChip tint="violet" icon={Megaphone} label="Active campaigns" value={activeCampaignsNow.length} />
-            <DigestChip tint="amber" icon={DollarSign} label="Ad spend (range)" value={formatMoney(adSpend)} />
-            <DigestChip tint="emerald" icon={Percent} label="Blended ROAS" value={blendedRoas != null ? `${blendedRoas.toFixed(2)}×` : "—"} />
-            <DigestChip tint="rose" icon={UserPlus} label="Blended CAC" value={blendedCac != null ? formatMoney(blendedCac) : "—"} />
+            <DigestChip tint="amber" icon={DollarSign} label="Total ad spend" value={formatMoney(adSpendAllTime)} />
           </div>
-          <p className="text-sm text-stone-600">
-            LTV : CAC ratio: <span className="font-bold text-stone-900">{ltvToCac != null ? `${ltvToCac.toFixed(1)}:1` : "—"}</span>
-            <span className="cs-t11 text-stone-400"> — {ltvToCac != null ? (ltvToCac >= 3 ? "healthy, a customer is worth several times what they cost to acquire" : "worth watching — spend is close to what a customer is worth") : "not enough ad spend + new customers yet to calculate"}</span>
-          </p>
-          <p className="cs-t11 text-stone-400 mt-2">Ad spend all-time: {formatMoney(adSpendAllTime)} across {myCampaigns.length} campaign{myCampaigns.length === 1 ? "" : "s"}.</p>
+          {myCampaigns.length === 0 ? (
+            <p className="text-sm text-stone-400 py-4 text-center">No sponsored campaigns yet — sponsor a listing to see clicks and spend here.</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+                <p className="cs-t11 text-stone-400">
+                  {sponsoredClicks.length} click{sponsoredClicks.length === 1 ? "" : "s"} while sponsored, all-time
+                </p>
+                <div className="flex gap-1 bg-stone-100 rounded-full p-1 shrink-0">
+                  {AD_CLICK_GRANULARITIES.map((g) => (
+                    <button
+                      key={g.id}
+                      onClick={() => setAdGranularity(g.id)}
+                      className={`px-2.5 py-1.5 rounded-full text-xs font-semibold transition ${adGranularity === g.id ? "bg-white shadow text-stone-900" : "text-stone-500"}`}
+                    >
+                      {g.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <p className="cs-t10 text-stone-400 mb-1">Clicks</p>
+              {sponsoredClicksSeries.every((b) => b.count === 0) ? (
+                <p className="text-sm text-stone-400 py-4 text-center mb-3">No listing views recorded during a sponsored window yet.</p>
+              ) : (
+                <div style={{ width: "100%", height: 150 }} className="mb-4">
+                  <ResponsiveContainer>
+                    <BarChart data={sponsoredClicksSeries}>
+                      <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(sponsoredClicksSeries.length / 8))} />
+                      <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={30} allowDecimals={false} />
+                      <Tooltip />
+                      <Bar dataKey="count" fill={DASH_TINTS.blue.bar} radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              <p className="cs-t10 text-stone-400 mb-1">Spend</p>
+              <div style={{ width: "100%", height: 150 }}>
+                <ResponsiveContainer>
+                  <BarChart data={sponsoredSpendSeries}>
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(sponsoredSpendSeries.length / 8))} />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={36} tickFormatter={(v) => `$${v}`} />
+                    <Tooltip formatter={(v) => formatMoney(v)} />
+                    <Bar dataKey="value" fill={DASH_TINTS.amber.bar} radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </>
+          )}
         </DashPanel>
 
         <DashPanel title="This week's digest" icon={Calendar} className="mb-4" info="A data-rich recap of the last 7 days vs. the 7 days before — views, favorites, messages, reviews, whichever metric moved the most, and the top search terms shoppers are typing right now.">
