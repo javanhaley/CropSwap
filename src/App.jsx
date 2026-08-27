@@ -6370,15 +6370,31 @@ function ExploreView({ navigate }) {
         )}
 
         <div className="flex gap-2 overflow-x-auto pb-4 -mx-4 px-4" style={{ scrollbarWidth: "none" }}>
-          {CATEGORIES.map((c) => {
-            const active = filters.categories.includes(c.id);
+          {[
+            { id: "shops", label: "Shops" },
+            { id: "listings", label: "Listings" },
+            { id: "map", label: "Map" },
+            { id: "selling", label: me?.isVendor ? "My Shop" : "Start Selling" },
+          ].map((btn) => {
+            const isActive = (btn.id === "listings" && view === "grid") || (btn.id === "shops" && view === "shops") || (btn.id === "map" && view === "map");
+            const handleClick = () => {
+              if (btn.id === "listings") setView("grid");
+              else if (btn.id === "shops") setView("shops");
+              else if (btn.id === "map") setView("map");
+              // "Start Selling"/"My Shop" points at the same "store" screen
+              // for guests, non-vendors, and vendors alike — StoreScreen
+              // itself decides what to show (upgrade preview, signup form,
+              // or the real storefront). This matches how Sidebar/BottomNav
+              // already route their own Start Selling / My Store items.
+              else if (btn.id === "selling") navigate({ screen: "store" });
+            };
             return (
               <button
-                key={c.id}
-                onClick={() => setFilters((f) => ({ ...f, categories: active ? f.categories.filter((x) => x !== c.id) : [...f.categories, c.id] }))}
-                className={`whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-semibold border transition shrink-0 ${active ? "bg-emerald-800 text-white border-emerald-800" : "bg-white text-stone-600 border-stone-200"}`}
+                key={btn.id}
+                onClick={handleClick}
+                className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-700 bg-opacity-50 text-white border-emerald-600" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
               >
-                <span className="inline-flex items-center gap-1.5"><CategoryMark id={c.id} /> {c.label}</span>
+                {btn.label}
               </button>
             );
           })}
@@ -7713,7 +7729,7 @@ function ConfirmDelete({ product, shopId, onClose }) {
    SECTION 18: SHOP PROFILE VIEW
 ============================================================================ */
 function ShopProfileView({ shopId, navigate }) {
-  const { shopsById, products, favShops, toggleFavorite, incrementShare, me, userLoc, showToast } = useApp();
+  const { shopsById, products, favShops, toggleFavorite, incrementShare, me, userLoc, showToast, setExploreView } = useApp();
   const [addOpen, setAddOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [deletingProduct, setDeletingProduct] = useState(null);
@@ -7822,6 +7838,38 @@ function ShopProfileView({ shopId, navigate }) {
             </p>
           )}
         </div>
+
+        {isOwner && (
+          <div className="flex items-center gap-2 flex-wrap mt-4 pb-4 border-b border-stone-100">
+            {[
+              { id: "shops", label: "Shops" },
+              { id: "listings", label: "Listings" },
+              { id: "map", label: "Map" },
+              { id: "store", label: "My Shop" },
+            ].map((btn) => {
+              // "My Shop" represents the page already on screen, so it's a
+              // no-op rather than a real nav target (clicking it used to
+              // send you away to Explore, which defeated the point of it
+              // reading as the "you are here" button).
+              const isActive = btn.id === "store";
+              const handleClick = () => {
+                if (btn.id === "listings") { setExploreView("grid"); navigate({ screen: "explore" }); }
+                else if (btn.id === "shops") { setExploreView("shops"); navigate({ screen: "explore" }); }
+                else if (btn.id === "map") { setExploreView("map"); navigate({ screen: "explore" }); }
+              };
+              return (
+                <button
+                  key={btn.id}
+                  onClick={handleClick}
+                  disabled={isActive}
+                  className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-700 bg-opacity-50 text-white border-emerald-600 cursor-default" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
+                >
+                  {btn.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <div className="flex items-center gap-2 flex-wrap mt-4">
           <FavoriteHeart active={isFav} count={shop.favoriteCount || 0} onToggle={() => toggleFavorite("shop", shop)} size="lg" />
