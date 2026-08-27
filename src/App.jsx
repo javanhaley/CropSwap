@@ -6400,7 +6400,7 @@ function ExploreView({ navigate }) {
           })}
         </div>
 
-        {sponsoredNow.length > 0 && view !== "map" && (
+        {sponsoredNow.length > 0 && view === "grid" && (
           <div className="mb-6">
             <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><Megaphone size={13} /> Sponsored</p>
             <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4" style={{ scrollbarWidth: "none" }}>
@@ -7832,8 +7832,8 @@ function ShopProfileView({ shopId, navigate }) {
 
         <div className="flex items-center gap-2 flex-wrap mt-4">
           <FavoriteHeart active={isFav} count={shop.favoriteCount || 0} onToggle={() => toggleFavorite("shop", shop)} size="lg" />
-          <button onClick={handleShare} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
-            <Share2 size={15} /> Share{shop.shareCount > 0 ? ` · ${shop.shareCount}` : ""}
+          <button onClick={handleShare} className="flex items-center gap-1.5 bg-white border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
+            <Share2 size={15} /> Shares{shop.shareCount > 0 ? ` · ${shop.shareCount}` : ""}
           </button>
           {!isOwner && (
             <button
@@ -7844,32 +7844,32 @@ function ShopProfileView({ shopId, navigate }) {
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "dashboard" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
+            <button onClick={() => navigate({ screen: "dashboard" })} className="flex items-center gap-1.5 bg-white border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <TrendingUp size={15} /> Dashboard
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "orders", tab: "orders" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
+            <button onClick={() => navigate({ screen: "orders", tab: "orders" })} className="flex items-center gap-1.5 bg-white border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <ClipboardList size={15} /> Orders
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "orders", tab: "calendar" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
+            <button onClick={() => navigate({ screen: "orders", tab: "calendar" })} className="flex items-center gap-1.5 bg-white border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <Calendar size={15} /> Calendar
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "orders", tab: "inventory" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
+            <button onClick={() => navigate({ screen: "orders", tab: "inventory" })} className="flex items-center gap-1.5 bg-white border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <Boxes size={15} /> Inventory
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "ads" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
+            <button onClick={() => navigate({ screen: "ads" })} className="flex items-center gap-1.5 bg-white border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <Megaphone size={15} /> Sponsored Ads
             </button>
           )}
           {isOwner && (
-            <button onClick={() => navigate({ screen: "plans" })} className="flex items-center gap-1.5 border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
+            <button onClick={() => navigate({ screen: "plans" })} className="flex items-center gap-1.5 bg-white border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition">
               <Sparkles size={15} /> My Plan
             </button>
           )}
