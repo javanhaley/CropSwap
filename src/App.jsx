@@ -7724,24 +7724,59 @@ function ShopProfileView({ shopId, navigate }) {
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-      {/* absolute (not fixed) on every breakpoint: this screen's nearest
-          positioned ancestor is <main>, which sits below the sticky TopBar
-          (z-30). A `fixed` button here is positioned against the raw
-          viewport instead, landing at the same top-3 coordinates as the
-          TopBar itself — which then paints over it and hides it entirely
-          on phones. Positioning against <main> keeps it visibly below the
-          header on every screen size, matching how it already looked on
-          desktop. */}
-      <button onClick={() => navigate({ screen: "explore" })} className="absolute top-3 left-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-stone-700">
-        <ArrowLeft size={15} /> Back
-      </button>
+      {/* Same Shops/Listings/Map/My Shop row as the top of Explore/Map, in
+          the same top-of-page position with the same padding — so landing
+          on My Store doesn't mean scrolling past the banner and bio first
+          to find the nav you already saw everywhere else. Owner-only, same
+          as before; a visitor viewing someone else's shop never sees it. */}
       {isOwner && (
-        <button onClick={() => navigate({ screen: "storeEditor" })} className="absolute top-3 right-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-emerald-800">
-          <Pencil size={14} /> Edit storefront
-        </button>
+        <div className="max-w-3xl mx-auto px-5 pt-4">
+          <div className="flex gap-2 overflow-x-auto pb-4" style={{ scrollbarWidth: "none" }}>
+            {[
+              { id: "shops", label: "Shops" },
+              { id: "listings", label: "Listings" },
+              { id: "map", label: "Map" },
+              { id: "store", label: "My Shop" },
+            ].map((btn) => {
+              // "My Shop" represents the page already on screen, so it's a
+              // no-op rather than a real nav target (clicking it used to
+              // send you away to Explore, which defeated the point of it
+              // reading as the "you are here" button).
+              const isActive = btn.id === "store";
+              const handleClick = () => {
+                if (btn.id === "listings") { setExploreView("grid"); navigate({ screen: "explore" }); }
+                else if (btn.id === "shops") { setExploreView("shops"); navigate({ screen: "explore" }); }
+                else if (btn.id === "map") { setExploreView("map"); navigate({ screen: "explore" }); }
+              };
+              return (
+                <button
+                  key={btn.id}
+                  onClick={handleClick}
+                  disabled={isActive}
+                  className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-700 bg-opacity-50 text-white border-emerald-600 cursor-default" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
+                >
+                  {btn.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
+      {/* relative: the Back / Edit storefront buttons below are absolutely
+          positioned against THIS banner (not <main>), so they stay pinned
+          to its corners no matter what renders above it — the nav row when
+          isOwner, nothing at all when it's a visitor viewing someone else's
+          shop. */}
       <div className="relative h-40 md:h-52 overflow-hidden">
+        <button onClick={() => navigate({ screen: "explore" })} className="absolute top-3 left-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-stone-700">
+          <ArrowLeft size={15} /> Back
+        </button>
+        {isOwner && (
+          <button onClick={() => navigate({ screen: "storeEditor" })} className="absolute top-3 right-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-emerald-800">
+            <Pencil size={14} /> Edit storefront
+          </button>
+        )}
         <BannerScene scene={shop.bannerScene || defaultScene(shop.id)} />
         <ShopCoverPhoto shop={shop} />
         {shop.banner && (
@@ -7794,38 +7829,6 @@ function ShopProfileView({ shopId, navigate }) {
             </p>
           )}
         </div>
-
-        {isOwner && (
-          <div className="flex items-center gap-2 flex-wrap mt-4 pb-4 border-b border-stone-100">
-            {[
-              { id: "shops", label: "Shops" },
-              { id: "listings", label: "Listings" },
-              { id: "map", label: "Map" },
-              { id: "store", label: "My Shop" },
-            ].map((btn) => {
-              // "My Shop" represents the page already on screen, so it's a
-              // no-op rather than a real nav target (clicking it used to
-              // send you away to Explore, which defeated the point of it
-              // reading as the "you are here" button).
-              const isActive = btn.id === "store";
-              const handleClick = () => {
-                if (btn.id === "listings") { setExploreView("grid"); navigate({ screen: "explore" }); }
-                else if (btn.id === "shops") { setExploreView("shops"); navigate({ screen: "explore" }); }
-                else if (btn.id === "map") { setExploreView("map"); navigate({ screen: "explore" }); }
-              };
-              return (
-                <button
-                  key={btn.id}
-                  onClick={handleClick}
-                  disabled={isActive}
-                  className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-700 bg-opacity-50 text-white border-emerald-600 cursor-default" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
-                >
-                  {btn.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
 
         <div className="flex items-center gap-2 flex-wrap mt-4">
           <FavoriteHeart active={isFav} count={shop.favoriteCount || 0} onToggle={() => toggleFavorite("shop", shop)} size="lg" />
