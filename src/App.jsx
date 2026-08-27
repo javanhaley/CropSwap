@@ -7730,7 +7730,7 @@ function ShopProfileView({ shopId, navigate }) {
           to find the nav you already saw everywhere else. Owner-only, same
           as before; a visitor viewing someone else's shop never sees it. */}
       {isOwner && (
-        <div className="max-w-3xl mx-auto px-5 pt-4">
+        <div className="max-w-6xl mx-auto px-4 pt-4">
           <div className="flex gap-2 overflow-x-auto pb-4" style={{ scrollbarWidth: "none" }}>
             {[
               { id: "shops", label: "Shops" },
