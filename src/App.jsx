@@ -15678,7 +15678,10 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
     if (!isAnalyticsKind || !win || !data.shop) return;
     let cancelled = false;
     setCustomEvents(null);
-    fetchAnalyticsEvents({ types: ANALYTICS_KIND_TYPES[kind], shopId: data.shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs }).then((ev) => {
+    const req = data.isDemo
+      ? Promise.resolve(filterDemoEvents(data.demoEvents || [], ANALYTICS_KIND_TYPES[kind], win.sinceMs, win.untilMs))
+      : fetchAnalyticsEvents({ types: ANALYTICS_KIND_TYPES[kind], shopId: data.shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs });
+    req.then((ev) => {
       if (!cancelled) setCustomEvents(ev);
     });
     return () => {
@@ -16002,14 +16005,190 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
     </Modal>
   );
 }
+
+// Filters a pre-generated demo analytics-events pool down to a type list +
+// date window — the demo-mode stand-in for fetchAnalyticsEvents, used by
+// every panel/modal below that would otherwise hit the network.
+function filterDemoEvents(events, types, sinceMs, untilMs) {
+  const until = untilMs || Infinity;
+  return events.filter((e) => types.includes(e.event_type) && new Date(e.created_at).getTime() >= sinceMs && new Date(e.created_at).getTime() <= until);
+}
+
+// Builds one complete, self-contained example vendor dataset — the exact
+// same object shapes real vendor data uses everywhere in VendorDashboard —
+// so anyone browsing without a storefront yet sees the *real* Premium
+// dashboard experience, fully interactive, with realistic (fake) numbers
+// instead of a locked "no storefront" empty state. Pure client-side, no
+// network calls; regenerated fresh each time this dashboard mounts.
+function buildDemoDashboardData() {
+  const DAY = 86400000;
+  const now = Date.now();
+  const spanDays = 420; // ~14 months, so the "All" range has real depth
+  const createdAt = now - spanDays * DAY;
+  const shop = { id: "demo-preview-shop", name: "Sunny Acres Farm", ownerId: "demo-preview-owner", createdAt };
+
+  const productDefs = [
+    { name: "Heirloom Tomatoes", price: 4.5, unit: "lb" },
+    { name: "Farm Fresh Eggs", price: 6, unit: "dozen" },
+    { name: "Wildflower Honey", price: 9, unit: "jar" },
+    { name: "Sweet Corn", price: 5, unit: "dozen" },
+    { name: "Strawberry Jam", price: 7, unit: "jar" },
+    { name: "Baby Spinach", price: 3.5, unit: "bag" },
+  ];
+  const products = productDefs.map((p, i) => ({ id: `demo-product-${i}`, shopId: shop.id, name: p.name, price: p.price, unit: p.unit, favoriteCount: 0, shareCount: 0 }));
+  const pickProduct = () => products[Math.floor(Math.random() * products.length)];
+  const CITIES = [
+    ["Asheville", "NC"], ["Portland", "OR"], ["Austin", "TX"], ["Boulder", "CO"],
+    ["Burlington", "VT"], ["Ann Arbor", "MI"], ["Santa Fe", "NM"], ["Chapel Hill", "NC"],
+  ];
+  const pickCity = () => CITIES[Math.floor(Math.random() * CITIES.length)];
+  const shoppers = Array.from({ length: 220 }, (_, i) => `demo-shopper-${i}`);
+  const pickShopper = () => shoppers[Math.floor(Math.random() * shoppers.length)];
+  const repeatCustomers = shoppers.slice(0, 70);
+
+  const events = [];
+  const pushEvent = (type, ts, extra = {}) => {
+    const [city, state] = pickCity();
+    events.push({
+      event_type: type,
+      entity_id: extra.entity_id || null,
+      entity_name: extra.entity_name || null,
+      shop_id: shop.id,
+      actor_id: extra.actor_id || pickShopper(),
+      city,
+      state,
+      meta: extra.meta || null,
+      created_at: new Date(ts).toISOString(),
+    });
+  };
+
+  const orders = [];
+  const usedCustomers = new Set();
+
+  for (let d = 0; d < spanDays; d++) {
+    const dayStart = createdAt + d * DAY;
+    const growth = Math.min(1, d / 180); // ramps up over ~6 months, then steady
+    const dow = new Date(dayStart).getDay();
+    const marketDay = dow === 0 || dow === 6 ? 1.6 : 1; // weekend farmers-market bump
+
+    const viewsToday = Math.max(0, Math.round((4 + growth * 16) * marketDay + (Math.random() * 5 - 2)));
+    for (let i = 0; i < viewsToday; i++) {
+      const t = dayStart + Math.random() * DAY;
+      if (Math.random() < 0.62) {
+        const p = pickProduct();
+        pushEvent("view_product", t, { entity_id: p.id, entity_name: p.name });
+      } else {
+        pushEvent("view_shop", t);
+      }
+    }
+
+    if (Math.random() < 500 / spanDays) {
+      const p = pickProduct();
+      p.favoriteCount += 1;
+      pushEvent("favorite", dayStart + Math.random() * DAY, { entity_id: p.id, entity_name: p.name, meta: { kind: "product" } });
+    }
+    if (Math.random() < 40 / spanDays) {
+      const p = pickProduct();
+      p.shareCount += 1;
+      pushEvent("share", dayStart + Math.random() * DAY, { entity_id: p.id, entity_name: p.name, meta: { kind: "product" } });
+    }
+    if (Math.random() < 0.22 + growth * 0.28) {
+      pushEvent("message", dayStart + Math.random() * DAY);
+    }
+
+    const ordersToday = Math.random() < (0.55 + growth * 0.75) * marketDay ? 1 : 0;
+    const extraOrder = marketDay > 1 && Math.random() < 0.35 * growth ? 1 : 0;
+    for (let o = 0; o < ordersToday + extraOrder; o++) {
+      const isRepeat = usedCustomers.size > 20 && Math.random() < 0.42;
+      const customerId = isRepeat ? repeatCustomers[Math.floor(Math.random() * repeatCustomers.length)] : `demo-customer-${usedCustomers.size}`;
+      usedCustomers.add(customerId);
+      const itemCount = 1 + Math.floor(Math.random() * 3);
+      const items = Array.from({ length: itemCount }, () => {
+        const p = pickProduct();
+        const qty = 1 + Math.floor(Math.random() * 3);
+        return { id: uid("oi"), inventoryItemId: null, productId: p.id, name: p.name, qty, unit: p.unit, price: p.price };
+      });
+      const pickupMs = dayStart + Math.random() * DAY;
+      orders.push({
+        id: uid("order"),
+        customerName: isRepeat ? `Returning shopper ${customerId.slice(-2)}` : `New shopper ${customerId.slice(-2)}`,
+        customerUserId: customerId,
+        items,
+        pickupDate: dateToYmd(new Date(pickupMs)),
+        pickupTime: "10:00",
+        pickupLocation: "Farmers market booth",
+        notes: "",
+        completed: true,
+        completedAt: pickupMs,
+        archived: false,
+        calendarEventId: null,
+        createdAt: pickupMs - 3600000,
+      });
+    }
+  }
+
+  const reviewBodies = [
+    "Fresh produce every single week, you can really taste the difference.",
+    "Friendly and quick pickup, the tomatoes were amazing this year.",
+    "Best honey I have found locally, will definitely order again.",
+    "Great quality and fair prices, highly recommend this farm.",
+    "Eggs are always fresh, the whole family loves them.",
+    "Wonderful communication and the produce arrived in perfect condition.",
+    "Consistent quality every time, this is our go-to farm stand now.",
+    "The strawberry jam is incredible, tastes homemade and fresh.",
+    "Corn was sweet and fresh, kids ask for it every week.",
+    "Excellent service, fresh ingredients, and a genuinely friendly farm.",
+  ];
+  const reviewNames = ["Casey R.", "Morgan T.", "Jordan P.", "Alex M.", "Taylor B.", "Riley S.", "Jamie L.", "Drew K.", "Avery N.", "Quinn D.", "Sydney F.", "Reese H."];
+  const reviews = Array.from({ length: 42 }, (_, i) => {
+    const rating = Math.random() < 0.72 ? 5 : Math.random() < 0.85 ? 4 : 3;
+    return {
+      id: `demo-review-${i}`,
+      authorName: reviewNames[i % reviewNames.length],
+      rating,
+      body: reviewBodies[i % reviewBodies.length],
+      createdAt: createdAt + Math.random() * spanDays * DAY,
+      status: "published",
+      screenedClear: true,
+      helpful: Math.round(Math.random() * 60),
+    };
+  }).sort((a, b) => a.createdAt - b.createdAt);
+  const avgRating = reviews.reduce((s, r) => s + r.rating, 0) / reviews.length;
+
+  const inventory = [
+    { id: "demo-inv-0", name: "Heirloom Tomatoes", qty: 34, unit: "lb", lowStockThreshold: 10, linkedProductId: products[0].id },
+    { id: "demo-inv-1", name: "Farm Fresh Eggs", qty: 18, unit: "dozen", lowStockThreshold: 6, linkedProductId: products[1].id },
+    { id: "demo-inv-2", name: "Wildflower Honey", qty: 3, unit: "jar", lowStockThreshold: 5, linkedProductId: products[2].id },
+    { id: "demo-inv-3", name: "Sweet Corn", qty: 40, unit: "dozen", lowStockThreshold: 12, linkedProductId: products[3].id },
+  ];
+
+  const campaigns = [
+    { id: "demo-camp-0", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Peak-season tomatoes", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 3 * DAY, endsAt: now + 4 * DAY, createdAt: now - 3 * DAY },
+    { id: "demo-camp-1", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Local honey harvest", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 30 * DAY, endsAt: now - 23 * DAY, createdAt: now - 30 * DAY },
+  ];
+
+  return { shop, products, events, orders, reviews, avgRating, inventory, campaigns };
+}
 function VendorDashboard({ navigate }) {
   const { me, shopsById, shops, products, conversations, showToast, sponsorships } = useApp();
-  const shop = me?.shopId ? shopsById[me.shopId] : null;
-  const { reviews: shopReviews, avgRating, count } = useReviews("shop", shop?.id || "none");
+  const realShop = me?.shopId ? shopsById[me.shopId] : null;
+  // Anyone browsing without a real storefront yet sees a fully-populated
+  // example dashboard instead of a locked empty state — see
+  // buildDemoDashboardData above. Built once per mount (it uses Math.random,
+  // so recomputing it on every render would make every chart/card jitter).
+  const isDemo = !realShop;
+  const demo = useMemo(() => (isDemo ? buildDemoDashboardData() : null), [isDemo]);
+  const shop = realShop || demo?.shop;
+  const { reviews: shopReviewsReal, avgRating: avgRatingReal, count: countReal } = useReviews("shop", realShop?.id || "none");
+  const shopReviews = isDemo ? demo.reviews : shopReviewsReal;
+  const avgRating = isDemo ? demo.avgRating : avgRatingReal;
+  const count = isDemo ? demo.reviews.length : countReal;
   const premium = isPremiumPlan(me);
-  const mailing = useMailingList(shop?.ownerId || null);
-  const shopOrders = useOrders(shop?.id || null);
-  const inventory = useInventory(shop?.id || null);
+  const mailing = useMailingList(realShop?.ownerId || null);
+  const shopOrdersReal = useOrders(realShop?.id || null);
+  const shopOrders = isDemo ? { ...shopOrdersReal, orders: demo.orders } : shopOrdersReal;
+  const inventoryReal = useInventory(realShop?.id || null);
+  const inventory = isDemo ? { ...inventoryReal, items: demo.inventory } : inventoryReal;
 
   // Which KPI/sales card's drill-down modal is currently open, if any — see
   // MetricDetailModal above. Every card on this dashboard is clickable now;
@@ -16056,7 +16235,9 @@ function VendorDashboard({ navigate }) {
     if (!shop) return;
     let cancelled = false;
     Promise.all([
-      fetchAnalyticsEvents({ types: ["view_shop", "view_product", "favorite", "share", "message"], shopId: shop.id, sinceMs }),
+      isDemo
+        ? Promise.resolve(filterDemoEvents(demo.events, ["view_shop", "view_product", "favorite", "share", "message"], sinceMs, nowMs))
+        : fetchAnalyticsEvents({ types: ["view_shop", "view_product", "favorite", "share", "message"], shopId: shop.id, sinceMs }),
       fetchAnalyticsEvents({ types: ["signup"], sinceMs }),
       fetchAnalyticsEvents({ types: ["search"], sinceMs }),
     ]).then(([shopEv, su, sr]) => {
@@ -16066,21 +16247,24 @@ function VendorDashboard({ navigate }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shop?.id, rangeId]);
+  }, [shop?.id, rangeId, isDemo]);
 
   // A fixed trailing-35-day window, independent of the range selector above,
   // so the weekly digest always has the prior-week data it needs.
   useEffect(() => {
     if (!shop) return;
     let cancelled = false;
-    fetchAnalyticsEvents({ types: ["view_shop", "view_product", "favorite", "share", "message"], shopId: shop.id, sinceMs: nowMs - 35 * 86400000 }).then((ev) => {
+    const req35 = isDemo
+      ? Promise.resolve(filterDemoEvents(demo.events, ["view_shop", "view_product", "favorite", "share", "message"], nowMs - 35 * 86400000, nowMs))
+      : fetchAnalyticsEvents({ types: ["view_shop", "view_product", "favorite", "share", "message"], shopId: shop.id, sinceMs: nowMs - 35 * 86400000 });
+    req35.then((ev) => {
       if (!cancelled) setDigestEvents(ev);
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shop?.id]);
+  }, [shop?.id, isDemo]);
 
   // Fetches the heatmap's own view events whenever its period tab is set to
   // something other than "current" — the globally-fetched rangeEvents above
@@ -16091,14 +16275,17 @@ function VendorDashboard({ navigate }) {
     const win = panelPeriodWindow(heatmapPeriod, nowMs, shop?.createdAt);
     if (!win) return;
     let cancelled = false;
-    fetchAnalyticsEvents({ types: ["view_shop", "view_product"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs }).then((ev) => {
+    const reqHeat = isDemo
+      ? Promise.resolve(filterDemoEvents(demo.events, ["view_shop", "view_product"], win.sinceMs, win.untilMs))
+      : fetchAnalyticsEvents({ types: ["view_shop", "view_product"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs });
+    reqHeat.then((ev) => {
       if (!cancelled) setHeatmapCustomEvents(ev);
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shop?.id, heatmapPeriod]);
+  }, [shop?.id, heatmapPeriod, isDemo]);
 
   // Same idea for the "Views over time" chart's own period tab.
   useEffect(() => {
@@ -16106,14 +16293,17 @@ function VendorDashboard({ navigate }) {
     const win = panelPeriodWindow(viewsPeriod, nowMs, shop?.createdAt);
     if (!win) return;
     let cancelled = false;
-    fetchAnalyticsEvents({ types: ["view_shop", "view_product"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs }).then((ev) => {
+    const reqViews = isDemo
+      ? Promise.resolve(filterDemoEvents(demo.events, ["view_shop", "view_product"], win.sinceMs, win.untilMs))
+      : fetchAnalyticsEvents({ types: ["view_shop", "view_product"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs });
+    reqViews.then((ev) => {
       if (!cancelled) setViewsCustomEvents(ev);
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shop?.id, viewsPeriod]);
+  }, [shop?.id, viewsPeriod, isDemo]);
 
   // Same idea again for the "Favorites over time" chart's own period tab.
   useEffect(() => {
@@ -16121,18 +16311,26 @@ function VendorDashboard({ navigate }) {
     const win = panelPeriodWindow(favoritesPeriod, nowMs, shop?.createdAt);
     if (!win) return;
     let cancelled = false;
-    fetchAnalyticsEvents({ types: ["favorite"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs }).then((ev) => {
+    const reqFav = isDemo
+      ? Promise.resolve(filterDemoEvents(demo.events, ["favorite"], win.sinceMs, win.untilMs))
+      : fetchAnalyticsEvents({ types: ["favorite"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs });
+    reqFav.then((ev) => {
       if (!cancelled) setFavoritesCustomEvents(ev);
     });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shop?.id, favoritesPeriod]);
+  }, [shop?.id, favoritesPeriod, isDemo]);
 
   // Real average first-response time, from the vendor's own most recent
   // conversation threads (bounded to 10 so this stays cheap).
   useEffect(() => {
+    if (isDemo) {
+      setAvgResponseMin(14);
+      setRespLoading(false);
+      return;
+    }
     if (!shop || !me) {
       setRespLoading(false);
       return;
@@ -16159,10 +16357,15 @@ function VendorDashboard({ navigate }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shop?.id, conversations?.length]);
+  }, [shop?.id, conversations?.length, isDemo]);
 
   useEffect(() => {
     if (!shop) return;
+    if (isDemo) {
+      setMonthlyGoal(6000);
+      setGoalDraft("6000");
+      return;
+    }
     let cancelled = false;
     getJSON(`shopGoal:${shop.id}`, false, {}).then((g) => {
       if (cancelled) return;
@@ -16172,12 +16375,18 @@ function VendorDashboard({ navigate }) {
     return () => {
       cancelled = true;
     };
-  }, [shop?.id]);
+  }, [shop?.id, isDemo]);
 
   const saveGoal = async () => {
     const val = Number(goalDraft);
     if (!val || val <= 0) {
       showToast?.("Enter a goal greater than $0");
+      return;
+    }
+    if (isDemo) {
+      setMonthlyGoal(val);
+      setEditingGoal(false);
+      showToast?.("Preview goal updated — start selling to set a real one");
       return;
     }
     await setJSON(`shopGoal:${shop.id}`, { monthlyGoal: val }, false, { verify: true });
@@ -16186,7 +16395,7 @@ function VendorDashboard({ navigate }) {
     showToast?.("Monthly goal saved");
   };
 
-  const shopProducts = useMemo(() => (shop ? products.filter((p) => p.shopId === shop.id) : []), [products, shop]);
+  const shopProducts = useMemo(() => (isDemo ? demo.products : shop ? products.filter((p) => p.shopId === shop.id) : []), [products, shop, isDemo, demo]);
 
   const viewEvents = useMemo(() => rangeEvents.shop.filter((e) => e.event_type === "view_shop" || e.event_type === "view_product"), [rangeEvents]);
   const favoriteEvents = useMemo(() => rangeEvents.shop.filter((e) => e.event_type === "favorite"), [rangeEvents]);
@@ -16612,7 +16821,7 @@ function VendorDashboard({ navigate }) {
     return [...byCustomer.values()].reduce((a, b) => a + b, 0) / total;
   }, [completedOrders]);
 
-  const myCampaigns = useMemo(() => (sponsorships || []).filter((c) => c.shopId === shop?.id), [sponsorships, shop]);
+  const myCampaigns = useMemo(() => (isDemo ? demo.campaigns : (sponsorships || []).filter((c) => c.shopId === shop?.id)), [sponsorships, shop, isDemo, demo]);
   const campaignsInRange = useMemo(
     () => myCampaigns.filter((c) => {
       const t = c.startedAt || c.createdAt || 0;
@@ -16645,8 +16854,8 @@ function VendorDashboard({ navigate }) {
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
       <div className="max-w-5xl mx-auto px-4 pt-4">
-        <button onClick={() => navigate({ screen: "shop", shopId: shop.id })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
-          <ArrowLeft size={15} /> Back to storefront
+        <button onClick={() => navigate(isDemo ? { screen: "store" } : { screen: "shop", shopId: shop.id })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+          <ArrowLeft size={15} /> {isDemo ? "Back" : "Back to storefront"}
         </button>
 
         <div className="rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-500 px-5 py-5 mb-5 shadow-sm relative overflow-hidden">
@@ -16655,10 +16864,16 @@ function VendorDashboard({ navigate }) {
           <div className="relative flex items-center justify-between gap-2">
             <div>
               <h1 className="text-2xl font-bold text-white" style={displayFont}>{shop.name} dashboard</h1>
-              <p className="text-emerald-50/90 text-sm mt-0.5">{shopProducts.length} active listing{shopProducts.length === 1 ? "" : "s"} · real activity, not simulated</p>
+              <p className="text-emerald-50/90 text-sm mt-0.5">
+                {shopProducts.length} active listing{shopProducts.length === 1 ? "" : "s"} · {isDemo ? "example dashboard — see what Premium unlocks" : "real activity, not simulated"}
+              </p>
             </div>
             {premium ? (
               <CrownPill size="md" />
+            ) : isDemo ? (
+              <button onClick={() => navigate({ screen: "store" })} className="text-xs font-bold text-white bg-white/15 hover:bg-white/25 backdrop-blur-sm rounded-full px-3 py-1.5 flex items-center gap-1 shrink-0 transition">
+                <Sparkles size={13} /> Sample data
+              </button>
             ) : (
               <button onClick={() => navigate({ screen: "plans" })} className="text-xs font-bold text-white bg-white/15 hover:bg-white/25 backdrop-blur-sm rounded-full px-3 py-1.5 flex items-center gap-1 shrink-0 transition">
                 <Crown size={13} /> Preview only
@@ -16696,7 +16911,15 @@ function VendorDashboard({ navigate }) {
           )}
         </div>
 
-        {!premium && (
+        {isDemo ? (
+          <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 mb-4">
+            <Sparkles size={14} className="text-emerald-700 shrink-0" />
+            <p className="text-xs text-emerald-900">
+              This is a sample dashboard with example numbers, showing exactly what you'd see with a real storefront.{" "}
+              <button onClick={() => navigate({ screen: "store" })} className="font-bold underline underline-offset-2">Start selling</button> to make it real.
+            </p>
+          </div>
+        ) : !premium ? (
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4">
             <Crown size={14} className="text-amber-600 shrink-0" />
             <p className="text-xs text-amber-900">
@@ -16704,7 +16927,7 @@ function VendorDashboard({ navigate }) {
               <button onClick={() => navigate({ screen: "plans" })} className="font-bold underline underline-offset-2">Go Premium</button> to unlock everything.
             </p>
           </div>
-        )}
+        ) : null}
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
           <DashStat
@@ -16714,7 +16937,7 @@ function VendorDashboard({ navigate }) {
             value={viewEvents.length.toLocaleString()}
             delta={viewsDelta}
             warn={premium && viewsDelta != null && viewsDelta <= -20}
-            locked={!premium}
+            locked={!premium && !isDemo}
             navigate={navigate}
             spark={viewSeries.map((b) => b.count)}
             onOpen={() => setDetailKind("views")}
@@ -16737,7 +16960,7 @@ function VendorDashboard({ navigate }) {
             value={messageEvents.length}
             delta={messagesDelta}
             warn={premium && messagesDelta != null && messagesDelta <= -20}
-            locked={!premium}
+            locked={!premium && !isDemo}
             navigate={navigate}
             spark={messageSeries.map((b) => b.count)}
             onOpen={() => setDetailKind("messages")}
@@ -16983,7 +17206,7 @@ function VendorDashboard({ navigate }) {
                 </div>
               ))}
             </div>
-            <button onClick={() => navigate({ screen: "orders", tab: "inventory" })} className="text-xs font-bold text-emerald-800 mt-2.5">
+            <button onClick={() => navigate(isDemo ? { screen: "store" } : { screen: "orders", tab: "inventory" })} className="text-xs font-bold text-emerald-800 mt-2.5">
               Manage inventory →
             </button>
           </DashPanel>
@@ -16995,7 +17218,7 @@ function VendorDashboard({ navigate }) {
           className="mb-4"
           info="Blended performance for your Sponsored Ads spend — not last-click attribution (CropSwap doesn't track ad-click-to-purchase paths), just ad spend measured against overall shop performance in the same window. Directionally useful, not a precise per-ad number."
           right={
-            <button onClick={() => navigate({ screen: "ads" })} className="text-xs font-bold text-emerald-800 shrink-0">
+            <button onClick={() => navigate(isDemo ? { screen: "store" } : { screen: "ads" })} className="text-xs font-bold text-emerald-800 shrink-0">
               Manage ads →
             </button>
           }
@@ -17256,7 +17479,7 @@ function VendorDashboard({ navigate }) {
 
         <DashPanel title="Mailing list & mass messages" icon={Megaphone} className="mb-4" info="Everyone who has ever messaged you first joins your mailing list automatically. Send them all one message at once — delivered as an in-app message + notification.">
           <p className="cs-t11 text-stone-400 mb-3">
-            {mailing.list.length} subscriber{mailing.list.length === 1 ? "" : "s"} — anyone who messages you gets added automatically. Messages sent to all deliver as an in-app message + notification, not an outside email.
+            {isDemo ? 128 : mailing.list.length} subscriber{(isDemo ? 128 : mailing.list.length) === 1 ? "" : "s"} — anyone who messages you gets added automatically. Messages sent to all deliver as an in-app message + notification, not an outside email.
           </p>
           <ToolLock locked={!premium} navigate={navigate} label="Premium — send mass messages">
             <MassMessageComposer me={me} shop={shop} subscribers={mailing.list} onSent={mailing.reload} showToast={showToast} />
@@ -17285,6 +17508,8 @@ function VendorDashboard({ navigate }) {
           navigate={navigate}
           data={{
             shop,
+            isDemo,
+            demoEvents: isDemo ? demo.events : null,
             shopProducts,
             completedOrders,
             rangeSinceMs: sinceMs,
