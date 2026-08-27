@@ -16854,6 +16854,22 @@ function VendorDashboard({ navigate }) {
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
       <div className="max-w-5xl mx-auto px-4 pt-4">
+        {isDemo && (
+          <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-2xl px-4 py-3 mb-4">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0 shadow-sm">
+                <Crown size={16} />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-stone-900">This is a sample dashboard</p>
+                <p className="text-xs text-amber-800 truncate">Start selling and go Premium to unlock this for your own shop.</p>
+              </div>
+            </div>
+            <button onClick={() => navigate({ screen: "store" })} className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition">
+              Start selling
+            </button>
+          </div>
+        )}
         <button onClick={() => navigate(isDemo ? { screen: "store" } : { screen: "shop", shopId: shop.id })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
           <ArrowLeft size={15} /> {isDemo ? "Back" : "Back to storefront"}
         </button>
@@ -16911,15 +16927,7 @@ function VendorDashboard({ navigate }) {
           )}
         </div>
 
-        {isDemo ? (
-          <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 mb-4">
-            <Sparkles size={14} className="text-emerald-700 shrink-0" />
-            <p className="text-xs text-emerald-900">
-              This is a sample dashboard with example numbers, showing exactly what you'd see with a real storefront.{" "}
-              <button onClick={() => navigate({ screen: "store" })} className="font-bold underline underline-offset-2">Start selling</button> to make it real.
-            </p>
-          </div>
-        ) : !premium ? (
+        {!premium && !isDemo && (
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4">
             <Crown size={14} className="text-amber-600 shrink-0" />
             <p className="text-xs text-amber-900">
@@ -16927,7 +16935,7 @@ function VendorDashboard({ navigate }) {
               <button onClick={() => navigate({ screen: "plans" })} className="font-bold underline underline-offset-2">Go Premium</button> to unlock everything.
             </p>
           </div>
-        ) : null}
+        )}
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
           <DashStat
@@ -18033,11 +18041,14 @@ function Onboarding({ onCreate, reason, onCancel }) {
    one. Centralizing the list here means the sidebar, bottom nav, and every
    "go to X" button all get the same gate for free just by calling navigate().
 ============================================================================ */
-const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "dashboard", "store", "storeEditor", "places", "checkout", "orders", "ads"]);
+// "dashboard" is deliberately NOT gated — anyone browsing, signed in or not,
+// can open it and see the full sample/demo dashboard (see VendorDashboard's
+// isDemo branch) as a Premium selling point. Gating it here would bounce
+// guests straight to a signup card instead of ever showing them that page.
+const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "store", "storeEditor", "places", "checkout", "orders", "ads"]);
 const AUTH_REASON_BY_SCREEN = {
   favorites: "see your favorites",
   messages: "send and receive messages",
-  dashboard: "view your seller dashboard",
   store: "start selling on CropSwap",
   storeEditor: "edit your storefront",
   places: "save your places",
