@@ -14509,56 +14509,49 @@ function googleCalendarUrl(ev) {
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
-// Google's own compact month-picker: no event detail, just a dot under any
-// day that has something on it. Steps its own month independently of
-// whatever the main view is showing, exactly like Google Calendar's sidebar.
-function MiniMonthCalendar({ cursor, onPrevMonth, onNextMonth, selectedDate, onSelectDate, eventsByDate }) {
-  const first = startOfMonthWeekday(cursor.year, cursor.month);
-  const total = daysInMonth(cursor.year, cursor.month);
-  const cells = [];
-  for (let i = 0; i < first; i++) cells.push(null);
-  for (let d = 1; d <= total; d++) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
-  const monthLabel = new Date(cursor.year, cursor.month, 1).toLocaleDateString([], { month: "long", year: "numeric" });
+// Google-style year view: 12 mini months at a glance. Clicking a day jumps
+// straight into that day, same as clicking a date in Google Calendar's year view.
+function YearGridView({ year, eventsByDate, onSelectDate }) {
   const todayStr = dateToYmd(new Date());
-
   return (
-    <div className="border border-stone-300 rounded-2xl p-3 bg-white">
-      <div className="flex items-center justify-between mb-2">
-        <p className="cs-t11 font-bold text-stone-700">{monthLabel}</p>
-        <div className="flex items-center gap-0.5">
-          <button onClick={onPrevMonth} aria-label="Previous month" className="w-6 h-6 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
-            <ChevronLeft size={13} />
-          </button>
-          <button onClick={onNextMonth} aria-label="Next month" className="w-6 h-6 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
-            <ChevronRight size={13} />
-          </button>
-        </div>
-      </div>
-      <div className="grid grid-cols-7 gap-y-0.5">
-        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-          <div key={i} className="text-center cs-t9 font-bold text-stone-400">{d}</div>
-        ))}
-        {cells.map((day, i) => {
-          if (day == null) return <div key={i} />;
-          const dateStr = ymd(cursor.year, cursor.month, day);
-          const isToday = dateStr === todayStr;
-          const isSelected = dateStr === selectedDate;
-          const hasEvents = (eventsByDate[dateStr] || []).length > 0;
-          return (
-            <button
-              key={i}
-              onClick={() => onSelectDate(dateStr)}
-              className={`relative w-6 h-6 mx-auto my-0.5 rounded-full cs-t10 font-semibold flex items-center justify-center transition ${
-                isSelected ? "bg-emerald-700 text-white" : isToday ? "text-emerald-700 font-bold" : "text-stone-600 hover:bg-stone-100"
-              }`}
-            >
-              {day}
-              {hasEvents && !isSelected && <span className="absolute bottom-0 w-1 h-1 rounded-full bg-amber-500" />}
-            </button>
-          );
-        })}
-      </div>
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+      {Array.from({ length: 12 }, (_, month) => {
+        const first = startOfMonthWeekday(year, month);
+        const total = daysInMonth(year, month);
+        const cells = [];
+        for (let i = 0; i < first; i++) cells.push(null);
+        for (let d = 1; d <= total; d++) cells.push(d);
+        while (cells.length % 7 !== 0) cells.push(null);
+        const monthLabel = new Date(year, month, 1).toLocaleDateString([], { month: "long" });
+        return (
+          <div key={month} className="border border-stone-300 rounded-2xl p-3 bg-white">
+            <p className="cs-t11 font-bold text-stone-700 mb-2">{monthLabel}</p>
+            <div className="grid grid-cols-7 gap-y-0.5">
+              {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+                <div key={i} className="text-center cs-t9 font-bold text-stone-400">{d}</div>
+              ))}
+              {cells.map((day, i) => {
+                if (day == null) return <div key={i} />;
+                const dateStr = ymd(year, month, day);
+                const isToday = dateStr === todayStr;
+                const hasEvents = (eventsByDate[dateStr] || []).length > 0;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => onSelectDate(dateStr)}
+                    className={`relative w-6 h-6 mx-auto my-0.5 rounded-full cs-t10 font-semibold flex items-center justify-center transition ${
+                      isToday ? "bg-emerald-700 text-white" : "text-stone-600 hover:bg-stone-100"
+                    }`}
+                  >
+                    {day}
+                    {hasEvents && !isToday && <span className="absolute bottom-0 w-1 h-1 rounded-full bg-amber-500" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -14696,6 +14689,7 @@ const CALENDAR_VIEW_MODES = [
   { id: "month", label: "Month" },
   { id: "week", label: "Week" },
   { id: "day", label: "Day" },
+  { id: "year", label: "Year" },
 ];
 
 function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now }) {
@@ -14705,7 +14699,6 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [cursor, setCursor] = useState({ year: today.getFullYear(), month: today.getMonth() });
   const [focusDate, setFocusDate] = useState(dateToYmd(today));
-  const [miniCursor, setMiniCursor] = useState({ year: today.getFullYear(), month: today.getMonth() });
 
   const eventsByDate = useMemo(() => {
     const map = {};
@@ -14734,7 +14727,7 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
       ? `${weekStart.toLocaleDateString([], { month: "long" })} ${weekStart.getDate()}–${weekEnd.getDate()}, ${weekStart.getFullYear()}`
       : `${weekStart.toLocaleDateString([], { month: "short", day: "numeric" })} – ${weekEnd.toLocaleDateString([], { month: "short", day: "numeric" })}, ${weekEnd.getFullYear()}`;
   const dayLabel = focusDateObj.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-  const headerLabel = viewMode === "month" ? monthLabel : viewMode === "week" ? weekLabel : dayLabel;
+  const headerLabel = viewMode === "year" ? String(cursor.year) : viewMode === "month" ? monthLabel : viewMode === "week" ? weekLabel : dayLabel;
 
   const goMonth = (delta) => {
     setCursor((c) => {
@@ -14742,13 +14735,16 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
       return { year: d.getFullYear(), month: d.getMonth() };
     });
   };
+  const goYear = (delta) => setCursor((c) => ({ year: c.year + delta, month: c.month }));
   const goPrev = () => {
-    if (viewMode === "month") goMonth(-1);
+    if (viewMode === "year") goYear(-1);
+    else if (viewMode === "month") goMonth(-1);
     else if (viewMode === "week") setFocusDate((f) => dateToYmd(addDaysToDate(parseYmdLocal(f), -7)));
     else setFocusDate((f) => dateToYmd(addDaysToDate(parseYmdLocal(f), -1)));
   };
   const goNext = () => {
-    if (viewMode === "month") goMonth(1);
+    if (viewMode === "year") goYear(1);
+    else if (viewMode === "month") goMonth(1);
     else if (viewMode === "week") setFocusDate((f) => dateToYmd(addDaysToDate(parseYmdLocal(f), 7)));
     else setFocusDate((f) => dateToYmd(addDaysToDate(parseYmdLocal(f), 1)));
   };
@@ -14756,21 +14752,15 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
     const t = new Date();
     setCursor({ year: t.getFullYear(), month: t.getMonth() });
     setFocusDate(dateToYmd(t));
-    setMiniCursor({ year: t.getFullYear(), month: t.getMonth() });
   };
 
-  // Keep the mini calendar's month synced to whichever main view is active,
-  // so switching into Week/Day always shows the right month without an extra tap.
-  useEffect(() => {
-    if (viewMode === "month") setMiniCursor({ year: cursor.year, month: cursor.month });
-    else setMiniCursor({ year: focusDateObj.getFullYear(), month: focusDateObj.getMonth() });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, cursor.year, cursor.month, focusDate]);
-
-  const handleMiniSelect = (dateStr) => {
+  // Clicking a date in the year view drops straight into that day, same as
+  // clicking a date in Google Calendar's year view.
+  const handleYearSelect = (dateStr) => {
     setFocusDate(dateStr);
     const d = parseYmdLocal(dateStr);
     setCursor({ year: d.getFullYear(), month: d.getMonth() });
+    setViewMode("day");
   };
 
   const handleExport = (e) => {
@@ -14787,7 +14777,7 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
 
   return (
     <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-      {/* Sidebar: mini month calendar, create button, and export — Google's left rail */}
+      {/* Sidebar: create button and export — Google's left rail */}
       <div className="sm:w-52 shrink-0 flex flex-col gap-3 order-2 sm:order-1">
         <button
           onClick={() => onAddNote(focusDate)}
@@ -14795,14 +14785,6 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
         >
           <Plus size={15} /> Create
         </button>
-        <MiniMonthCalendar
-          cursor={miniCursor}
-          onPrevMonth={() => setMiniCursor((c) => { const d = new Date(c.year, c.month - 1, 1); return { year: d.getFullYear(), month: d.getMonth() }; })}
-          onNextMonth={() => setMiniCursor((c) => { const d = new Date(c.year, c.month + 1, 1); return { year: d.getFullYear(), month: d.getMonth() }; })}
-          selectedDate={viewMode === "month" ? null : focusDate}
-          onSelectDate={handleMiniSelect}
-          eventsByDate={eventsByDate}
-        />
         <div className="border border-stone-300 rounded-2xl p-3 bg-white">
           <label className="cs-t11 font-semibold text-stone-500 mb-1.5 block">Sync to your calendar app</label>
           <select onChange={handleExport} defaultValue="" className="w-full border border-stone-200 rounded-xl px-2 py-2 text-xs outline-none focus:border-emerald-700">
@@ -14815,8 +14797,8 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
 
       {/* Main calendar surface */}
       <div className="flex-1 min-w-0 order-1 sm:order-2">
-        <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="grid grid-cols-[1fr_auto] items-center gap-2 mb-4">
+          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
             <button onClick={goToday} className="px-3 py-1.5 rounded-full border border-stone-300 text-xs font-semibold text-stone-600 hover:bg-stone-100">
               Today
             </button>
@@ -14826,9 +14808,11 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
             <button onClick={goNext} aria-label="Next" className="w-8 h-8 rounded-full hover:bg-stone-100 flex items-center justify-center text-stone-500">
               <ChevronRight size={18} />
             </button>
-            <p className="font-bold text-stone-800 ml-1" style={displayFont}>{headerLabel}</p>
+            <p className="font-bold text-stone-800 ml-1 truncate" style={displayFont}>{headerLabel}</p>
           </div>
-          <div className="relative">
+          {/* Its own grid column, so it stays planted top-right no matter how
+              long the date label gets across Month/Week/Day/Year. */}
+          <div className="relative shrink-0 justify-self-end">
             <button
               onClick={() => setViewMenuOpen((v) => !v)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-stone-300 text-xs font-semibold text-stone-600 hover:bg-stone-100"
@@ -14853,6 +14837,10 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
             )}
           </div>
         </div>
+
+        {viewMode === "year" && (
+          <YearGridView year={cursor.year} eventsByDate={eventsByDate} onSelectDate={handleYearSelect} />
+        )}
 
         {viewMode === "month" && (
           <div className="border border-stone-300 rounded-2xl overflow-hidden bg-white">
@@ -16292,11 +16280,29 @@ function buildDemoDashboardData() {
   ];
   const products = productDefs.map((p, i) => ({ id: `demo-product-${i}`, shopId: shop.id, name: p.name, price: p.price, unit: p.unit, favoriteCount: 0, shareCount: 0 }));
   const pickProduct = () => products[Math.floor(Math.random() * products.length)];
-  const CITIES = [
-    ["Asheville", "NC"], ["Portland", "OR"], ["Austin", "TX"], ["Boulder", "CO"],
-    ["Burlington", "VT"], ["Ann Arbor", "MI"], ["Santa Fe", "NM"], ["Chapel Hill", "NC"],
-  ];
-  const pickCity = () => CITIES[Math.floor(Math.random() * CITIES.length)];
+  // Three distance tiers around the farm's home base (Asheville, NC) so the
+  // "Where your engagement comes from" dashboard panel reads like a real
+  // local business: most traffic from nearby towns, a speckle from the wider
+  // region, and only a trickle from truly far-off cities.
+  const LOCAL_CITIES = [
+    ["Asheville", "NC"], ["Black Mountain", "NC"], ["Weaverville", "NC"], ["Fletcher", "NC"],
+    ["Hendersonville", "NC"], ["Waynesville", "NC"], ["Mars Hill", "NC"], ["Fairview", "NC"],
+  ]; // all within ~50 miles of the shop
+  const REGIONAL_CITIES = [
+    ["Boone", "NC"], ["Greenville", "SC"], ["Spartanburg", "SC"], ["Knoxville", "TN"],
+    ["Johnson City", "TN"], ["Gastonia", "NC"],
+  ]; // roughly 50-100 miles out
+  const FAR_CITIES = [
+    ["Portland", "OR"], ["Austin", "TX"], ["Boulder", "CO"], ["Burlington", "VT"],
+    ["Ann Arbor", "MI"], ["Santa Fe", "NM"], ["Chapel Hill", "NC"], ["Chicago", "IL"],
+    ["Seattle", "WA"], ["Denver", "CO"],
+  ]; // well past 100 miles — sparse, one-off visitors
+  const pickCity = () => {
+    const r = Math.random();
+    if (r < 0.68) return LOCAL_CITIES[Math.floor(Math.random() * LOCAL_CITIES.length)];
+    if (r < 0.9) return REGIONAL_CITIES[Math.floor(Math.random() * REGIONAL_CITIES.length)];
+    return FAR_CITIES[Math.floor(Math.random() * FAR_CITIES.length)];
+  };
   const shoppers = Array.from({ length: 480 }, (_, i) => `demo-shopper-${i}`);
   const pickShopper = () => shoppers[Math.floor(Math.random() * shoppers.length)];
   const repeatCustomers = shoppers.slice(0, 160);
