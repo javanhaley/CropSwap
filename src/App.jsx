@@ -12733,28 +12733,62 @@ function bucketLabelFor(ts, granularity) {
 }
 // Index-based bucketing (not calendar week-of-year) so it never has to worry
 // about year-boundary edge cases — just even slices of the selected range.
-// Buckets are anchored to `nowMs` and built BACKWARD, so the newest (last)
-// bucket is always one full, uncropped step ending exactly at now — never a
-// short trailing sliver. If the range doesn't divide evenly into whole
-// steps, the leftover falls on the OLDEST (first) bucket instead, which is
-// buried in history nobody's reading a trend off of. Before this, the last
-// bucket got whatever days were left over (as little as a few days out of a
-// 30-day step), which under-counted real, recent activity and made charts
-// look like they nosedived right at "today" when nothing had actually
-// dropped — see bucketStartFor below.
+// Buckets are built BACKWARD from the END OF TODAY, so the newest (last)
+// bucket is always one full, uncropped step — never a short trailing sliver.
+// If the range doesn't divide evenly into whole steps, the leftover falls on
+// the OLDEST (first) bucket instead, which is buried in history nobody's
+// reading a trend off of. Before this, the last bucket got whatever days were
+// left over (as little as a few days out of a 30-day step), which under-counted
+// real, recent activity and made charts look like they nosedived right at
+// "today" when nothing had actually dropped.
+//
+// Anchoring to LOCAL MIDNIGHT (rather than to the current clock time) is what
+// makes a bucket labeled "Aug 8" actually contain Aug 8's events. Every step
+// size below is a whole number of days, so a midnight anchor guarantees that
+// any two events on the same calendar day land in the SAME bucket at EVERY
+// granularity. Anchoring at the current time-of-day instead used to slice each
+// bucket mid-morning, which split a single day across two buckets: a campaign's
+// spend (recorded at its exact start instant) landed in one bucket while the
+// clicks it drove hours later that same day landed in the next one, so the
+// sponsored-ads chart drew the spend spike a full bar before the click surge it
+// caused. Note also that the range is half-open — [start, start + step) — so an
+// event falling exactly on a boundary belongs to the bucket that boundary
+// STARTS, not the one it ends; getting that backwards shifted any event landing
+// precisely on a step edge one whole bucket into the past.
+const BUCKET_STEP_MS = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 };
+function bucketStepMs(granularity) {
+  return BUCKET_STEP_MS[granularity] || 86400000;
+}
+// Local midnight at the start of whatever day `ts` falls on.
+function startOfLocalDay(ts) {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+// Exclusive upper edge of the newest bucket: the end of the day `nowMs` falls
+// on, local time. When `nowMs` is already exactly a local midnight it IS an
+// exclusive end (the "Pick a month…" dropdown passes the 1st of the following
+// month), so it's used as-is rather than tacking on a stray extra day.
+function bucketAnchorEnd(nowMs) {
+  const dayStart = startOfLocalDay(nowMs);
+  return dayStart === nowMs ? nowMs : dayStart + 86400000;
+}
+function bucketCountFor(granularity, sinceMs, nowMs) {
+  return Math.max(1, Math.ceil((bucketAnchorEnd(nowMs) - sinceMs) / bucketStepMs(granularity)));
+}
 function bucketStartFor(i, bucketCount, granularity, sinceMs, nowMs) {
-  const stepMs = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 }[granularity] || 86400000;
   if (i === 0) return sinceMs; // oldest bucket absorbs any leftover span
-  return nowMs - (bucketCount - i) * stepMs;
+  return bucketAnchorEnd(nowMs) - (bucketCount - i) * bucketStepMs(granularity);
 }
 function bucketIndexFor(t, bucketCount, granularity, nowMs) {
-  const stepMs = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 }[granularity] || 86400000;
-  const stepsFromNow = Math.floor((nowMs - t) / stepMs);
-  return clamp(bucketCount - 1 - stepsFromNow, 0, bucketCount - 1);
+  const stepMs = bucketStepMs(granularity);
+  // -1 keeps the range half-open: a timestamp sitting exactly on a boundary
+  // counts toward the bucket that boundary opens, not the one it closes.
+  const stepsFromEnd = Math.floor((bucketAnchorEnd(nowMs) - 1 - t) / stepMs);
+  return clamp(bucketCount - 1 - stepsFromEnd, 0, bucketCount - 1);
 }
 function bucketSeries(events, granularity, sinceMs, nowMs) {
-  const stepMs = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 }[granularity] || 86400000;
-  const bucketCount = Math.max(1, Math.ceil((nowMs - sinceMs) / stepMs));
+  const bucketCount = bucketCountFor(granularity, sinceMs, nowMs);
   const buckets = Array.from({ length: bucketCount }, (_, i) => {
     const at = bucketStartFor(i, bucketCount, granularity, sinceMs, nowMs);
     return { key: i, label: bucketLabelFor(at, granularity), count: 0, at };
@@ -12771,8 +12805,7 @@ function bucketSeries(events, granularity, sinceMs, nowMs) {
 // chart. getTime/getValue let it work on plain order records, not just
 // analytics_events rows.
 function bucketValueSeries(items, granularity, sinceMs, nowMs, getTime, getValue) {
-  const stepMs = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 }[granularity] || 86400000;
-  const bucketCount = Math.max(1, Math.ceil((nowMs - sinceMs) / stepMs));
+  const bucketCount = bucketCountFor(granularity, sinceMs, nowMs);
   const buckets = Array.from({ length: bucketCount }, (_, i) => {
     const at = bucketStartFor(i, bucketCount, granularity, sinceMs, nowMs);
     return { key: i, label: bucketLabelFor(at, granularity), value: 0, at };
@@ -16403,16 +16436,24 @@ function buildDemoDashboardData() {
   // Spend climbs sharply for the most recent campaigns — the "decided to
   // put real money behind ads these last couple months" story — while the
   // older ones stay modest test-the-waters amounts.
+  //
+  // Campaign days are snapped to local midnight rather than left at "now
+  // minus N days" (which carries the current clock time). A campaign's spend
+  // is recorded at its exact start instant, while the clicks it drives are
+  // spread across that day's waking hours — so unless the start sits at a day
+  // boundary, the two can straddle a bucket edge and the chart draws the spend
+  // spike a bar away from the click surge it caused. See bucketAnchorEnd.
+  const campaignDay = (daysAgo) => startOfLocalDay(now - daysAgo * DAY);
   const campaigns = [
-    { id: "demo-camp-0", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 60, tagline: "Peak-season tomatoes", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 3 * DAY, endsAt: now + 4 * DAY, createdAt: now - 3 * DAY },
-    { id: "demo-camp-1", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 45, tagline: "Local honey harvest", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 20 * DAY, endsAt: now - 13 * DAY, createdAt: now - 20 * DAY },
-    { id: "demo-camp-2", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 35, tagline: "Sweet corn season", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 50 * DAY, endsAt: now - 43 * DAY, createdAt: now - 50 * DAY },
-    { id: "demo-camp-3", shopId: shop.id, productId: products[0].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Tomato relaunch", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 85 * DAY, endsAt: now - 78 * DAY, createdAt: now - 85 * DAY },
-    { id: "demo-camp-4", shopId: shop.id, productId: products[4].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Strawberry jam push", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 125 * DAY, endsAt: now - 118 * DAY, createdAt: now - 125 * DAY },
-    { id: "demo-camp-5", shopId: shop.id, productId: products[1].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Fresh eggs feature", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 195 * DAY, endsAt: now - 188 * DAY, createdAt: now - 195 * DAY },
-    { id: "demo-camp-6", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 12, tagline: "Corn comeback", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 330 * DAY, endsAt: now - 323 * DAY, createdAt: now - 330 * DAY },
-    { id: "demo-camp-7", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 12, tagline: "Honey harvest replay", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 480 * DAY, endsAt: now - 473 * DAY, createdAt: now - 480 * DAY },
-    { id: "demo-camp-8", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 10, tagline: "Season opener", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 630 * DAY, endsAt: now - 623 * DAY, createdAt: now - 630 * DAY },
+    { id: "demo-camp-0", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 60, tagline: "Peak-season tomatoes", cardLast4: "", paymentType: "card", status: "active", startedAt: campaignDay(3), endsAt: campaignDay(-4), createdAt: campaignDay(3) },
+    { id: "demo-camp-1", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 45, tagline: "Local honey harvest", cardLast4: "", paymentType: "card", status: "active", startedAt: campaignDay(20), endsAt: campaignDay(13), createdAt: campaignDay(20) },
+    { id: "demo-camp-2", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 35, tagline: "Sweet corn season", cardLast4: "", paymentType: "card", status: "active", startedAt: campaignDay(50), endsAt: campaignDay(43), createdAt: campaignDay(50) },
+    { id: "demo-camp-3", shopId: shop.id, productId: products[0].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Tomato relaunch", cardLast4: "", paymentType: "card", status: "active", startedAt: campaignDay(85), endsAt: campaignDay(78), createdAt: campaignDay(85) },
+    { id: "demo-camp-4", shopId: shop.id, productId: products[4].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Strawberry jam push", cardLast4: "", paymentType: "card", status: "active", startedAt: campaignDay(125), endsAt: campaignDay(118), createdAt: campaignDay(125) },
+    { id: "demo-camp-5", shopId: shop.id, productId: products[1].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Fresh eggs feature", cardLast4: "", paymentType: "card", status: "active", startedAt: campaignDay(195), endsAt: campaignDay(188), createdAt: campaignDay(195) },
+    { id: "demo-camp-6", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 12, tagline: "Corn comeback", cardLast4: "", paymentType: "card", status: "active", startedAt: campaignDay(330), endsAt: campaignDay(323), createdAt: campaignDay(330) },
+    { id: "demo-camp-7", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 12, tagline: "Honey harvest replay", cardLast4: "", paymentType: "card", status: "active", startedAt: campaignDay(480), endsAt: campaignDay(473), createdAt: campaignDay(480) },
+    { id: "demo-camp-8", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 10, tagline: "Season opener", cardLast4: "", paymentType: "card", status: "active", startedAt: campaignDay(630), endsAt: campaignDay(623), createdAt: campaignDay(630) },
   ];
 
   // --- Sponsored-click shape: "rocket up, then drop off immediately" —
@@ -16454,7 +16495,10 @@ function buildDemoDashboardData() {
     const decayDays = 2;
     const newFloor = Math.max(priorFloor, peak * 0.08);
     const product = products.find((p) => p.id === c.productId);
-    for (let t = c.startedAt; t < attributionEnd; t += DAY) {
+    // Re-snapped to local midnight each step rather than just adding a fixed
+    // 24h, so a daylight-saving shift can't drift the day boundary an hour and
+    // let a late-evening click spill into the next calendar day's bucket.
+    for (let t = startOfLocalDay(c.startedAt); t < attributionEnd; t = startOfLocalDay(t + DAY + 3600000)) {
       let rate;
       if (t <= holdEnd) {
         rate = peak;
@@ -16465,7 +16509,10 @@ function buildDemoDashboardData() {
       }
       const n = poissonish(rate);
       for (let i = 0; i < n; i++) {
-        const ts = timeOfDayMs(t);
+        // timeOfDayMs spreads clicks across that day's waking hours; because
+        // `t` is a true local midnight it can only ever land inside that same
+        // calendar day, which is what keeps them in the spend's own bucket.
+        const ts = Math.min(timeOfDayMs(t), now);
         pushEvent("view_product", ts, { entity_id: product.id, entity_name: product.name });
         sponsoredClickLog.push({ event_type: "view_product", entity_id: product.id, entity_name: product.name, created_at: new Date(ts).toISOString() });
       }
