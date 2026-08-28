@@ -16283,14 +16283,15 @@ function buildDemoDashboardData() {
     { id: "demo-camp-8", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 10, tagline: "Season opener", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 630 * DAY, endsAt: now - 623 * DAY, createdAt: now - 630 * DAY },
   ];
 
-  // --- Sponsored-click shape: a campaign doesn't switch clicks on and off
-  // like a light switch. Each one ramps up, holds near a peak while it
-  // runs, then decays over a few weeks to a new floor that's HIGHER than
-  // before it ran (some of the interest sticks) — never back to zero. Each
-  // product's floor only ratchets up across its own campaign history, and
-  // — matching "decided to spend a lot more these last couple months" —
-  // both the $ amount above and a recency multiplier here make the last
-  // few campaigns land dramatically bigger peaks than the older ones.
+  // --- Sponsored-click shape: "rocket up, then drop off immediately" —
+  // clicks launch to a peak almost the instant a campaign starts, hold
+  // near that peak while it's running, then fall off a cliff right after
+  // it ends, settling at a new floor that's HIGHER than before it ran
+  // (some of the interest sticks) — never back to zero. Each product's
+  // floor only ratchets up across its own campaign history, and — matching
+  // "decided to spend a lot more these last couple months" — both the $
+  // amount above and a recency multiplier here make the last few campaigns
+  // land dramatically bigger peaks than the older ones.
   const productClickFloor = {};
   const campaignsByStart = [...campaigns].sort((a, b) => a.startedAt - b.startedAt);
   campaignsByStart.forEach((c, idx) => {
@@ -16300,14 +16301,17 @@ function buildDemoDashboardData() {
     const recency = clamp(1 - (now - c.startedAt) / (150 * DAY), 0, 1); // ~0 beyond 150 days ago, 1 right now
     const basePeak = 4 + (c.amount / 15) * 3;
     const peak = basePeak * (1 + recency * 2.5);
-    const rampDays = 2;
+    // Launch to peak in a single day — the "rocket" — instead of a
+    // multi-day climb, so the spend's effect reads as immediate.
+    const rampDays = 1;
     const holdEnd = Math.min(c.endsAt, now);
-    // Decay finishes in about a week and a half, well inside the ~3+ week
-    // gap between consecutive campaigns, so clicks visibly drop back down
-    // and sit flat and low before the NEXT campaign's spend is what makes
-    // them spike again — not a slow fade that blurs the two together.
-    const decayDays = 9;
-    const newFloor = Math.max(priorFloor, peak * 0.12);
+    // Decay collapses in about 2 days flat, well inside the ~3+ week gap
+    // between consecutive campaigns, so clicks visibly crash back down
+    // right after the campaign ends and sit flat and low well before the
+    // NEXT campaign's spend is what makes them spike again — a cliff, not
+    // a fade.
+    const decayDays = 2;
+    const newFloor = Math.max(priorFloor, peak * 0.08);
     const product = products.find((p) => p.id === c.productId);
     for (let t = c.startedAt; t < attributionEnd; t += DAY) {
       let rate;
@@ -16316,7 +16320,7 @@ function buildDemoDashboardData() {
       } else if (t <= holdEnd) {
         rate = peak;
       } else if (t <= holdEnd + decayDays * DAY) {
-        rate = newFloor + (peak - newFloor) * Math.exp(-3 * ((t - holdEnd) / (decayDays * DAY)));
+        rate = newFloor + (peak - newFloor) * Math.exp(-5 * ((t - holdEnd) / (decayDays * DAY)));
       } else {
         rate = newFloor;
       }
