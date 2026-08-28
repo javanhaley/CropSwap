@@ -16442,10 +16442,10 @@ function buildDemoDashboardData() {
     const recency = clamp(1 - (now - c.startedAt) / (150 * DAY), 0, 1); // ~0 beyond 150 days ago, 1 right now
     const basePeak = 4 + (c.amount / 15) * 3;
     const peak = basePeak * (1 + recency * 2.5);
-    // Launch to peak in a single day — the "rocket" — instead of a
-    // multi-day climb, so the spend's effect reads as immediate.
-    const rampDays = 1;
     const holdEnd = Math.min(c.endsAt, now);
+    // No ramp-up day: the spend is charged in full the instant a campaign
+    // starts (see the spend series below), so clicks jump straight to peak
+    // that SAME day — no lag between "money goes out" and "clicks go up".
     // Decay collapses in about 2 days flat, well inside the ~3+ week gap
     // between consecutive campaigns, so clicks visibly crash back down
     // right after the campaign ends and sit flat and low well before the
@@ -16456,9 +16456,7 @@ function buildDemoDashboardData() {
     const product = products.find((p) => p.id === c.productId);
     for (let t = c.startedAt; t < attributionEnd; t += DAY) {
       let rate;
-      if (t < c.startedAt + rampDays * DAY) {
-        rate = priorFloor + (peak - priorFloor) * ((t - c.startedAt) / (rampDays * DAY));
-      } else if (t <= holdEnd) {
+      if (t <= holdEnd) {
         rate = peak;
       } else if (t <= holdEnd + decayDays * DAY) {
         rate = newFloor + (peak - newFloor) * Math.exp(-5 * ((t - holdEnd) / (decayDays * DAY)));
@@ -17760,7 +17758,12 @@ function VendorDashboard({ navigate }) {
                       <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} stroke="#a8a29e" width={40} tickFormatter={(v) => `$${v}`} />
                       <Tooltip formatter={(v, name) => (name === "Spend" ? formatMoney(v) : v)} />
                       <Bar yAxisId="left" dataKey="clicks" name="Clicks" fill={DASH_TINTS.blue.bar} radius={[3, 3, 0, 0]} />
-                      <Line yAxisId="right" type="monotone" dataKey="spend" name="Spend" stroke={DASH_TINTS.amber.bar} strokeWidth={2} dot={false} />
+                      {/* "linear" instead of "monotone": a smoothed curve visually
+                          spreads an isolated one-day spend spike across its
+                          neighboring days, making it look like spend and the
+                          click jump don't line up even when they do. Straight
+                          segments keep the spike exactly on the day it happened. */}
+                      <Line yAxisId="right" type="linear" dataKey="spend" name="Spend" stroke={DASH_TINTS.amber.bar} strokeWidth={2} dot={false} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
