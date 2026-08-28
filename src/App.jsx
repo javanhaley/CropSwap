@@ -4532,8 +4532,8 @@ function GlobalStyles() {
          heatmap, so the "why this matters" moment reads as alive rather
          than a static grid of colored squares. */
       @keyframes cs-heat-pulse {
-        0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.55); }
-        50% { box-shadow: 0 0 0 5px rgba(220,38,38,0); }
+        0%, 100% { box-shadow: 0 0 0 0 rgba(153,27,27,0.6); }
+        50% { box-shadow: 0 0 0 5px rgba(153,27,27,0); }
       }
       .cs-heat-peak { animation: cs-heat-pulse 1.8s ease-out infinite; }
       /* Faint paper grain: gives surfaces the tooth of good stock rather than
@@ -12773,20 +12773,20 @@ const DASH_TINTS = {
   amber: { bg: "bg-amber-50", text: "text-amber-700", bar: "#d97706", soft: "bg-amber-50" },
   teal: { bg: "bg-teal-50", text: "text-teal-700", bar: "#0d9488", soft: "bg-teal-50" },
 };
-// Multi-stop "traffic map" gradient (cool blue -> teal -> yellow -> orange ->
-// hot red) for the peak-activity heatmap — a Google Maps traffic / Uber
-// demand-map palette, chosen specifically because a plain two-color fade
-// (the old pale-amber -> rose version) crushes everything that isn't near
-// the single busiest cell into indistinguishable pale mush. Feed it a
-// PERCENTILE rank (see heatmapInsights below), not a raw value ÷ max, so
-// the full color range always gets used regardless of how spiky or flat
-// the underlying distribution is.
+// Multi-stop "traffic map" gradient (cold blue -> green -> yellow -> orange
+// -> dark red) for the peak-activity heatmap — classic aggregate-heatmap
+// styling (think six-weeks-of-response-time heatmaps), chosen specifically
+// because a plain two-color fade (the old pale-amber -> rose version)
+// crushes everything that isn't near the single busiest cell into
+// indistinguishable pale mush. Feed it a PERCENTILE rank (see
+// heatmapInsights below), not a raw value ÷ max, so the full color range
+// always gets used regardless of how spiky or flat the distribution is.
 const HEAT_STOPS = [
-  [59, 130, 246], // blue-500 — quiet
-  [16, 185, 129], // emerald-500
+  [37, 99, 235], // blue-600 — coldest, slowest
+  [34, 197, 94], // green-500
   [250, 204, 21], // yellow-400
   [249, 115, 22], // orange-500
-  [220, 38, 38], // red-600 — peak
+  [153, 27, 27], // red-800 — dark red, busiest
 ];
 // Compact hour-of-day label for the heatmap's header row ("12a", "3a", "6a"...).
 function formatHourShort(h) {
@@ -16091,6 +16091,25 @@ function poissonish(lambda) {
   const spread = Math.sqrt(Math.max(lambda, 0.3));
   return Math.max(0, Math.round(lambda + (Math.random() - 0.5) * 2 * spread));
 }
+// Shopper activity isn't spread evenly across the clock — quiet overnight,
+// warming up through the morning, peaking in the early afternoon, cooling
+// back off through the evening into the next quiet stretch. Feeds directly
+// into the peak-activity heatmap: without this, event timestamps land
+// uniformly across all 24 hours and every hour looks about the same.
+const HOUR_WEIGHTS = [
+  0.1, 0.08, 0.06, 0.05, 0.05, 0.07, 0.12, 0.22, 0.38, 0.58, 0.78, 0.95,
+  1.1, 1.2, 1.25, 1.2, 1.1, 0.95, 0.78, 0.58, 0.4, 0.28, 0.18, 0.13,
+];
+const HOUR_WEIGHT_TOTAL = HOUR_WEIGHTS.reduce((a, b) => a + b, 0);
+function timeOfDayMs(dayStartMs) {
+  let r = Math.random() * HOUR_WEIGHT_TOTAL;
+  let h = 0;
+  for (; h < 23; h++) {
+    if (r < HOUR_WEIGHTS[h]) break;
+    r -= HOUR_WEIGHTS[h];
+  }
+  return dayStartMs + h * 3600000 + Math.random() * 3600000;
+}
 function buildDemoDashboardData() {
   const DAY = 86400000;
   const now = Date.now();
@@ -16187,7 +16206,7 @@ function buildDemoDashboardData() {
 
     const viewsToday = poissonish((RATES.views.min + RATES.views.scale * m) * marketDay);
     for (let i = 0; i < viewsToday; i++) {
-      const t = dayStart + Math.random() * DAY;
+      const t = timeOfDayMs(dayStart);
       if (Math.random() < 0.62) {
         const p = pickProduct();
         pushEvent("view_product", t, { entity_id: p.id, entity_name: p.name });
@@ -16199,16 +16218,16 @@ function buildDemoDashboardData() {
     for (let i = 0; i < favToday; i++) {
       const p = pickProduct();
       p.favoriteCount += 1;
-      pushEvent("favorite", dayStart + Math.random() * DAY, { entity_id: p.id, entity_name: p.name, meta: { kind: "product" } });
+      pushEvent("favorite", timeOfDayMs(dayStart), { entity_id: p.id, entity_name: p.name, meta: { kind: "product" } });
     }
     const shareToday = poissonish((RATES.shares.min + RATES.shares.scale * m) * marketDay);
     for (let i = 0; i < shareToday; i++) {
       const p = pickProduct();
       p.shareCount += 1;
-      pushEvent("share", dayStart + Math.random() * DAY, { entity_id: p.id, entity_name: p.name, meta: { kind: "product" } });
+      pushEvent("share", timeOfDayMs(dayStart), { entity_id: p.id, entity_name: p.name, meta: { kind: "product" } });
     }
     const msgToday = poissonish((RATES.messages.min + RATES.messages.scale * m) * marketDay);
-    for (let i = 0; i < msgToday; i++) pushEvent("message", dayStart + Math.random() * DAY);
+    for (let i = 0; i < msgToday; i++) pushEvent("message", timeOfDayMs(dayStart));
 
     const ordersToday = poissonish((RATES.orders.min + RATES.orders.scale * m) * marketDay);
     for (let o = 0; o < ordersToday; o++) orders.push(makeOrder(dayStart));
@@ -16283,8 +16302,12 @@ function buildDemoDashboardData() {
     const peak = basePeak * (1 + recency * 2.5);
     const rampDays = 2;
     const holdEnd = Math.min(c.endsAt, now);
-    const decayDays = 18;
-    const newFloor = Math.max(priorFloor, peak * 0.25);
+    // Decay finishes in about a week and a half, well inside the ~3+ week
+    // gap between consecutive campaigns, so clicks visibly drop back down
+    // and sit flat and low before the NEXT campaign's spend is what makes
+    // them spike again — not a slow fade that blurs the two together.
+    const decayDays = 9;
+    const newFloor = Math.max(priorFloor, peak * 0.12);
     const product = products.find((p) => p.id === c.productId);
     for (let t = c.startedAt; t < attributionEnd; t += DAY) {
       let rate;
@@ -16299,7 +16322,7 @@ function buildDemoDashboardData() {
       }
       const n = poissonish(rate);
       for (let i = 0; i < n; i++) {
-        pushEvent("view_product", t + Math.random() * DAY, { entity_id: product.id, entity_name: product.name });
+        pushEvent("view_product", timeOfDayMs(t), { entity_id: product.id, entity_name: product.name });
       }
     }
     productClickFloor[c.productId] = newFloor;
@@ -16331,7 +16354,7 @@ function buildDemoDashboardData() {
       if (type === "favorite") p.favoriteCount += 1;
       if (type === "share") p.shareCount += 1;
       const extra = isProductScoped ? { entity_id: p.id, entity_name: p.name, meta: type === "favorite" || type === "share" ? { kind: "product" } : undefined } : {};
-      pushEvent(type, now - Math.random() * 9 * DAY, extra);
+      pushEvent(type, timeOfDayMs(now - Math.floor(Math.random() * 9) * DAY - DAY), extra);
     }
   };
   topUpEvents("view_shop", false);
@@ -17699,13 +17722,13 @@ function VendorDashboard({ navigate }) {
 
         <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4" info="A live traffic map of exactly when shoppers show up, broken out by day of week and hour of day — cool blue is quiet, hot red is your busiest windows. Use it to time new listings and replies for when people are actually looking. Use the tabs below to jump to a specific past month/quarter/year instead.">
           {heatmapInsights.peakLabel ? (
-            <div className="flex items-start gap-2.5 bg-gradient-to-r from-orange-50 to-red-50 border border-orange-200 rounded-xl px-3.5 py-3 mb-4">
-              <Zap size={16} className="text-red-600 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2.5 bg-gradient-to-r from-orange-50 to-red-100 border border-red-200 rounded-xl px-3.5 py-3 mb-4">
+              <Zap size={16} className="text-red-800 shrink-0 mt-0.5" />
               <p className="text-sm text-stone-700 leading-snug">
                 <span className="font-bold text-stone-900">{heatmapInsights.peakLabel}</span> is your single busiest hour
                 {heatmapInsights.peakMultiple ? (
                   <>
-                    {" "}— <span className="font-bold text-red-700">{heatmapInsights.peakMultiple.toFixed(1)}x</span> a typical hour
+                    {" "}— <span className="font-bold text-red-800">{heatmapInsights.peakMultiple.toFixed(1)}x</span> a typical hour
                   </>
                 ) : null}
                 {heatmapInsights.eveningShare >= 30 ? (
@@ -17739,7 +17762,7 @@ function VendorDashboard({ navigate }) {
                       <div
                         key={`${d}-${h}`}
                         title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
-                        className={`rounded-[4px] ${isPeak ? "cs-heat-peak ring-2 ring-red-600" : ""}`}
+                        className={`rounded-[4px] ${isPeak ? "cs-heat-peak ring-2 ring-red-800" : ""}`}
                         style={{ width: 20, height: 20, backgroundColor: v === 0 ? "#f0efec" : dashHeatColor(heatmapInsights.percentile(d, h)) }}
                       />
                     );
