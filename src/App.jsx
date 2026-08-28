@@ -11,7 +11,7 @@ import {
   DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark, Rss,
   Folder, MoreVertical, Inbox, Menu, Tag,
 } from "lucide-react";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend } from "recharts";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend, ComposedChart } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
 // in place of the Claude.ai artifact runtime's sandbox-only implementation.
 import "./storage";
@@ -16030,10 +16030,31 @@ function filterDemoEvents(events, types, sinceMs, untilMs) {
 // dashboard experience, fully interactive, with realistic (fake) numbers
 // instead of a locked "no storefront" empty state. Pure client-side, no
 // network calls; regenerated fresh each time this dashboard mounts.
+// Shapes a day's activity level across the demo shop's whole history: a
+// gentle rise through the "old" era, then a steep power-curve acceleration
+// across the final 5 months so the most recent stretch clearly dwarfs the
+// historical baseline (used to drive "Aug 2026 is the best month ever").
+function growthMultiplier(daysAgo, spanDays) {
+  const monthsAgo = daysAgo / 30;
+  if (monthsAgo >= 5) {
+    const t = 1 - Math.min(1, Math.max(0, (monthsAgo - 5) / (spanDays / 30 - 5)));
+    return 0.3 + 0.35 * t;
+  }
+  const t = 1 - monthsAgo / 5;
+  return 0.65 + 2.85 * Math.pow(Math.max(0, t), 1.7);
+}
+// Poisson-like day-count generator: random count centered on `lambda` with
+// spread proportional to sqrt(lambda) — behaves like Bernoulli trials at low
+// rates but keeps scaling cleanly at the higher rates the growth curve above
+// produces near "today", where a coin-flip-per-day model would cap out.
+function poissonish(lambda) {
+  const spread = Math.sqrt(Math.max(lambda, 0.3));
+  return Math.max(0, Math.round(lambda + (Math.random() - 0.5) * 2 * spread));
+}
 function buildDemoDashboardData() {
   const DAY = 86400000;
   const now = Date.now();
-  const spanDays = 420; // ~14 months, so the "All" range has real depth
+  const spanDays = 730; // 2 years, so the "All" range has real depth
   const createdAt = now - spanDays * DAY;
   const shop = { id: "demo-preview-shop", name: "Sunny Acres Farm", ownerId: "demo-preview-owner", createdAt };
 
@@ -16052,9 +16073,9 @@ function buildDemoDashboardData() {
     ["Burlington", "VT"], ["Ann Arbor", "MI"], ["Santa Fe", "NM"], ["Chapel Hill", "NC"],
   ];
   const pickCity = () => CITIES[Math.floor(Math.random() * CITIES.length)];
-  const shoppers = Array.from({ length: 220 }, (_, i) => `demo-shopper-${i}`);
+  const shoppers = Array.from({ length: 480 }, (_, i) => `demo-shopper-${i}`);
   const pickShopper = () => shoppers[Math.floor(Math.random() * shoppers.length)];
-  const repeatCustomers = shoppers.slice(0, 70);
+  const repeatCustomers = shoppers.slice(0, 160);
 
   const events = [];
   const pushEvent = (type, ts, extra = {}) => {
@@ -16075,13 +16096,56 @@ function buildDemoDashboardData() {
   const orders = [];
   const usedCustomers = new Set();
 
+  // Base + growth-scaled daily rates for each event type, solved so that
+  // (a) lifetime totals land around 3x the flat/linear-growth model this
+  // replaced, and (b) the steep last-5-months acceleration in
+  // growthMultiplier makes recent activity clearly the strongest the shop
+  // has ever seen. Order rate is tuned against an empirical ~$23.7 average
+  // order value so lifetime revenue lands on target too.
+  const RATES = {
+    views: { min: 5.19, scale: 33.21 },
+    favorites: { min: 0.076, scale: 0.786 },
+    shares: { min: 0.009, scale: 0.206 },
+    messages: { min: 0.083, scale: 0.372 },
+    orders: { min: 0.359, scale: 1.59 },
+  };
+
+  const makeOrder = (dayStart) => {
+    const isRepeat = usedCustomers.size > 20 && Math.random() < 0.42;
+    const customerId = isRepeat ? repeatCustomers[Math.floor(Math.random() * repeatCustomers.length)] : `demo-customer-${usedCustomers.size}`;
+    usedCustomers.add(customerId);
+    const itemCount = 1 + Math.floor(Math.random() * 3);
+    const items = Array.from({ length: itemCount }, () => {
+      const p = pickProduct();
+      const qty = 1 + Math.floor(Math.random() * 3);
+      return { id: uid("oi"), inventoryItemId: null, productId: p.id, name: p.name, qty, unit: p.unit, price: p.price };
+    });
+    const pickupMs = dayStart + Math.random() * DAY;
+    return {
+      id: uid("order"),
+      customerName: isRepeat ? `Returning shopper ${customerId.slice(-2)}` : `New shopper ${customerId.slice(-2)}`,
+      customerUserId: customerId,
+      items,
+      pickupDate: dateToYmd(new Date(pickupMs)),
+      pickupTime: "10:00",
+      pickupLocation: "Farmers market booth",
+      notes: "",
+      completed: true,
+      completedAt: pickupMs,
+      archived: false,
+      calendarEventId: null,
+      createdAt: pickupMs - 3600000,
+    };
+  };
+
   for (let d = 0; d < spanDays; d++) {
     const dayStart = createdAt + d * DAY;
-    const growth = Math.min(1, d / 180); // ramps up over ~6 months, then steady
+    const daysAgo = spanDays - 1 - d;
+    const m = growthMultiplier(daysAgo, spanDays);
     const dow = new Date(dayStart).getDay();
     const marketDay = dow === 0 || dow === 6 ? 1.6 : 1; // weekend farmers-market bump
 
-    const viewsToday = Math.max(0, Math.round((4 + growth * 16) * marketDay + (Math.random() * 5 - 2)));
+    const viewsToday = poissonish((RATES.views.min + RATES.views.scale * m) * marketDay);
     for (let i = 0; i < viewsToday; i++) {
       const t = dayStart + Math.random() * DAY;
       if (Math.random() < 0.62) {
@@ -16091,50 +16155,23 @@ function buildDemoDashboardData() {
         pushEvent("view_shop", t);
       }
     }
-
-    if (Math.random() < 500 / spanDays) {
+    const favToday = poissonish((RATES.favorites.min + RATES.favorites.scale * m) * marketDay);
+    for (let i = 0; i < favToday; i++) {
       const p = pickProduct();
       p.favoriteCount += 1;
       pushEvent("favorite", dayStart + Math.random() * DAY, { entity_id: p.id, entity_name: p.name, meta: { kind: "product" } });
     }
-    if (Math.random() < 40 / spanDays) {
+    const shareToday = poissonish((RATES.shares.min + RATES.shares.scale * m) * marketDay);
+    for (let i = 0; i < shareToday; i++) {
       const p = pickProduct();
       p.shareCount += 1;
       pushEvent("share", dayStart + Math.random() * DAY, { entity_id: p.id, entity_name: p.name, meta: { kind: "product" } });
     }
-    if (Math.random() < 0.22 + growth * 0.28) {
-      pushEvent("message", dayStart + Math.random() * DAY);
-    }
+    const msgToday = poissonish((RATES.messages.min + RATES.messages.scale * m) * marketDay);
+    for (let i = 0; i < msgToday; i++) pushEvent("message", dayStart + Math.random() * DAY);
 
-    const ordersToday = Math.random() < (0.55 + growth * 0.75) * marketDay ? 1 : 0;
-    const extraOrder = marketDay > 1 && Math.random() < 0.35 * growth ? 1 : 0;
-    for (let o = 0; o < ordersToday + extraOrder; o++) {
-      const isRepeat = usedCustomers.size > 20 && Math.random() < 0.42;
-      const customerId = isRepeat ? repeatCustomers[Math.floor(Math.random() * repeatCustomers.length)] : `demo-customer-${usedCustomers.size}`;
-      usedCustomers.add(customerId);
-      const itemCount = 1 + Math.floor(Math.random() * 3);
-      const items = Array.from({ length: itemCount }, () => {
-        const p = pickProduct();
-        const qty = 1 + Math.floor(Math.random() * 3);
-        return { id: uid("oi"), inventoryItemId: null, productId: p.id, name: p.name, qty, unit: p.unit, price: p.price };
-      });
-      const pickupMs = dayStart + Math.random() * DAY;
-      orders.push({
-        id: uid("order"),
-        customerName: isRepeat ? `Returning shopper ${customerId.slice(-2)}` : `New shopper ${customerId.slice(-2)}`,
-        customerUserId: customerId,
-        items,
-        pickupDate: dateToYmd(new Date(pickupMs)),
-        pickupTime: "10:00",
-        pickupLocation: "Farmers market booth",
-        notes: "",
-        completed: true,
-        completedAt: pickupMs,
-        archived: false,
-        calendarEventId: null,
-        createdAt: pickupMs - 3600000,
-      });
-    }
+    const ordersToday = poissonish((RATES.orders.min + RATES.orders.scale * m) * marketDay);
+    for (let o = 0; o < ordersToday; o++) orders.push(makeOrder(dayStart));
   }
 
   const reviewBodies = [
@@ -16150,7 +16187,7 @@ function buildDemoDashboardData() {
     "Excellent service, fresh ingredients, and a genuinely friendly farm.",
   ];
   const reviewNames = ["Casey R.", "Morgan T.", "Jordan P.", "Alex M.", "Taylor B.", "Riley S.", "Jamie L.", "Drew K.", "Avery N.", "Quinn D.", "Sydney F.", "Reese H."];
-  const reviews = Array.from({ length: 42 }, (_, i) => {
+  const reviews = Array.from({ length: 74 }, (_, i) => {
     const rating = Math.random() < 0.72 ? 5 : Math.random() < 0.85 ? 4 : 3;
     return {
       id: `demo-review-${i}`,
@@ -16174,12 +16211,66 @@ function buildDemoDashboardData() {
 
   const campaigns = [
     { id: "demo-camp-0", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Peak-season tomatoes", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 3 * DAY, endsAt: now + 4 * DAY, createdAt: now - 3 * DAY },
-    { id: "demo-camp-1", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Local honey harvest", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 30 * DAY, endsAt: now - 23 * DAY, createdAt: now - 30 * DAY },
-    { id: "demo-camp-2", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Sweet corn season", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 70 * DAY, endsAt: now - 63 * DAY, createdAt: now - 70 * DAY },
-    { id: "demo-camp-3", shopId: shop.id, productId: products[0].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Tomato relaunch", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 140 * DAY, endsAt: now - 133 * DAY, createdAt: now - 140 * DAY },
-    { id: "demo-camp-4", shopId: shop.id, productId: products[4].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Strawberry jam push", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 220 * DAY, endsAt: now - 213 * DAY, createdAt: now - 220 * DAY },
-    { id: "demo-camp-5", shopId: shop.id, productId: products[1].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Fresh eggs feature", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 320 * DAY, endsAt: now - 313 * DAY, createdAt: now - 320 * DAY },
+    { id: "demo-camp-1", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Local honey harvest", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 20 * DAY, endsAt: now - 13 * DAY, createdAt: now - 20 * DAY },
+    { id: "demo-camp-2", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Sweet corn season", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 50 * DAY, endsAt: now - 43 * DAY, createdAt: now - 50 * DAY },
+    { id: "demo-camp-3", shopId: shop.id, productId: products[0].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Tomato relaunch", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 85 * DAY, endsAt: now - 78 * DAY, createdAt: now - 85 * DAY },
+    { id: "demo-camp-4", shopId: shop.id, productId: products[4].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Strawberry jam push", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 125 * DAY, endsAt: now - 118 * DAY, createdAt: now - 125 * DAY },
+    { id: "demo-camp-5", shopId: shop.id, productId: products[1].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Fresh eggs feature", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 195 * DAY, endsAt: now - 188 * DAY, createdAt: now - 195 * DAY },
+    { id: "demo-camp-6", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Corn comeback", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 330 * DAY, endsAt: now - 323 * DAY, createdAt: now - 330 * DAY },
+    { id: "demo-camp-7", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Honey harvest replay", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 480 * DAY, endsAt: now - 473 * DAY, createdAt: now - 480 * DAY },
+    { id: "demo-camp-8", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Season opener", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 630 * DAY, endsAt: now - 623 * DAY, createdAt: now - 630 * DAY },
   ];
+
+  // --- Safety net: guarantee the most recent 30 days reads as the strongest
+  // month ever, in every category, rather than trusting the random curve
+  // alone — low-volume categories like shares are noisy enough at this
+  // scale that pure chance can't be relied on to always land that way. ---
+  function windowTotal(list, from, to, getTime) {
+    return list.filter((x) => { const t = getTime(x); return t >= from && t < to; }).length;
+  }
+  function bestPriorMonthTotal(list, getTime) {
+    let best = 0;
+    for (let start = createdAt; start < now - 30 * DAY; start += 30 * DAY) {
+      const total = windowTotal(list, start, start + 30 * DAY, getTime);
+      if (total > best) best = total;
+    }
+    return best;
+  }
+  const evTime = (e) => new Date(e.created_at).getTime();
+  const topUpEvents = (type, isProductScoped) => {
+    const list = events.filter((e) => e.event_type === type);
+    const finalTotal = windowTotal(list, now - 30 * DAY, now, evTime);
+    const priorBest = bestPriorMonthTotal(list, evTime);
+    const targetFinal = Math.ceil(priorBest * 1.25) + 3;
+    for (let i = finalTotal; i < targetFinal; i++) {
+      const p = pickProduct();
+      if (type === "favorite") p.favoriteCount += 1;
+      if (type === "share") p.shareCount += 1;
+      const extra = isProductScoped ? { entity_id: p.id, entity_name: p.name, meta: type === "favorite" || type === "share" ? { kind: "product" } : undefined } : {};
+      pushEvent(type, now - Math.random() * 9 * DAY, extra);
+    }
+  };
+  topUpEvents("view_shop", false);
+  topUpEvents("view_product", true);
+  topUpEvents("favorite", true);
+  topUpEvents("share", true);
+  topUpEvents("message", false);
+
+  const finalOrdersTotal = windowTotal(orders, now - 30 * DAY, now, (o) => o.completedAt);
+  const priorBestOrders = bestPriorMonthTotal(orders, (o) => o.completedAt);
+  const targetFinalOrders = Math.ceil(priorBestOrders * 1.25) + 2;
+  for (let i = finalOrdersTotal; i < targetFinalOrders; i++) {
+    orders.push(makeOrder(now - Math.random() * 9 * DAY));
+  }
+
+  // Also boost the currently-live campaign's product with extra clicks
+  // inside ITS own window, so the sponsored-ads panel's most recent period
+  // reads as strong too.
+  const activeCamp = campaigns[0];
+  for (let i = 0; i < 20; i++) {
+    const activeCampProduct = products.find((p) => p.id === activeCamp.productId);
+    pushEvent("view_product", activeCamp.startedAt + Math.random() * (Math.min(activeCamp.endsAt, now) - activeCamp.startedAt), { entity_id: activeCamp.productId, entity_name: activeCampProduct.name });
+  }
 
   return { shop, products, events, orders, reviews, avgRating, inventory, campaigns };
 }
@@ -16900,6 +16991,13 @@ function VendorDashboard({ navigate }) {
         : bucketValueSeries(myCampaigns, adGranularity, earliestCampaignStart, nowMs, (c) => c.startedAt || c.createdAt || 0, (c) => Number(c.amount) || 0),
     [myCampaigns, adGranularity, earliestCampaignStart, nowMs]
   );
+  // Clicks and spend are bucketed against the exact same granularity/window,
+  // so they always come out as same-length, same-label arrays — safe to zip
+  // together index-by-index into one combined series for a single chart.
+  const sponsoredComboSeries = useMemo(
+    () => sponsoredClicksSeries.map((b, i) => ({ label: b.label, clicks: b.count, spend: sponsoredSpendSeries[i]?.value || 0 })),
+    [sponsoredClicksSeries, sponsoredSpendSeries]
+  );
 
   if (!shop) {
     return (
@@ -17292,8 +17390,10 @@ function VendorDashboard({ navigate }) {
             </button>
           }
         >
-          <div className="grid grid-cols-2 gap-2.5 mb-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3">
             <DigestChip tint="violet" icon={Megaphone} label="Active campaigns" value={activeCampaignsNow.length} />
+            <DigestChip tint="teal" icon={Archive} label="Lifetime campaigns" value={myCampaigns.length} />
+            <DigestChip tint="blue" icon={Target} label="Total clicks" value={sponsoredClicks.length} />
             <DigestChip tint="amber" icon={DollarSign} label="Total ad spend" value={formatMoney(adSpendAllTime)} />
           </div>
           {myCampaigns.length === 0 ? (
@@ -17317,33 +17417,26 @@ function VendorDashboard({ navigate }) {
                 </div>
               </div>
 
-              <p className="cs-t10 text-stone-400 mb-1">Clicks</p>
-              {sponsoredClicksSeries.every((b) => b.count === 0) ? (
-                <p className="text-sm text-stone-400 py-4 text-center mb-3">No listing views recorded during a sponsored window yet.</p>
+              <div className="flex items-center gap-3 mb-1">
+                <span className="flex items-center gap-1 cs-t10 text-stone-400"><span className="w-2 h-2 rounded-sm inline-block" style={{ background: DASH_TINTS.blue.bar }} /> Clicks</span>
+                <span className="flex items-center gap-1 cs-t10 text-stone-400"><span className="w-2 h-2 rounded-full inline-block" style={{ background: DASH_TINTS.amber.bar }} /> Spend</span>
+              </div>
+              {sponsoredComboSeries.every((b) => b.clicks === 0 && b.spend === 0) ? (
+                <p className="text-sm text-stone-400 py-4 text-center">No listing views recorded during a sponsored window yet.</p>
               ) : (
-                <div style={{ width: "100%", height: 150 }} className="mb-4">
+                <div style={{ width: "100%", height: 190 }}>
                   <ResponsiveContainer>
-                    <BarChart data={sponsoredClicksSeries}>
-                      <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(sponsoredClicksSeries.length / 8))} />
-                      <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={30} allowDecimals={false} />
-                      <Tooltip />
-                      <Bar dataKey="count" fill={DASH_TINTS.blue.bar} radius={[3, 3, 0, 0]} />
-                    </BarChart>
+                    <ComposedChart data={sponsoredComboSeries}>
+                      <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(sponsoredComboSeries.length / 8))} />
+                      <YAxis yAxisId="left" tick={{ fontSize: 10 }} stroke="#a8a29e" width={30} allowDecimals={false} />
+                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} stroke="#a8a29e" width={40} tickFormatter={(v) => `$${v}`} />
+                      <Tooltip formatter={(v, name) => (name === "Spend" ? formatMoney(v) : v)} />
+                      <Bar yAxisId="left" dataKey="clicks" name="Clicks" fill={DASH_TINTS.blue.bar} radius={[3, 3, 0, 0]} />
+                      <Line yAxisId="right" type="monotone" dataKey="spend" name="Spend" stroke={DASH_TINTS.amber.bar} strokeWidth={2} dot={false} />
+                    </ComposedChart>
                   </ResponsiveContainer>
                 </div>
               )}
-
-              <p className="cs-t10 text-stone-400 mb-1">Spend</p>
-              <div style={{ width: "100%", height: 150 }}>
-                <ResponsiveContainer>
-                  <BarChart data={sponsoredSpendSeries}>
-                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(sponsoredSpendSeries.length / 8))} />
-                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={36} tickFormatter={(v) => `$${v}`} />
-                    <Tooltip formatter={(v) => formatMoney(v)} />
-                    <Bar dataKey="value" fill={DASH_TINTS.amber.bar} radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
             </>
           )}
         </DashPanel>
