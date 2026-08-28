@@ -12520,16 +12520,6 @@ const PANEL_PERIODS = [
   { id: "1y", label: "1Y" },
   { id: "all", label: "All" },
 ];
-// Bucket size for the "Sponsored ads: clicks & spend" panel — spans the
-// full history of a shop's campaigns (from the earliest campaign's start to
-// now), just re-sliced at a different granularity, independent of every
-// other range/period control on the dashboard.
-const AD_CLICK_GRANULARITIES = [
-  { id: "day", label: "Daily" },
-  { id: "week", label: "Weekly" },
-  { id: "month", label: "Monthly" },
-  { id: "year", label: "Yearly" },
-];
 // Trailing window (not calendar-aligned) for a PANEL_PERIODS preset, or an
 // exact calendar month for a "month:YYYY-MM" id from the month dropdown.
 // `earliestMs` (typically the shop's createdAt) anchors "All" so it doesn't
@@ -12603,16 +12593,35 @@ function bucketLabelFor(ts, granularity) {
 }
 // Index-based bucketing (not calendar week-of-year) so it never has to worry
 // about year-boundary edge cases — just even slices of the selected range.
+// Buckets are anchored to `nowMs` and built BACKWARD, so the newest (last)
+// bucket is always one full, uncropped step ending exactly at now — never a
+// short trailing sliver. If the range doesn't divide evenly into whole
+// steps, the leftover falls on the OLDEST (first) bucket instead, which is
+// buried in history nobody's reading a trend off of. Before this, the last
+// bucket got whatever days were left over (as little as a few days out of a
+// 30-day step), which under-counted real, recent activity and made charts
+// look like they nosedived right at "today" when nothing had actually
+// dropped — see bucketStartFor below.
+function bucketStartFor(i, bucketCount, granularity, sinceMs, nowMs) {
+  const stepMs = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 }[granularity] || 86400000;
+  if (i === 0) return sinceMs; // oldest bucket absorbs any leftover span
+  return nowMs - (bucketCount - i) * stepMs;
+}
+function bucketIndexFor(t, bucketCount, granularity, nowMs) {
+  const stepMs = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 }[granularity] || 86400000;
+  const stepsFromNow = Math.floor((nowMs - t) / stepMs);
+  return clamp(bucketCount - 1 - stepsFromNow, 0, bucketCount - 1);
+}
 function bucketSeries(events, granularity, sinceMs, nowMs) {
   const stepMs = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 }[granularity] || 86400000;
   const bucketCount = Math.max(1, Math.ceil((nowMs - sinceMs) / stepMs));
   const buckets = Array.from({ length: bucketCount }, (_, i) => {
-    const at = sinceMs + i * stepMs;
+    const at = bucketStartFor(i, bucketCount, granularity, sinceMs, nowMs);
     return { key: i, label: bucketLabelFor(at, granularity), count: 0, at };
   });
   events.forEach((e) => {
     const t = new Date(e.created_at).getTime();
-    const idx = clamp(Math.floor((t - sinceMs) / stepMs), 0, bucketCount - 1);
+    const idx = bucketIndexFor(t, bucketCount, granularity, nowMs);
     buckets[idx].count += 1;
   });
   return buckets;
@@ -12625,13 +12634,13 @@ function bucketValueSeries(items, granularity, sinceMs, nowMs, getTime, getValue
   const stepMs = { hour: 3600000, day: 86400000, week: 7 * 86400000, month: 30 * 86400000, year: 365 * 86400000 }[granularity] || 86400000;
   const bucketCount = Math.max(1, Math.ceil((nowMs - sinceMs) / stepMs));
   const buckets = Array.from({ length: bucketCount }, (_, i) => {
-    const at = sinceMs + i * stepMs;
+    const at = bucketStartFor(i, bucketCount, granularity, sinceMs, nowMs);
     return { key: i, label: bucketLabelFor(at, granularity), value: 0, at };
   });
   items.forEach((it) => {
     const t = getTime(it);
     if (t == null) return;
-    const idx = clamp(Math.floor((t - sinceMs) / stepMs), 0, bucketCount - 1);
+    const idx = bucketIndexFor(t, bucketCount, granularity, nowMs);
     buckets[idx].value += getValue(it) || 0;
   });
   return buckets;
@@ -16331,7 +16340,7 @@ function VendorDashboard({ navigate }) {
   const [weekdayPeriod, setWeekdayPeriod] = useState("current");
   // Granularity toggle + fetched click events for the "Sponsored ads:
   // clicks & spend" panel — see the sponsoredClicks memos below.
-  const [adGranularity, setAdGranularity] = useState("day");
+  const [adPeriod, setAdPeriod] = useState("current");
   const [sponsoredClickEvents, setSponsoredClickEvents] = useState([]);
 
   const nowMs = Date.now();
@@ -16976,21 +16985,42 @@ function VendorDashboard({ navigate }) {
       return sponsoredWindows.some((w) => e.entity_id === w.productId && t >= w.from && t <= w.to);
     });
   }, [sponsoredClickEvents, sponsoredWindows]);
-  // Re-sliced by the Daily/Weekly/Monthly/Yearly toggle, spanning every
-  // campaign this shop has ever run.
-  const sponsoredClicksSeries = useMemo(
-    () => (earliestCampaignStart == null ? [] : bucketSeries(sponsoredClicks, adGranularity, earliestCampaignStart, nowMs)),
-    [sponsoredClicks, adGranularity, earliestCampaignStart, nowMs]
-  );
+  // Same This week/1M/6M/1Y/All (+ pick-a-month) window control as every
+  // other chart on this dashboard, instead of a one-off Daily/Weekly/
+  // Monthly/Yearly toggle. "current" spans this shop's whole sponsored
+  // history (from its earliest campaign to now) at an auto-picked
+  // granularity; every other tab reuses the shared panelPeriodWindow logic.
+  // Both click events and the campaign list are already fully loaded
+  // up-front (not range-scoped like the other panels' data), so no extra
+  // fetch is needed when the tab changes — just a different slice of what's
+  // already in memory.
+  const adWindow = useMemo(() => {
+    if (earliestCampaignStart == null) return null;
+    if (adPeriod === "current") {
+      const spanDays = (nowMs - earliestCampaignStart) / 86400000;
+      const granularity = spanDays <= 45 ? "day" : spanDays <= 210 ? "week" : "month";
+      return { sinceMs: earliestCampaignStart, untilMs: nowMs, granularity };
+    }
+    return panelPeriodWindow(adPeriod, nowMs, earliestCampaignStart);
+  }, [adPeriod, earliestCampaignStart, nowMs]);
+  const sponsoredClicksSeries = useMemo(() => {
+    if (!adWindow) return [];
+    const inWindow = sponsoredClicks.filter((e) => {
+      const t = new Date(e.created_at).getTime();
+      return t >= adWindow.sinceMs && t <= adWindow.untilMs;
+    });
+    return bucketSeries(inWindow, adWindow.granularity, adWindow.sinceMs, adWindow.untilMs);
+  }, [sponsoredClicks, adWindow]);
   // Each campaign's full cost, bucketed on the day it started — a lump sum
   // rather than spread across its run, matching how it's actually charged.
-  const sponsoredSpendSeries = useMemo(
-    () =>
-      earliestCampaignStart == null
-        ? []
-        : bucketValueSeries(myCampaigns, adGranularity, earliestCampaignStart, nowMs, (c) => c.startedAt || c.createdAt || 0, (c) => Number(c.amount) || 0),
-    [myCampaigns, adGranularity, earliestCampaignStart, nowMs]
-  );
+  const sponsoredSpendSeries = useMemo(() => {
+    if (!adWindow) return [];
+    const inWindow = myCampaigns.filter((c) => {
+      const t = c.startedAt || c.createdAt || 0;
+      return t >= adWindow.sinceMs && t <= adWindow.untilMs;
+    });
+    return bucketValueSeries(inWindow, adWindow.granularity, adWindow.sinceMs, adWindow.untilMs, (c) => c.startedAt || c.createdAt || 0, (c) => Number(c.amount) || 0);
+  }, [myCampaigns, adWindow]);
   // Clicks and spend are bucketed against the exact same granularity/window,
   // so they always come out as same-length, same-label arrays — safe to zip
   // together index-by-index into one combined series for a single chart.
@@ -17400,23 +17430,6 @@ function VendorDashboard({ navigate }) {
             <p className="text-sm text-stone-400 py-4 text-center">No sponsored campaigns yet — sponsor a listing to see clicks and spend here.</p>
           ) : (
             <>
-              <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
-                <p className="cs-t11 text-stone-400">
-                  {sponsoredClicks.length} click{sponsoredClicks.length === 1 ? "" : "s"} while sponsored, all-time
-                </p>
-                <div className="flex gap-1 bg-stone-100 rounded-full p-1 shrink-0">
-                  {AD_CLICK_GRANULARITIES.map((g) => (
-                    <button
-                      key={g.id}
-                      onClick={() => setAdGranularity(g.id)}
-                      className={`px-2.5 py-1.5 rounded-full text-xs font-semibold transition ${adGranularity === g.id ? "bg-white shadow text-stone-900" : "text-stone-500"}`}
-                    >
-                      {g.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               <div className="flex items-center gap-3 mb-1">
                 <span className="flex items-center gap-1 cs-t10 text-stone-400"><span className="w-2 h-2 rounded-sm inline-block" style={{ background: DASH_TINTS.blue.bar }} /> Clicks</span>
                 <span className="flex items-center gap-1 cs-t10 text-stone-400"><span className="w-2 h-2 rounded-full inline-block" style={{ background: DASH_TINTS.amber.bar }} /> Spend</span>
@@ -17437,6 +17450,7 @@ function VendorDashboard({ navigate }) {
                   </ResponsiveContainer>
                 </div>
               )}
+              <PanelPeriodTabs value={adPeriod} onChange={setAdPeriod} monthOptions={monthOptions} />
             </>
           )}
         </DashPanel>
