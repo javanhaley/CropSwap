@@ -4528,6 +4528,14 @@ function GlobalStyles() {
       .cs-fade-anim { animation: cs-fade-in 0.15s ease-out; }
       .cs-toast-anim { animation: cs-toast-in 0.2s ease-out; }
       .cs-touch-none { touch-action: none; }
+      /* Gentle glowing pulse on the single busiest cell in the peak-activity
+         heatmap, so the "why this matters" moment reads as alive rather
+         than a static grid of colored squares. */
+      @keyframes cs-heat-pulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.55); }
+        50% { box-shadow: 0 0 0 5px rgba(220,38,38,0); }
+      }
+      .cs-heat-peak { animation: cs-heat-pulse 1.8s ease-out infinite; }
       /* Faint paper grain: gives surfaces the tooth of good stock rather than
          flat digital white. Pure CSS, no image request. */
       .cs-paper {
@@ -12765,15 +12773,38 @@ const DASH_TINTS = {
   amber: { bg: "bg-amber-50", text: "text-amber-700", bar: "#d97706", soft: "bg-amber-50" },
   teal: { bg: "bg-teal-50", text: "text-teal-700", bar: "#0d9488", soft: "bg-teal-50" },
 };
-// Warm-gradient interpolation (pale amber -> deep rose) for the peak-activity
-// heatmap, used in place of a single-hue green so busier squares really pop.
+// Multi-stop "traffic map" gradient (cool blue -> teal -> yellow -> orange ->
+// hot red) for the peak-activity heatmap — a Google Maps traffic / Uber
+// demand-map palette, chosen specifically because a plain two-color fade
+// (the old pale-amber -> rose version) crushes everything that isn't near
+// the single busiest cell into indistinguishable pale mush. Feed it a
+// PERCENTILE rank (see heatmapInsights below), not a raw value ÷ max, so
+// the full color range always gets used regardless of how spiky or flat
+// the underlying distribution is.
+const HEAT_STOPS = [
+  [59, 130, 246], // blue-500 — quiet
+  [16, 185, 129], // emerald-500
+  [250, 204, 21], // yellow-400
+  [249, 115, 22], // orange-500
+  [220, 38, 38], // red-600 — peak
+];
+// Compact hour-of-day label for the heatmap's header row ("12a", "3a", "6a"...).
+function formatHourShort(h) {
+  if (h === 0) return "12a";
+  if (h === 12) return "12p";
+  return h < 12 ? `${h}a` : `${h - 12}p`;
+}
 function dashHeatColor(t) {
-  const c1 = [253, 230, 138]; // amber-200
-  const c2 = [225, 29, 72]; // rose-600
   const clamped = Math.max(0, Math.min(1, t));
-  const r = Math.round(c1[0] + (c2[0] - c1[0]) * clamped);
-  const g = Math.round(c1[1] + (c2[1] - c1[1]) * clamped);
-  const b = Math.round(c1[2] + (c2[2] - c1[2]) * clamped);
+  const segments = HEAT_STOPS.length - 1;
+  const pos = clamped * segments;
+  const i = Math.min(segments - 1, Math.floor(pos));
+  const localT = pos - i;
+  const [r1, g1, b1] = HEAT_STOPS[i];
+  const [r2, g2, b2] = HEAT_STOPS[i + 1];
+  const r = Math.round(r1 + (r2 - r1) * localT);
+  const g = Math.round(g1 + (g2 - g1) * localT);
+  const b = Math.round(b1 + (b2 - b1) * localT);
   return `rgb(${r},${g},${b})`;
 }
 // Minimal inline trend sparkline — a handful of numbers rendered as a
@@ -16218,17 +16249,61 @@ function buildDemoDashboardData() {
     { id: "demo-inv-3", name: "Sweet Corn", qty: 40, unit: "dozen", lowStockThreshold: 12, linkedProductId: products[3].id },
   ];
 
+  // Spend climbs sharply for the most recent campaigns — the "decided to
+  // put real money behind ads these last couple months" story — while the
+  // older ones stay modest test-the-waters amounts.
   const campaigns = [
-    { id: "demo-camp-0", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Peak-season tomatoes", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 3 * DAY, endsAt: now + 4 * DAY, createdAt: now - 3 * DAY },
-    { id: "demo-camp-1", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Local honey harvest", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 20 * DAY, endsAt: now - 13 * DAY, createdAt: now - 20 * DAY },
-    { id: "demo-camp-2", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Sweet corn season", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 50 * DAY, endsAt: now - 43 * DAY, createdAt: now - 50 * DAY },
+    { id: "demo-camp-0", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 60, tagline: "Peak-season tomatoes", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 3 * DAY, endsAt: now + 4 * DAY, createdAt: now - 3 * DAY },
+    { id: "demo-camp-1", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 45, tagline: "Local honey harvest", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 20 * DAY, endsAt: now - 13 * DAY, createdAt: now - 20 * DAY },
+    { id: "demo-camp-2", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 35, tagline: "Sweet corn season", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 50 * DAY, endsAt: now - 43 * DAY, createdAt: now - 50 * DAY },
     { id: "demo-camp-3", shopId: shop.id, productId: products[0].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Tomato relaunch", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 85 * DAY, endsAt: now - 78 * DAY, createdAt: now - 85 * DAY },
     { id: "demo-camp-4", shopId: shop.id, productId: products[4].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Strawberry jam push", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 125 * DAY, endsAt: now - 118 * DAY, createdAt: now - 125 * DAY },
     { id: "demo-camp-5", shopId: shop.id, productId: products[1].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Fresh eggs feature", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 195 * DAY, endsAt: now - 188 * DAY, createdAt: now - 195 * DAY },
-    { id: "demo-camp-6", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Corn comeback", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 330 * DAY, endsAt: now - 323 * DAY, createdAt: now - 330 * DAY },
-    { id: "demo-camp-7", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 15, tagline: "Honey harvest replay", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 480 * DAY, endsAt: now - 473 * DAY, createdAt: now - 480 * DAY },
-    { id: "demo-camp-8", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 15, tagline: "Season opener", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 630 * DAY, endsAt: now - 623 * DAY, createdAt: now - 630 * DAY },
+    { id: "demo-camp-6", shopId: shop.id, productId: products[3].id, objective: "reach", rateId: "week", days: 7, amount: 12, tagline: "Corn comeback", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 330 * DAY, endsAt: now - 323 * DAY, createdAt: now - 330 * DAY },
+    { id: "demo-camp-7", shopId: shop.id, productId: products[2].id, objective: "sales", rateId: "week", days: 7, amount: 12, tagline: "Honey harvest replay", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 480 * DAY, endsAt: now - 473 * DAY, createdAt: now - 480 * DAY },
+    { id: "demo-camp-8", shopId: shop.id, productId: products[0].id, objective: "reach", rateId: "week", days: 7, amount: 10, tagline: "Season opener", cardLast4: "", paymentType: "card", status: "active", startedAt: now - 630 * DAY, endsAt: now - 623 * DAY, createdAt: now - 630 * DAY },
   ];
+
+  // --- Sponsored-click shape: a campaign doesn't switch clicks on and off
+  // like a light switch. Each one ramps up, holds near a peak while it
+  // runs, then decays over a few weeks to a new floor that's HIGHER than
+  // before it ran (some of the interest sticks) — never back to zero. Each
+  // product's floor only ratchets up across its own campaign history, and
+  // — matching "decided to spend a lot more these last couple months" —
+  // both the $ amount above and a recency multiplier here make the last
+  // few campaigns land dramatically bigger peaks than the older ones.
+  const productClickFloor = {};
+  const campaignsByStart = [...campaigns].sort((a, b) => a.startedAt - b.startedAt);
+  campaignsByStart.forEach((c, idx) => {
+    const nextSameProduct = campaignsByStart.slice(idx + 1).find((n) => n.productId === c.productId);
+    const attributionEnd = Math.min(nextSameProduct ? nextSameProduct.startedAt : now, now);
+    const priorFloor = productClickFloor[c.productId] || 0.3;
+    const recency = clamp(1 - (now - c.startedAt) / (150 * DAY), 0, 1); // ~0 beyond 150 days ago, 1 right now
+    const basePeak = 4 + (c.amount / 15) * 3;
+    const peak = basePeak * (1 + recency * 2.5);
+    const rampDays = 2;
+    const holdEnd = Math.min(c.endsAt, now);
+    const decayDays = 18;
+    const newFloor = Math.max(priorFloor, peak * 0.25);
+    const product = products.find((p) => p.id === c.productId);
+    for (let t = c.startedAt; t < attributionEnd; t += DAY) {
+      let rate;
+      if (t < c.startedAt + rampDays * DAY) {
+        rate = priorFloor + (peak - priorFloor) * ((t - c.startedAt) / (rampDays * DAY));
+      } else if (t <= holdEnd) {
+        rate = peak;
+      } else if (t <= holdEnd + decayDays * DAY) {
+        rate = newFloor + (peak - newFloor) * Math.exp(-3 * ((t - holdEnd) / (decayDays * DAY)));
+      } else {
+        rate = newFloor;
+      }
+      const n = poissonish(rate);
+      for (let i = 0; i < n; i++) {
+        pushEvent("view_product", t + Math.random() * DAY, { entity_id: product.id, entity_name: product.name });
+      }
+    }
+    productClickFloor[c.productId] = newFloor;
+  });
 
   // --- Safety net: guarantee the most recent 30 days reads as the strongest
   // month ever, in every category, rather than trusting the random curve
@@ -16270,15 +16345,6 @@ function buildDemoDashboardData() {
   const targetFinalOrders = Math.ceil(priorBestOrders * 1.25) + 2;
   for (let i = finalOrdersTotal; i < targetFinalOrders; i++) {
     orders.push(makeOrder(now - Math.random() * 9 * DAY));
-  }
-
-  // Also boost the currently-live campaign's product with extra clicks
-  // inside ITS own window, so the sponsored-ads panel's most recent period
-  // reads as strong too.
-  const activeCamp = campaigns[0];
-  for (let i = 0; i < 20; i++) {
-    const activeCampProduct = products.find((p) => p.id === activeCamp.productId);
-    pushEvent("view_product", activeCamp.startedAt + Math.random() * (Math.min(activeCamp.endsAt, now) - activeCamp.startedAt), { entity_id: activeCamp.productId, entity_name: activeCampProduct.name });
   }
 
   return { shop, products, events, orders, reviews, avgRating, inventory, campaigns };
@@ -16635,7 +16701,35 @@ function VendorDashboard({ navigate }) {
     });
     return grid;
   }, [heatmapEventsSource]);
-  const heatmapMax = useMemo(() => Math.max(1, ...heatmap.flat()), [heatmap]);
+  // Turns the raw 7x24 grid into the actual story: a percentile rank per
+  // cell — computed among the NONZERO cells only, so a true dead hour still
+  // reads as flat gray while every cell that saw any activity gets spread
+  // across the full cold-to-hot color range, however lopsided the week
+  // actually is — plus the single busiest/quietest hours in plain language
+  // and a headline stat, so this panel answers "why does this matter" and
+  // "what do I do about it" instead of just showing a colored grid.
+  const heatmapInsights = useMemo(() => {
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const formatHour = (h) => (h === 0 ? "12am" : h < 12 ? `${h}am` : h === 12 ? "12pm" : `${h - 12}pm`);
+    const cells = [];
+    heatmap.forEach((row, d) => row.forEach((v, h) => cells.push({ d, h, v })));
+    const total = cells.reduce((s, c) => s + c.v, 0);
+    const mean = total / cells.length;
+    const nonZero = cells.filter((c) => c.v > 0).sort((a, b) => a.v - b.v);
+    const rankOf = new Map();
+    nonZero.forEach((c, i) => rankOf.set(`${c.d}-${c.h}`, nonZero.length > 1 ? i / (nonZero.length - 1) : 1));
+    const percentile = (d, h) => rankOf.get(`${d}-${h}`) ?? 0;
+    const peak = nonZero.length ? nonZero[nonZero.length - 1] : null;
+    const eveningTotal = cells.filter((c) => c.h >= 17 && c.h <= 21).reduce((s, c) => s + c.v, 0);
+    const eveningShare = total > 0 ? Math.round((eveningTotal / total) * 100) : 0;
+    return {
+      percentile,
+      peakCell: peak,
+      peakLabel: peak ? `${dayNames[peak.d]} ${formatHour(peak.h)}` : null,
+      peakMultiple: peak && mean > 0 ? peak.v / mean : null,
+      eveningShare,
+    };
+  }, [heatmap]);
 
   const platformAvgRating = useMemo(() => {
     const rated = (shops || []).filter((s) => s.id !== shop?.id && s.reviewCount > 0);
@@ -16971,13 +17065,21 @@ function VendorDashboard({ navigate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shop?.id, earliestCampaignStart, isDemo]);
 
-  // Each campaign's own live window (clamped to "now" if it's still
-  // running) — a view only counts as a sponsored click if it landed on that
-  // exact product while that exact campaign was actually live.
-  const sponsoredWindows = useMemo(
-    () => myCampaigns.map((c) => ({ productId: c.productId, from: c.startedAt || c.createdAt || 0, to: Math.min(c.endsAt || nowMs, nowMs) })),
-    [myCampaigns, nowMs]
-  );
+  // Each campaign's attribution window: from when it started until the
+  // NEXT campaign for that same listing begins (or now, if there isn't
+  // one yet) — not just its own run dates. A campaign's lift doesn't
+  // vanish the instant it ends; some of that interest sticks around, so
+  // clicks in the lingering weeks after a campaign still count toward it,
+  // right up until that listing gets sponsored again.
+  const sponsoredWindows = useMemo(() => {
+    const byStart = [...myCampaigns].sort((a, b) => (a.startedAt || a.createdAt || 0) - (b.startedAt || b.createdAt || 0));
+    return byStart.map((c, idx) => {
+      const start = c.startedAt || c.createdAt || 0;
+      const nextSameProduct = byStart.slice(idx + 1).find((n) => n.productId === c.productId);
+      const to = Math.min(nextSameProduct ? nextSameProduct.startedAt || nextSameProduct.createdAt || nowMs : nowMs, nowMs);
+      return { productId: c.productId, from: start, to };
+    });
+  }, [myCampaigns, nowMs]);
   const sponsoredClicks = useMemo(() => {
     if (!sponsoredWindows.length) return [];
     return sponsoredClickEvents.filter((e) => {
@@ -17413,7 +17515,7 @@ function VendorDashboard({ navigate }) {
           title="Sponsored ads: clicks & spend"
           icon={Megaphone}
           className="mb-4"
-          info="Clicks are this shop's own listing views that landed on a product during a window when it was actually being sponsored — not real ad-pixel attribution (CropSwap doesn't yet track ad clicks separately from organic ones), so treat this as a directional read on engagement while each campaign ran, not a precise per-click number. Spend is charged in full on the day each campaign started."
+          info="Clicks are this shop's own listing views credited to a campaign — from when it started through the weeks right after it ended, since interest doesn't vanish the moment a campaign stops, up until that same listing is sponsored again. Not real ad-pixel attribution (CropSwap doesn't yet track ad clicks separately from organic ones), so treat this as a directional read on engagement, not a precise per-click number. Spend is charged in full on the day each campaign started."
           right={
             <button onClick={() => navigate(isDemo ? { screen: "store" } : { screen: "ads" })} className="text-xs font-bold text-emerald-800 shrink-0">
               Manage ads →
@@ -17595,34 +17697,65 @@ function VendorDashboard({ navigate }) {
           </div>
         </DashPanel>
 
-        <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4" info="A heatmap of exactly when shoppers view you, broken out by day of week and hour of day — warmer, redder squares are busier. Great for timing new posts. Use the tabs below to jump to a specific past month/quarter/year instead.">
-          <div className="overflow-x-auto">
-            <div className="inline-grid gap-[2px] items-center" style={{ gridTemplateColumns: "26px repeat(24, 14px)" }}>
+        <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4" info="A live traffic map of exactly when shoppers show up, broken out by day of week and hour of day — cool blue is quiet, hot red is your busiest windows. Use it to time new listings and replies for when people are actually looking. Use the tabs below to jump to a specific past month/quarter/year instead.">
+          {heatmapInsights.peakLabel ? (
+            <div className="flex items-start gap-2.5 bg-gradient-to-r from-orange-50 to-red-50 border border-orange-200 rounded-xl px-3.5 py-3 mb-4">
+              <Zap size={16} className="text-red-600 shrink-0 mt-0.5" />
+              <p className="text-sm text-stone-700 leading-snug">
+                <span className="font-bold text-stone-900">{heatmapInsights.peakLabel}</span> is your single busiest hour
+                {heatmapInsights.peakMultiple ? (
+                  <>
+                    {" "}— <span className="font-bold text-red-700">{heatmapInsights.peakMultiple.toFixed(1)}x</span> a typical hour
+                  </>
+                ) : null}
+                {heatmapInsights.eveningShare >= 30 ? (
+                  <>
+                    . Evenings (5–9pm) alone bring in <span className="font-bold text-stone-900">{heatmapInsights.eveningShare}%</span> of all views in this range
+                  </>
+                ) : null}
+                . <span className="font-semibold">New listings and replies land hardest right before that window</span> — post and reply then, not into the quiet hours.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-stone-400 py-4 text-center">Not enough activity yet to spot a pattern — check back after a few visits.</p>
+          )}
+
+          <div className="overflow-x-auto pb-1">
+            <div className="inline-grid gap-[3px] items-center" style={{ gridTemplateColumns: "30px repeat(24, 20px)" }}>
               <div />
               {Array.from({ length: 24 }, (_, h) => (
                 <div key={`hh-${h}`} className="text-center text-stone-400 leading-none" style={{ fontSize: 8 }}>
-                  {h}
+                  {h % 3 === 0 ? formatHourShort(h) : ""}
                 </div>
               ))}
               {heatmap.map((row, d) => (
                 <React.Fragment key={d}>
-                  <div className="text-right pr-1 text-stone-400 leading-none" style={{ fontSize: 9 }}>
+                  <div className="text-right pr-1.5 text-stone-500 font-semibold leading-none" style={{ fontSize: 10 }}>
                     {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}
                   </div>
-                  {row.map((v, h) => (
-                    <div
-                      key={`${d}-${h}`}
-                      title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
-                      className="rounded-sm"
-                      style={{ width: 12, height: 12, backgroundColor: v === 0 ? "#f5f5f4" : dashHeatColor(v / heatmapMax) }}
-                    />
-                  ))}
+                  {row.map((v, h) => {
+                    const isPeak = heatmapInsights.peakCell && heatmapInsights.peakCell.d === d && heatmapInsights.peakCell.h === h;
+                    return (
+                      <div
+                        key={`${d}-${h}`}
+                        title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
+                        className={`rounded-[4px] ${isPeak ? "cs-heat-peak ring-2 ring-red-600" : ""}`}
+                        style={{ width: 20, height: 20, backgroundColor: v === 0 ? "#f0efec" : dashHeatColor(heatmapInsights.percentile(d, h)) }}
+                      />
+                    );
+                  })}
                 </React.Fragment>
               ))}
             </div>
           </div>
+
+          <div className="flex items-center gap-2 mt-3">
+            <span className="cs-t10 text-stone-400 font-semibold">Quiet</span>
+            <div className="flex-1 h-2 rounded-full" style={{ background: `linear-gradient(to right, ${HEAT_STOPS.map((c) => `rgb(${c.join(",")})`).join(", ")})` }} />
+            <span className="cs-t10 text-stone-400 font-semibold">Peak</span>
+          </div>
+
           <PanelPeriodTabs value={heatmapPeriod} onChange={setHeatmapPeriod} monthOptions={monthOptions} />
-          <p className="cs-t11 text-stone-400 mt-2">Warmer (amber → rose) = busier. Rows are Sun–Sat, columns are every hour of the day (0–23).</p>
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
