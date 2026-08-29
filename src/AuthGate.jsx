@@ -1,9 +1,26 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Sparkles, Loader2, ArrowLeft } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
 const displayFont = { fontFamily: "'Fraunces', serif" };
 const bodyFont = { fontFamily: "'Inter', sans-serif" };
+
+// Supabase's own built-in email sender (the one active until a project adds
+// custom SMTP) shares one very small hourly quota across every auth email —
+// signup confirmations AND password-recovery codes both draw from it. Once
+// that's tripped, the raw error is a blunt "Email rate limit exceeded" that
+// reads like the app is broken rather than "please wait a bit." This turns
+// it into something a person can actually act on, and the resend cooldown
+// below keeps a frustrated retry from digging the hole deeper.
+function friendlyAuthError(err, fallback) {
+  const msg = err?.message || "";
+  if (/rate limit/i.test(msg)) {
+    return "We've sent a lot of emails in a short time and hit a temporary sending limit. Please wait a few minutes before trying again.";
+  }
+  return msg || fallback;
+}
+
+const RESEND_COOLDOWN_SECONDS = 60;
 
 // Sits in front of the app's existing name+avatar Onboarding screen. CropSwap
 // itself never asks for a password — but a deployed, multi-device app needs a
@@ -27,6 +44,17 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Blocks the "Send code" / "Resend code" buttons for a bit after each
+  // attempt — signup confirmation and password recovery draw from the same
+  // shared email quota, so hammering either one just digs the rate limit
+  // deeper. Ticks down once a second while active.
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const cooldownRef = useRef(null);
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    cooldownRef.current = setTimeout(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000);
+    return () => clearTimeout(cooldownRef.current);
+  }, [resendCooldown]);
 
   async function submit(e) {
     e.preventDefault();
@@ -50,6 +78,7 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
         } else {
           setNotice("Check your email to confirm your account, then sign in below.");
           setMode("signin");
+          setResendCooldown(RESEND_COOLDOWN_SECONDS);
         }
       } else {
         const { data, error: err } = await supabase.auth.signInWithPassword({ email, password });
@@ -57,7 +86,8 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
         if (data.session) onSignedIn?.();
       }
     } catch (err) {
-      setError(err?.message || "Something went wrong. Try again.");
+      setError(friendlyAuthError(err, "Something went wrong. Try again."));
+      if (/rate limit/i.test(err?.message || "")) setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } finally {
       setBusy(false);
     }
@@ -65,6 +95,7 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
 
   async function sendResetCode(e) {
     e.preventDefault();
+    if (resendCooldown > 0) return;
     setError("");
     setNotice("");
     setBusy(true);
@@ -75,8 +106,10 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
       if (err) throw err;
       setMode("forgot-verify");
       setNotice(`We sent a 6-digit code to ${email}. Enter it below — it expires shortly, so grab it fresh.`);
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
-      setError(err?.message || "Couldn't send a reset code. Check the email and try again.");
+      setError(friendlyAuthError(err, "Couldn't send a reset code. Check the email and try again."));
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } finally {
       setBusy(false);
     }
@@ -254,11 +287,11 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
             {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || resendCooldown > 0}
               className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition flex items-center justify-center gap-2"
             >
               {busy && <Loader2 size={16} className="animate-spin" />}
-              Send reset code
+              {resendCooldown > 0 ? `Try again in ${resendCooldown}s` : "Send reset code"}
             </button>
           </form>
         )}
@@ -296,6 +329,14 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
             >
               {busy && <Loader2 size={16} className="animate-spin" />}
               Verify code
+            </button>
+            <button
+              type="button"
+              onClick={sendResetCode}
+              disabled={busy || resendCooldown > 0}
+              className="w-full text-center text-xs font-semibold text-emerald-700 hover:text-emerald-800 disabled:text-stone-400 mt-3"
+            >
+              {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Didn't get it? Resend code"}
             </button>
           </form>
         )}
