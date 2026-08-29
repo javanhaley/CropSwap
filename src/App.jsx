@@ -5972,6 +5972,7 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
     { id: "orders", label: "Orders", icon: ClipboardList, screen: "orders", tab: "orders" },
     { id: "orders-calendar", label: "Calendar", icon: Calendar, screen: "orders", tab: "calendar" },
     { id: "orders-inventory", label: "Inventory", icon: Boxes, screen: "orders", tab: "inventory" },
+    { id: "bulkMessaging", label: "Bulk Messaging", icon: Megaphone, screen: "bulkMessaging", gold: true },
     { id: "ads", label: "Sponsored Ads", icon: Megaphone, screen: "ads" },
     // A quick jump straight to the Map view of Explore, not the separate
     // saved-Places screen this used to point to.
@@ -6026,9 +6027,16 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
                 navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen });
                 onClose?.();
               }}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${
+                it.gold
+                  ? isActive ? "bg-amber-100 text-amber-900" : "text-amber-700 hover:bg-amber-50"
+                  : isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"
+              }`}
             >
               <it.icon size={18} /> {it.label}
+              {/* Teases every non-Premium account (and guests) toward the
+                 real Bulk Messaging workspace — see BulkMessagingScreen. */}
+              {it.gold && <Crown size={13} className="ml-auto text-amber-500 shrink-0" />}
             </button>
           );
         })}
@@ -6067,10 +6075,11 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
 
 // Every page in the app, one tap away — reachable from the bottom of every
 // screen (see the "Site map" bar in RootShell) whether or not anyone's
-// signed in. Guests can open all of it: gated screens (Messages, Orders,
+// signed in. Guests can open all of it: gated screens (Messages, Favorites,
 // etc.) fall back to the normal sign-up prompt via `navigate`, while
-// Dashboard in particular shows a full live-sample demo with no account
-// needed — so this is also how a guest finds their way to that.
+// Dashboard, Orders/Calendar/Inventory, and Bulk Messaging each show a full
+// live-sample demo with no account needed — so this is also how a guest
+// finds their way to those.
 const SITE_MAP_ITEMS = [
   { id: "explore", label: "Explore", icon: Home, screen: "explore" },
   { id: "map", label: "Map", icon: MapPin, screen: "explore", isMap: true },
@@ -6081,6 +6090,7 @@ const SITE_MAP_ITEMS = [
   { id: "orders", label: "Orders", icon: ClipboardList, screen: "orders" },
   { id: "calendar", label: "Calendar", icon: Calendar, screen: "orders", tab: "calendar" },
   { id: "inventory", label: "Inventory", icon: Boxes, screen: "orders", tab: "inventory" },
+  { id: "bulkMessaging", label: "Bulk Messaging (live demo)", icon: Megaphone, screen: "bulkMessaging" },
   { id: "ads", label: "Sponsored Ads", icon: Megaphone, screen: "ads" },
   { id: "plans", label: "My Plan", icon: Crown, screen: "plans" },
 ];
@@ -6097,7 +6107,9 @@ function SiteMapModal({ open, onClose, navigate, setExploreView, me, requireAuth
           </button>
         </div>
         <p className="text-xs text-stone-500 mb-4">
-          {me ? "Every page in CropSwap." : "Browse freely — Dashboard shows a live sample so you can see it before creating an account."}
+          {me
+            ? "Every page in CropSwap."
+            : "Browse freely — Dashboard, Orders, and Bulk Messaging all show a live sample so you can see them before creating an account."}
         </p>
         <div className="grid grid-cols-2 gap-2">
           {SITE_MAP_ITEMS.map((it) => (
@@ -10104,7 +10116,7 @@ const MESSAGE_NAV_ITEMS = [
   { id: "trash", label: "Trash", icon: Trash2 },
 ];
 
-function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserAvatar, initialCid }) {
+function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserAvatar, initialCid, navigate }) {
   const {
     me, conversations, ensureConversation, updateMe, showToast, openProfileCard,
     messageLabels, createMessageLabel, renameMessageLabel, deleteMessageLabel,
@@ -10186,6 +10198,7 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
     view === "trash" ? "Trash" :
     view === "scheduled" ? "Scheduled" :
     view === "purchases" ? "Purchases" :
+    view === "bulk" ? "Bulk Messaging" :
     activeLabel ? activeLabel.name : "Messages";
 
   const toggleSelect = (cid) => {
@@ -10450,6 +10463,18 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
               <ShoppingBag size={16} className="shrink-0" /> Purchases
             </button>
           )}
+          {/* Distinct gold styling + a Crown badge — visible to every vendor
+             so free/Basic users get teased by it, but only Premium actually
+             gets the real workspace (see the view === "bulk" branch below). */}
+          <button
+            onClick={() => goToView("bulk")}
+            className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left mt-1 ${
+              view === "bulk" ? "bg-amber-100 text-amber-900" : "text-amber-700 hover:bg-amber-50"
+            }`}
+          >
+            <Megaphone size={16} className="shrink-0" /> Bulk Messaging
+            <Crown size={13} className="ml-auto text-amber-500 shrink-0" />
+          </button>
         </div>
         <div className="px-4 pt-2 pb-1">
           <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Labels</span>
@@ -10489,6 +10514,10 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
 
       {sidebarOpen && <div className="fixed inset-0 bg-black/30 z-10 md:hidden" onClick={() => setSidebarOpen(false)} />}
 
+      {view === "bulk" ? (
+        isPremiumPlan(me) ? <BulkMessagingPanel me={me} navigate={navigate} showToast={showToast} /> : <BulkMessagingPreview navigate={navigate} />
+      ) : (
+      <>
       <div className={`${selectedCid ? "hidden md:flex" : "flex"} w-full md:w-80 shrink-0 flex-col border-r border-stone-200 overflow-y-auto`}>
         <div className="flex items-center gap-2 px-4 pt-4 pb-1">
           <button onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="md:hidden text-stone-500 p-1 -ml-1"><Menu size={18} /></button>
@@ -10727,6 +10756,8 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
         <div className="hidden md:flex flex-1 items-center justify-center text-stone-300">
           <MessageCircle size={48} />
         </div>
+      )}
+      </>
       )}
 
       <MessageActionSheet
@@ -13177,6 +13208,65 @@ function useMailingList(ownerId) {
   return { list, loading, removeSubscriber, reload: load };
 }
 
+// Vendor-organized contact groups for Bulk Messaging — separate from the
+// mailing list itself (which is just "everyone who's ever messaged you").
+// Groups let a Premium vendor save named subsets — "Regulars", "Market day
+// only" — reorder them, rename them, or delete them, persisted the same
+// private per-owner way as the mailing list.
+function useMessageGroups(ownerId) {
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    if (!ownerId) {
+      setGroups([]);
+      setLoading(false);
+      return;
+    }
+    const res = await readJSON(`messageGroups:${ownerId}`, true, []);
+    setGroups(res.ok && Array.isArray(res.value) ? res.value : []);
+    setLoading(false);
+  }, [ownerId]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const persist = useCallback(
+    async (next) => {
+      setGroups(next);
+      await setJSON(`messageGroups:${ownerId}`, next, true);
+    },
+    [ownerId]
+  );
+
+  const createGroup = useCallback(
+    async (name, contactIds = []) => {
+      const group = { id: uid("grp"), name: name.trim(), contactIds, createdAt: Date.now() };
+      await persist([...groups, group]);
+      return group;
+    },
+    [groups, persist]
+  );
+  const renameGroup = useCallback((id, name) => persist(groups.map((g) => (g.id === id ? { ...g, name: name.trim() } : g))), [groups, persist]);
+  const deleteGroup = useCallback((id) => persist(groups.filter((g) => g.id !== id)), [groups, persist]);
+  const setGroupContacts = useCallback((id, contactIds) => persist(groups.map((g) => (g.id === id ? { ...g, contactIds } : g))), [groups, persist]);
+  // Swaps a group with its neighbor in the display order — an up/down
+  // reorder rather than drag-and-drop, so it works identically with touch
+  // and a mouse.
+  const moveGroup = useCallback(
+    (id, direction) => {
+      const idx = groups.findIndex((g) => g.id === id);
+      const swapWith = idx + direction;
+      if (idx < 0 || swapWith < 0 || swapWith >= groups.length) return;
+      const next = groups.slice();
+      [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+      persist(next);
+    },
+    [groups, persist]
+  );
+
+  return { groups, loading, createGroup, renameGroup, deleteGroup, setGroupContacts, moveGroup, reload: load };
+}
+
 // Real in-app broadcast, not outbound SMTP email — deliberately labeled that
 // way in the UI rather than implied, since there's no email provider wired
 // up yet. Every subscriber gets an actual message + notification, today.
@@ -13225,6 +13315,294 @@ function MassMessageComposer({ me, shop, subscribers, onSent, showToast }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// The real Bulk Messaging workspace, reachable from the Messages nav rail —
+// Premium only. Composes one message to any hand-picked selection of
+// mailing-list contacts, or a saved group, and doubles as where those
+// groups get created, renamed, reordered, and deleted.
+function BulkMessagingPanel({ me, navigate, showToast }) {
+  const ownerId = me?.isVendor && me?.shopId ? me.id : null;
+  const mailing = useMailingList(ownerId);
+  const groupsApi = useMessageGroups(ownerId);
+  const [activeGroupId, setActiveGroupId] = useState(null); // null = "All contacts"
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  const contacts = mailing.list;
+  const activeGroup = groupsApi.groups.find((g) => g.id === activeGroupId) || null;
+  const visibleContacts = activeGroup ? contacts.filter((c) => activeGroup.contactIds.includes(c.userId)) : contacts;
+
+  const allVisibleSelected = visibleContacts.length > 0 && visibleContacts.every((c) => selectedIds.has(c.userId));
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleContacts.forEach((c) => next.delete(c.userId));
+      else visibleContacts.forEach((c) => next.add(c.userId));
+      return next;
+    });
+  };
+  const toggleContact = (userId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+
+  const handleCreateGroup = async () => {
+    const name = window.prompt("New group name");
+    if (!name || !name.trim()) return;
+    const group = await groupsApi.createGroup(name, Array.from(selectedIds));
+    setActiveGroupId(group.id);
+    showToast(`Group "${group.name}" created`);
+  };
+  const startRename = (g) => {
+    setRenamingId(g.id);
+    setRenameValue(g.name);
+  };
+  const commitRename = async () => {
+    if (renameValue.trim()) await groupsApi.renameGroup(renamingId, renameValue);
+    setRenamingId(null);
+  };
+  const handleDeleteGroup = async (g) => {
+    if (!window.confirm(`Delete the group "${g.name}"? This won't remove any contacts, just the group.`)) return;
+    await groupsApi.deleteGroup(g.id);
+    if (activeGroupId === g.id) setActiveGroupId(null);
+    showToast("Group deleted");
+  };
+  const handleSaveSelectionToGroup = async () => {
+    if (!activeGroup) return handleCreateGroup();
+    await groupsApi.setGroupContacts(activeGroup.id, Array.from(selectedIds));
+    showToast(`Saved to "${activeGroup.name}"`);
+  };
+
+  const send = async () => {
+    const recipients = contacts.filter((c) => selectedIds.has(c.userId));
+    if (!text.trim() || !recipients.length) return;
+    setSending(true);
+    let ok = 0;
+    for (const r of recipients) {
+      try {
+        const delivered = await deliverBroadcastMessage(me, r.userId, r.name, r.avatar, text.trim());
+        if (delivered) ok++;
+      } catch (e) {
+        console.error("bulk send failed", e);
+      }
+    }
+    setSending(false);
+    setText("");
+    showToast(`Sent to ${ok} contact${ok === 1 ? "" : "s"}`);
+  };
+
+  return (
+    <div className="flex-1 flex overflow-hidden">
+      {/* Groups rail */}
+      <div className="w-56 shrink-0 border-r border-stone-200 overflow-y-auto p-3 hidden sm:flex sm:flex-col">
+        <button
+          onClick={() => setActiveGroupId(null)}
+          className={`flex items-center gap-2 px-3 py-2 rounded-full text-sm font-semibold text-left mb-1 ${!activeGroupId ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"}`}
+        >
+          <Users size={15} className="shrink-0" /> All contacts
+          <span className="ml-auto cs-t10 text-stone-400">{contacts.length}</span>
+        </button>
+        <div className="px-3 pt-3 pb-1">
+          <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Groups</span>
+        </div>
+        <div className="flex flex-col gap-0.5 mb-2">
+          {groupsApi.groups.map((g, i) => (
+            <div key={g.id} className={`group flex items-center gap-1 px-2 py-1.5 rounded-full text-sm font-semibold ${activeGroupId === g.id ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"}`}>
+              {renamingId === g.id ? (
+                <input
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitRename();
+                    if (e.key === "Escape") setRenamingId(null);
+                  }}
+                  className="flex-1 min-w-0 border border-emerald-300 rounded-lg px-1.5 py-0.5 text-sm outline-none"
+                />
+              ) : (
+                <button onClick={() => setActiveGroupId(g.id)} className="flex-1 min-w-0 text-left truncate">
+                  {g.name} <span className="cs-t10 text-stone-400">({g.contactIds.length})</span>
+                </button>
+              )}
+              <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                <button onClick={() => groupsApi.moveGroup(g.id, -1)} disabled={i === 0} aria-label="Move up" className="text-stone-400 hover:text-stone-700 disabled:opacity-20 p-0.5">
+                  <ChevronUp size={13} />
+                </button>
+                <button onClick={() => groupsApi.moveGroup(g.id, 1)} disabled={i === groupsApi.groups.length - 1} aria-label="Move down" className="text-stone-400 hover:text-stone-700 disabled:opacity-20 p-0.5">
+                  <ChevronDown size={13} />
+                </button>
+                <button onClick={() => startRename(g)} aria-label="Rename group" className="text-stone-400 hover:text-emerald-700 p-0.5">
+                  <Pencil size={12} />
+                </button>
+                <button onClick={() => handleDeleteGroup(g)} aria-label="Delete group" className="text-stone-400 hover:text-rose-600 p-0.5">
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={handleCreateGroup} className="flex items-center gap-2 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left">
+          <Plus size={15} className="shrink-0" /> Create group
+        </button>
+      </div>
+
+      {/* Contacts + composer */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="px-4 pt-4 pb-2 border-b border-stone-200">
+          <div className="flex items-center gap-2 mb-1">
+            <Megaphone size={18} className="text-emerald-800" />
+            <h1 className="text-xl font-bold text-stone-900" style={displayFont}>Bulk Messaging</h1>
+            <CrownPill />
+          </div>
+          <p className="cs-t11 text-stone-400">{activeGroup ? activeGroup.name : "All contacts"} · {selectedIds.size} selected of {visibleContacts.length}</p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {contacts.length === 0 ? (
+            <EmptyState icon={Users} title="No contacts yet" body="Anyone who messages your shop is added here automatically — come back once your first message rolls in." />
+          ) : (
+            <>
+              <label className="flex items-center gap-2 mb-2 text-sm font-semibold text-stone-600">
+                <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} className="w-4 h-4 accent-emerald-700" />
+                Select all
+              </label>
+              <div className="space-y-1 mb-4">
+                {visibleContacts.map((c) => (
+                  <label key={c.userId} className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl hover:bg-stone-50 cursor-pointer">
+                    <input type="checkbox" checked={selectedIds.has(c.userId)} onChange={() => toggleContact(c.userId)} className="w-4 h-4 accent-emerald-700 shrink-0" />
+                    <Avatar emoji={c.avatar} name={c.name} size="sm" />
+                    <span className="text-sm font-medium text-stone-700 truncate">{c.name}</span>
+                  </label>
+                ))}
+              </div>
+              <button onClick={handleSaveSelectionToGroup} disabled={selectedIds.size === 0} className="text-xs font-semibold text-emerald-700 disabled:opacity-40 mb-4">
+                {activeGroup ? `Update "${activeGroup.name}" with current selection` : "Save selection as a new group"}
+              </button>
+              <TextField
+                value={text}
+                onChange={setText}
+                multiline
+                rows={3}
+                placeholder="Write your message…"
+                label="Message"
+                className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700 mb-2"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <p className="cs-t11 text-stone-400">Delivered as an in-app message + notification to each selected contact</p>
+                <button
+                  onClick={send}
+                  disabled={sending || !text.trim() || selectedIds.size === 0}
+                  className="bg-emerald-800 text-white text-sm font-semibold px-4 py-2 rounded-full disabled:opacity-40 shrink-0"
+                >
+                  {sending ? "Sending…" : `Send to ${selectedIds.size}`}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Non-Premium (or non-vendor) preview of Bulk Messaging: same shell, sample
+// contacts and groups, wrapped in ToolLock so clicking anything routes to
+// Plans — the same "see it, then unlock it" treatment as My Store's preview.
+function BulkMessagingPreview({ navigate }) {
+  const sampleGroups = [
+    { id: "g1", name: "Regular customers", contactIds: [1, 2, 3] },
+    { id: "g2", name: "Market day only", contactIds: [4, 5] },
+  ];
+  const sampleContacts = [
+    { userId: 1, name: "Maria Alvarez", avatar: "🧑🏽" },
+    { userId: 2, name: "Dwight Combs", avatar: "🧔" },
+    { userId: 3, name: "Priya Nair", avatar: "👩🏾" },
+    { userId: 4, name: "Tom Riley", avatar: "🧑" },
+    { userId: 5, name: "Sam Okafor", avatar: "👨🏿" },
+  ];
+  return (
+    <div className="flex-1 flex overflow-hidden">
+      <ToolLock locked navigate={navigate} label="Premium — Bulk Messaging">
+        <div className="flex flex-1 overflow-hidden">
+          <div className="w-56 shrink-0 border-r border-stone-200 p-3 hidden sm:flex sm:flex-col">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-900 mb-1">
+              <Users size={15} /> All contacts <span className="ml-auto cs-t10 text-stone-400">5</span>
+            </div>
+            <div className="px-3 pt-3 pb-1">
+              <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Groups</span>
+            </div>
+            {sampleGroups.map((g) => (
+              <div key={g.id} className="px-3 py-1.5 rounded-full text-sm font-semibold text-stone-600">
+                {g.name} <span className="cs-t10 text-stone-400">({g.contactIds.length})</span>
+              </div>
+            ))}
+            <div className="flex items-center gap-2 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 mt-1">
+              <Plus size={15} /> Create group
+            </div>
+          </div>
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="px-4 pt-4 pb-2 border-b border-stone-200">
+              <div className="flex items-center gap-2 mb-1">
+                <Megaphone size={18} className="text-emerald-800" />
+                <h1 className="text-xl font-bold text-stone-900" style={displayFont}>Bulk Messaging</h1>
+                <CrownPill />
+              </div>
+              <p className="cs-t11 text-stone-400">All contacts · 0 selected of 5</p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <label className="flex items-center gap-2 mb-2 text-sm font-semibold text-stone-600">
+                <input type="checkbox" readOnly className="w-4 h-4 accent-emerald-700" /> Select all
+              </label>
+              <div className="space-y-1 mb-4">
+                {sampleContacts.map((c) => (
+                  <div key={c.userId} className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl">
+                    <input type="checkbox" readOnly className="w-4 h-4 accent-emerald-700 shrink-0" />
+                    <Avatar emoji={c.avatar} name={c.name} size="sm" />
+                    <span className="text-sm font-medium text-stone-700 truncate">{c.name}</span>
+                  </div>
+                ))}
+              </div>
+              <textarea
+                readOnly
+                value="What's new at your shop?"
+                rows={3}
+                className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none mb-2 resize-none text-stone-400"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <p className="cs-t11 text-stone-400">Delivered as an in-app message + notification to each selected contact</p>
+                <button className="bg-emerald-800 text-white text-sm font-semibold px-4 py-2 rounded-full opacity-60 shrink-0">Send to 0</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </ToolLock>
+    </div>
+  );
+}
+
+// Standalone entry point for Bulk Messaging that does NOT require signing in
+// first — same "show it before you ask for an account" treatment as
+// VendorDashboard's isDemo branch. The nav button inside MessagesView (see
+// the `view === "bulk"` branch there) is how an already-logged-in Premium
+// vendor reaches the real workspace while browsing their inbox; this screen
+// is the separate, ungated front door for everyone else — a visitor or a
+// Basic/Free account — reached from the Sidebar or the Site map without ever
+// having to pass through the (auth-required) Messages inbox at all.
+function BulkMessagingScreen({ navigate }) {
+  const { me, showToast } = useApp();
+  return isPremiumPlan(me) ? (
+    <BulkMessagingPanel me={me} navigate={navigate} showToast={showToast} />
+  ) : (
+    <BulkMessagingPreview navigate={navigate} />
   );
 }
 
@@ -15371,6 +15749,115 @@ function ArchiveTab({ orders, onRestore, onDelete }) {
 // dumped you back on Orders, even if you'd been sitting on Inventory.
 let ordersScreenLastTab = "orders";
 
+// ---------------------------------------------------------------------------
+// Free/Basic preview of Orders/Calendar/Inventory/Archive. These are Premium
+// tools, but instead of a dead-end paywall screen, anyone below Premium —
+// vendor or not, a visitor included — gets the *real* tabs stocked with
+// sample data, dimmed and click-locked with ToolLock exactly like the rest
+// of the app's "give it a taste" previews (see StoreScreen's sample
+// storefront). Clicking anything routes straight to Plans.
+// ---------------------------------------------------------------------------
+function buildOrdersPreviewDemoData() {
+  const today = new Date();
+  const iso = (offset) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() + offset);
+    return d.toISOString().slice(0, 10);
+  };
+  const items = [
+    { id: "prev-item-1", name: "Heirloom Tomatoes", category: "Produce", unit: "lb", qty: 42, lowStockThreshold: 10, price: 3.5, notes: "", linkedProductId: null, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-2", name: "Farm Eggs (dozen)", category: "Dairy & Eggs", unit: "dozen", qty: 6, lowStockThreshold: 8, price: 6, notes: "Low — order more from the coop", linkedProductId: null, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-3", name: "Raw Wildflower Honey", category: "Pantry", unit: "jar", qty: 18, lowStockThreshold: 5, price: 9, notes: "", linkedProductId: null, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-4", name: "Sourdough Loaves", category: "Bakery", unit: "loaf", qty: 0, lowStockThreshold: 4, price: 7.5, notes: "Sold out — bake day is Thursday", linkedProductId: null, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-5", name: "Mixed Salad Greens", category: "Produce", unit: "bag", qty: 27, lowStockThreshold: 10, price: 4.25, notes: "", linkedProductId: null, createdAt: Date.now(), updatedAt: Date.now() },
+  ];
+  const orders = [
+    { id: "prev-order-1", customerName: "Maria Alvarez", customerUserId: null, items: [{ id: "oi1", inventoryItemId: "prev-item-1", productId: null, name: "Heirloom Tomatoes", qty: 3, unit: "lb", price: 3.5 }], pickupDate: iso(0), pickupTime: "16:30", pickupLocation: "Farm stand", notes: "Regular — leave by the cooler if we're out front", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 86400000 },
+    { id: "prev-order-2", customerName: "Dwight Combs", customerUserId: null, items: [{ id: "oi2", inventoryItemId: "prev-item-3", productId: null, name: "Raw Wildflower Honey", qty: 2, unit: "jar", price: 9 }], pickupDate: iso(1), pickupTime: "10:00", pickupLocation: "Farmers market booth", notes: "", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 3600000 },
+    { id: "prev-order-3", customerName: "Priya Nair", customerUserId: null, items: [{ id: "oi3", inventoryItemId: "prev-item-5", productId: null, name: "Mixed Salad Greens", qty: 4, unit: "bag", price: 4.25 }], pickupDate: iso(-1), pickupTime: "14:00", pickupLocation: "Farm stand", notes: "", completed: true, completedAt: Date.now() - 90000000, archived: false, calendarEventId: null, createdAt: Date.now() - 172800000 },
+    { id: "prev-order-4", customerName: "Tom Riley", customerUserId: null, items: [{ id: "oi4", inventoryItemId: "prev-item-4", productId: null, name: "Sourdough Loaves", qty: 2, unit: "loaf", price: 7.5 }], pickupDate: iso(-2), pickupTime: "09:00", pickupLocation: "Farm stand", notes: "Missed pickup window", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 259200000 },
+  ];
+  const events = [
+    { id: "prev-ev-1", title: "Maria Alvarez pickup", date: iso(0), time: "16:30", notes: "Farm stand", orderId: "prev-order-1", kind: "order", reminderMinutesBefore: 60, reminderAt: null, createdAt: Date.now() },
+    { id: "prev-ev-2", title: "Dwight Combs pickup", date: iso(1), time: "10:00", notes: "Farmers market booth", orderId: "prev-order-2", kind: "order", reminderMinutesBefore: 60, reminderAt: null, createdAt: Date.now() },
+    { id: "prev-ev-3", title: "Restock eggs from the coop", date: iso(2), time: "08:00", notes: "", orderId: null, kind: "note", reminderMinutesBefore: null, reminderAt: null, createdAt: Date.now() },
+    { id: "prev-ev-4", title: "Bake day — sourdough", date: iso(4), time: "06:00", notes: "", orderId: null, kind: "note", reminderMinutesBefore: null, reminderAt: null, createdAt: Date.now() },
+    { id: "prev-ev-5", title: "Farmers market day", date: iso(6), time: "08:00", notes: "Downtown market", orderId: null, kind: "note", reminderMinutesBefore: null, reminderAt: null, createdAt: Date.now() },
+  ];
+  return { items, orders, events };
+}
+
+function OrdersPreviewScreen({ navigate, tab, setTab }) {
+  const demo = useMemo(() => buildOrdersPreviewDemoData(), []);
+  const lockNudge = useCallback(() => navigate({ screen: "plans" }), [navigate]);
+  const previewShop = useMemo(() => ({ id: "preview-shop", inventoryEnabled: true, autoOutOfStock: true }), []);
+  const mockOrders = useMemo(
+    () => ({ orders: demo.orders, loading: false, addOrder: lockNudge, updateOrder: lockNudge, removeOrder: lockNudge, archiveOrder: lockNudge, reload: () => {} }),
+    [demo.orders, lockNudge]
+  );
+  const mockInventory = useMemo(
+    () => ({ items: demo.items, log: [], loading: false, addItem: lockNudge, updateItem: lockNudge, removeItem: lockNudge, adjustStock: lockNudge, adjustStockBatch: lockNudge, reload: () => {} }),
+    [demo.items, lockNudge]
+  );
+  const mockCalendar = useMemo(
+    () => ({ events: demo.events, loading: false, addEvent: lockNudge, updateEvent: lockNudge, removeEvent: lockNudge, reload: () => {} }),
+    [demo.events, lockNudge]
+  );
+  const now = Date.now();
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="sticky top-0 bg-white border-b border-stone-200 z-10 px-4 pt-3">
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <div className="flex items-center gap-2 text-emerald-800 font-bold text-lg" style={displayFont}>
+            <ClipboardList size={20} /> Orders
+          </div>
+          <CrownPill />
+        </div>
+        <div className="flex gap-1 overflow-x-auto">
+          {[
+            { id: "orders", label: "Orders", icon: ClipboardList },
+            { id: "calendar", label: "Calendar", icon: Calendar },
+            { id: "inventory", label: "Inventory", icon: Boxes },
+            { id: "archive", label: "Archive", icon: Archive },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold border-b-2 whitespace-nowrap transition ${tab === t.id ? "border-emerald-800 text-emerald-800" : "border-transparent text-stone-400"}`}
+            >
+              <t.icon size={15} /> {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="max-w-3xl mx-auto p-4">
+        <p className="text-stone-500 text-sm mb-4">A preview with sample data — upgrade to Premium to track your own orders, inventory, and calendar.</p>
+        {tab === "orders" && (
+          <ToolLock locked navigate={navigate} label="Premium — track real orders">
+            <OrdersTab orders={mockOrders} now={now} onAddOrder={lockNudge} onEdit={lockNudge} onToggleComplete={lockNudge} onArchive={lockNudge} onDelete={lockNudge} onAddToCalendar={lockNudge} />
+          </ToolLock>
+        )}
+        {tab === "calendar" && (
+          <ToolLock locked navigate={navigate} label="Premium — sync your real calendar">
+            <CalendarTab calendar={mockCalendar} orders={mockOrders} now={now} onAddNote={lockNudge} onOpenEvent={lockNudge} onOpenDay={lockNudge} />
+          </ToolLock>
+        )}
+        {tab === "inventory" && (
+          <ToolLock locked navigate={navigate} label="Premium — track real inventory">
+            <InventoryTab shop={previewShop} patchShop={lockNudge} products={[]} inventory={mockInventory} orders={mockOrders.orders} onAdd={lockNudge} onEdit={lockNudge} />
+          </ToolLock>
+        )}
+        {tab === "archive" && (
+          <ToolLock locked navigate={navigate} label="Premium — keep your real archive">
+            <ArchiveTab orders={mockOrders} onRestore={lockNudge} onDelete={lockNudge} />
+          </ToolLock>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OrdersScreen({ navigate, initialTab }) {
   const { me, shopsById, showToast, products, updateShop, updateProduct } = useApp();
   const [tab, setTabState] = useState(initialTab || ordersScreenLastTab);
@@ -15494,6 +15981,14 @@ function OrdersScreen({ navigate, initialTab }) {
     return () => clearInterval(iv);
   }, [calendar.events, orders.orders, showToast]);
 
+  // Premium gate comes before the vendor/shop checks below — a visitor with
+  // no storefront at all still gets the sample-data preview, not a "become a
+  // vendor first" dead end. Only a Premium account ever reaches the real
+  // vendor/shop checks and the live data beneath them.
+  if (!isPremiumPlan(me)) {
+    return <OrdersPreviewScreen navigate={navigate} tab={tab} setTab={setTab} />;
+  }
+
   if (!me.isVendor || !me.shopId) {
     return (
       <EmptyState
@@ -15505,24 +16000,6 @@ function OrdersScreen({ navigate, initialTab }) {
     );
   }
   if (!shop) return <LoadingScreen inline />;
-
-  const premium = isPremiumPlan(me);
-  if (!premium) {
-    return (
-      <div className="max-w-md mx-auto text-center py-16 px-6">
-        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center mx-auto mb-5">
-          <Crown size={26} />
-        </div>
-        <p className="font-bold text-xl text-stone-800 mb-2" style={displayFont}>Orders is a Premium tool</p>
-        <p className="text-sm text-stone-500 mb-6">
-          Track pickup orders, keep a live inventory, and see a calendar of every pickup — all in one place, built for vendors running a real market schedule.
-        </p>
-        <button onClick={() => navigate({ screen: "plans" })} className="bg-emerald-800 hover:bg-emerald-700 text-white font-semibold px-6 py-3 rounded-full">
-          Upgrade to Premium
-        </button>
-      </div>
-    );
-  }
 
   const patchShop = (partial) => updateShop(shop.id, partial);
 
@@ -18658,7 +19135,11 @@ function Onboarding({ onCreate, reason, onCancel }) {
 // can open it and see the full sample/demo dashboard (see VendorDashboard's
 // isDemo branch) as a Premium selling point. Gating it here would bounce
 // guests straight to a signup card instead of ever showing them that page.
-const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "store", "storeEditor", "places", "checkout", "orders", "ads"]);
+// "orders" and "bulkMessaging" follow the same rule for the same reason: a
+// non-Premium account (Basic, Free, or no account at all) needs to land on
+// the sample-data preview built into OrdersScreen / BulkMessagingScreen, not
+// get bounced to a signup card before ever seeing what Premium unlocks.
+const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "store", "storeEditor", "places", "checkout", "ads"]);
 const AUTH_REASON_BY_SCREEN = {
   favorites: "see your favorites",
   messages: "send and receive messages",
@@ -18666,7 +19147,6 @@ const AUTH_REASON_BY_SCREEN = {
   storeEditor: "edit your storefront",
   places: "save your places",
   checkout: "subscribe to a plan",
-  orders: "manage your orders",
   ads: "sponsor a listing",
 };
 
@@ -19270,6 +19750,7 @@ function RootShell() {
             {route.screen === "favorites" && <FavoritesView />}
             {route.screen === "messages" && (
               <MessagesView
+                navigate={navigate}
                 initialWithUserId={route.withUserId}
                 initialWithUserName={route.withUserName}
                 initialWithUserAvatar={route.withUserAvatar}
@@ -19278,6 +19759,7 @@ function RootShell() {
             )}
             {route.screen === "dashboard" && <VendorDashboard navigate={navigate} />}
             {route.screen === "orders" && <OrdersScreen navigate={navigate} initialTab={route.tab} />}
+            {route.screen === "bulkMessaging" && <BulkMessagingScreen navigate={navigate} />}
             {route.screen === "ads" && <AdsScreen navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
