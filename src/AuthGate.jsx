@@ -163,13 +163,36 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
     }
   }
 
+  // Fixed-credential shortcut for the single internal admin account. Client
+  // JS ships to every visitor's browser, so this is a convenience for a
+  // trusted device, not a real access-control boundary — rotate the
+  // password from the account screen once beta is live, and don't treat
+  // this as secret.
+  async function adminQuickLogin() {
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      const { data, error: err } = await supabase.auth.signInWithPassword({
+        email: "cropswapadmin@gmail.com",
+        password: "Password123$",
+      });
+      if (err) throw err;
+      if (data.session) onSignedIn?.();
+    } catch (err) {
+      setError(friendlyAuthError(err, "Admin sign-in failed — has the admin account been created yet?"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const isForgotFlow = mode.startsWith("forgot-");
 
   return (
     <div className="h-screen w-full flex items-start justify-center bg-stone-50 p-6 pt-10 overflow-y-auto" style={{ ...bodyFont, height: "100dvh" }}>
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-2 text-emerald-800 font-bold text-2xl mb-1 justify-center" style={displayFont}>
-          <Sparkles size={24} /> CropSwap
+        <div className="flex justify-center mb-1">
+          <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-7 w-auto" />
         </div>
         {isForgotFlow ? (
           <p className="text-center text-stone-500 mb-7 text-sm">Reset your password — no need to remember the old one.</p>
@@ -377,9 +400,19 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
         )}
 
         {!isForgotFlow && (
-          <p className="text-center text-[11px] text-stone-400 mt-4">
-            Your name and avatar are set up on the next screen — this just secures your account across devices.
-          </p>
+          <>
+            <p className="text-center text-[11px] text-stone-400 mt-4">
+              Your name and avatar are set up on the next screen — this just secures your account across devices.
+            </p>
+            <button
+              type="button"
+              onClick={adminQuickLogin}
+              disabled={busy}
+              className="block mx-auto mt-3 text-[11px] font-semibold text-stone-300 hover:text-stone-500 transition disabled:opacity-50"
+            >
+              Admin
+            </button>
+          </>
         )}
       </div>
     </div>

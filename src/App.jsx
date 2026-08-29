@@ -2051,6 +2051,29 @@ async function setJSON(key, value, shared, { verify = false, attempts = 3 } = {}
   return false;
 }
 
+// The single hardcoded internal admin account (see AuthGate's "Admin" quick
+// sign-in link). Gates the Admin Dashboard screen and its sidebar entry.
+const ADMIN_EMAIL = "cropswapadmin@gmail.com";
+function isAdminUser(me) {
+  return !!me && me.email === ADMIN_EMAIL;
+}
+
+// Hand-maintained index of every real account. The kv store only supports
+// exact-key lookups (no "list all users" query), so this shared row is kept
+// in sync from createProfile below and is what the Admin Dashboard reads.
+async function appendToAdminUserIndex(profile) {
+  try {
+    const list = await getJSON("admin:userIndex", true, []);
+    const next = [
+      ...list.filter((u) => u.id !== profile.id),
+      { id: profile.id, name: profile.name, email: profile.email, avatar: profile.avatar, createdAt: profile.createdAt },
+    ];
+    await setJSON("admin:userIndex", next, true);
+  } catch (e) {
+    // Best-effort — never block signup over this.
+  }
+}
+
 /* ============================================================================
    SECTION 6: SOUND + SHARE
 ============================================================================ */
@@ -2887,6 +2910,7 @@ function useCurrentUser() {
     };
     await setJSON("me:profile", profile, false);
     await setJSON(`users:${id}`, profile, true);
+    appendToAdminUserIndex(profile);
     meRef.current = profile;
     setMeState(profile);
     const { city, state } = splitCityState(homeLocation?.label);
@@ -5977,6 +6001,7 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
     // A quick jump straight to the Map view of Explore, not the separate
     // saved-Places screen this used to point to.
     { id: "map", label: "Map", icon: MapPin, screen: "explore" },
+    ...(isAdminUser(me) ? [{ id: "admin", label: "Admin", icon: ShieldAlert, screen: "adminDashboard" }] : []),
   ];
   // Orders/Calendar/Inventory all point at the same "orders" screen and are
   // told apart only by which tab they ask for, so the plain screen === id
@@ -5998,12 +6023,11 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
             navigate({ screen: "explore" });
             onClose?.();
           }}
-          className="flex items-center gap-2 text-emerald-800 font-bold text-xl hover:opacity-75 active:opacity-60 transition"
-          style={displayFont}
+          className="flex items-center hover:opacity-75 active:opacity-60 transition"
           aria-label="CropSwap home"
           title="Home"
         >
-          <Sparkles size={22} /> CropSwap
+          <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-6 w-auto" />
         </button>
         {isDrawer && (
           <button onClick={onClose} className="text-stone-400 hover:text-stone-600 p-1" aria-label="Hide sidebar" title="Hide sidebar">
@@ -12293,6 +12317,221 @@ function AdsPreviewScreen({ navigate }) {
 // Guests get the interactive sample-listing sandbox above; anyone signed in
 // falls through to the real AdsScreen, which already has its own "become a
 // vendor first" nudge for a non-vendor account — that part is unchanged.
+function AdminScreenEntry({ navigate }) {
+  const { me } = useApp();
+  if (!isAdminUser(me)) {
+    return (
+      <EmptyState
+        icon={ShieldAlert}
+        title="Admins only"
+        body="This page is restricted to the CropSwap admin account."
+        action={
+          <button onClick={() => navigate({ screen: "explore" })} className="text-sm font-semibold text-emerald-800">
+            Back to Explore
+          </button>
+        }
+      />
+    );
+  }
+  return <AdminDashboardScreen />;
+}
+
+function AdminDashboardScreen() {
+  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState([]);
+  const [shops, setShops] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [sponsorships, setSponsorships] = useState([]);
+  const [busyReportId, setBusyReportId] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [userIndex, market, reportQueue, sponsorList] = await Promise.all([
+      getJSON("admin:userIndex", true, []),
+      getJSON("market:v7", true, { shops: [], products: [] }),
+      getJSON("reports:queue", true, []),
+      getJSON("sponsorships:list", true, []),
+    ]);
+    setUsers(userIndex || []);
+    setShops(market?.shops || []);
+    setProducts(market?.products || []);
+    setReports(reportQueue || []);
+    setSponsorships(sponsorList || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const openReports = reports.filter((r) => r.status !== "resolved");
+  const activeSponsorships = sponsorships.filter((s) => s.status === "active");
+  const totalRevenue = sponsorships.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
+
+  async function resolveReport(reportId) {
+    setBusyReportId(reportId);
+    const next = reports.map((r) => (r.id === reportId ? { ...r, status: "resolved" } : r));
+    setReports(next);
+    await setJSON("reports:queue", next, true, { verify: true });
+    setBusyReportId(null);
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64 text-stone-400">
+        <Loader2 size={22} className="animate-spin" />
+      </div>
+    );
+  }
+
+  const stats = [
+    { label: "Users", value: users.length, icon: Users },
+    { label: "Shops", value: shops.length, icon: Store },
+    { label: "Listings", value: products.length, icon: Package },
+    { label: "Open reports", value: openReports.length, icon: AlertTriangle, alert: openReports.length > 0 },
+  ];
+
+  return (
+    <div className="max-w-5xl mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-stone-900 flex items-center gap-2" style={displayFont}>
+            <ShieldAlert size={22} className="text-emerald-700" /> Admin Dashboard
+          </h1>
+          <p className="text-sm text-stone-500 mt-1">Internal — visible only to the admin account.</p>
+        </div>
+        <button
+          onClick={load}
+          className="text-xs font-semibold text-stone-500 hover:text-stone-700 flex items-center gap-1.5 border border-stone-200 rounded-lg px-3 py-1.5"
+        >
+          <Repeat size={13} /> Refresh
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {stats.map((s) => (
+          <div key={s.label} className={`rounded-2xl border p-4 ${s.alert ? "border-rose-200 bg-rose-50" : "border-stone-200 bg-white"}`}>
+            <div className="flex items-center gap-1.5 text-xs font-bold text-stone-400 uppercase mb-1">
+              <s.icon size={13} /> {s.label}
+            </div>
+            <div className={`text-2xl font-bold ${s.alert ? "text-rose-700" : "text-stone-900"}`}>{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white border border-stone-200 rounded-2xl p-5">
+        <h2 className="font-bold text-stone-900 mb-3">Reports queue</h2>
+        {openReports.length === 0 ? (
+          <p className="text-sm text-stone-400">No open reports. Nice and quiet.</p>
+        ) : (
+          <div className="space-y-2">
+            {openReports.map((r) => (
+              <div key={r.id} className="flex items-start justify-between gap-3 border border-stone-100 rounded-xl p-3">
+                <div className="text-sm">
+                  <p className="font-semibold text-stone-800 capitalize">
+                    {r.type || "report"} — {r.reportedUserName || r.reportedUserId || "unknown"}
+                  </p>
+                  <p className="text-xs text-stone-400 mt-0.5">
+                    Reported {r.createdAt ? timeAgo(r.createdAt) : ""} by {r.reporterId || "unknown"}
+                  </p>
+                </div>
+                <button
+                  disabled={busyReportId === r.id}
+                  onClick={() => resolveReport(r.id)}
+                  className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 shrink-0 disabled:opacity-50"
+                >
+                  Mark resolved
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white border border-stone-200 rounded-2xl p-5">
+        <h2 className="font-bold text-stone-900 mb-3">Sponsored ads revenue</h2>
+        <div className="flex items-baseline gap-6">
+          <div>
+            <p className="text-2xl font-bold text-stone-900">${totalRevenue.toFixed(2)}</p>
+            <p className="text-xs text-stone-400">
+              All-time, {sponsorships.length} purchase{sponsorships.length === 1 ? "" : "s"}
+            </p>
+          </div>
+          <div>
+            <p className="text-lg font-bold text-emerald-700">{activeSponsorships.length}</p>
+            <p className="text-xs text-stone-400">Currently active</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white border border-stone-200 rounded-2xl p-5">
+        <h2 className="font-bold text-stone-900 mb-3">Users ({users.length})</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs font-bold text-stone-400 uppercase border-b border-stone-100">
+                <th className="pb-2 pr-3">Name</th>
+                <th className="pb-2 pr-3">Email</th>
+                <th className="pb-2">Joined</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id} className="border-b border-stone-50 last:border-0">
+                  <td className="py-2 pr-3 font-medium text-stone-800">{u.name || "—"}</td>
+                  <td className="py-2 pr-3 text-stone-500">{u.email || "—"}</td>
+                  <td className="py-2 text-stone-400">{u.createdAt ? timeAgo(u.createdAt) : "—"}</td>
+                </tr>
+              ))}
+              {users.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="py-3 text-stone-400 text-center">
+                    No users indexed yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="bg-white border border-stone-200 rounded-2xl p-5">
+        <h2 className="font-bold text-stone-900 mb-3">Shops ({shops.length})</h2>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs font-bold text-stone-400 uppercase border-b border-stone-100">
+                <th className="pb-2 pr-3">Shop</th>
+                <th className="pb-2 pr-3">Location</th>
+                <th className="pb-2 pr-3">Listings</th>
+                <th className="pb-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shops.map((s) => (
+                <tr key={s.id} className="border-b border-stone-50 last:border-0">
+                  <td className="py-2 pr-3 font-medium text-stone-800">{s.name || "—"}</td>
+                  <td className="py-2 pr-3 text-stone-500">{[s.city, s.state].filter(Boolean).join(", ") || "—"}</td>
+                  <td className="py-2 pr-3 text-stone-500">{products.filter((p) => p.shopId === s.id).length}</td>
+                  <td className="py-2 text-stone-500 capitalize">{s.status || "—"}</td>
+                </tr>
+              ))}
+              {shops.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-3 text-stone-400 text-center">
+                    No shops yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AdsScreenEntry({ navigate }) {
   const { me } = useApp();
   if (!me) return <AdsPreviewScreen navigate={navigate} />;
@@ -20173,8 +20412,8 @@ function ChooseShopGate({ shops, activeShopId, onPick, onDelete, onSkip }) {
   return (
     <div className="h-screen w-full flex items-start justify-center bg-stone-50 p-6 pt-10 overflow-y-auto" style={{ height: "100dvh" }}>
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-2 text-emerald-800 font-bold text-2xl mb-1 justify-center" style={displayFont}>
-          <Sparkles size={24} /> CropSwap
+        <div className="flex justify-center mb-1">
+          <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-7 w-auto" />
         </div>
         <h1 className="text-center text-lg font-bold text-stone-900 mt-4 mb-1" style={displayFont}>Choose your shop</h1>
         <p className="text-center text-stone-500 mb-6 text-sm">
@@ -20275,8 +20514,8 @@ function Onboarding({ onCreate, reason, onCancel }) {
       <link rel="stylesheet" href={FONT_LINK_HREF} />
       <GlobalStyles />
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-2 text-emerald-800 font-bold text-2xl mb-1 justify-center" style={displayFont}>
-          <Sparkles size={24} /> CropSwap
+        <div className="flex justify-center mb-1">
+          <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-7 w-auto" />
         </div>
         {reason ? (
           <p className="text-center text-stone-500 mb-4 text-sm">One more step to {reason}.</p>
@@ -21037,6 +21276,7 @@ function RootShell() {
                picks the locked preview vs. the live campaign manager). */}
             {route.screen === "bulkMessaging" && <BulkMessagingScreen navigate={navigate} />}
             {route.screen === "ads" && <AdsScreenEntry navigate={navigate} />}
+            {route.screen === "adminDashboard" && <AdminScreenEntry navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
@@ -21113,8 +21353,8 @@ function RootShell() {
       {emailNoticeOpen && authCallback && (
         <div className="fixed inset-0 bg-black/50 cs-z-modal flex items-center justify-center p-4 cs-fade-anim">
           <div className="cs-modal-anim bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 text-center">
-            <div className="flex items-center justify-center gap-2 text-emerald-800 font-bold text-xl mb-4" style={displayFont}>
-              <Sparkles size={22} /> CropSwap
+            <div className="flex items-center justify-center mb-4">
+              <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-6 w-auto" />
             </div>
             {authCallback.kind === "verified" ? (
               <>
