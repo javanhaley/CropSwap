@@ -5967,6 +5967,7 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
     { id: "explore", label: "Explore", icon: Home, screen: "explore" },
     { id: "store", label: me?.isVendor ? "My Store" : "Start Selling", icon: Store, screen: "store" },
     { id: "messages", label: "Messages", icon: MessageCircle, screen: "messages" },
+    { id: "bulkMessaging", label: "Bulk Messaging", icon: Megaphone, screen: "bulkMessaging", gold: true },
     { id: "favorites", label: "Favorites", icon: Heart, screen: "favorites" },
     { id: "dashboard", label: "Dashboard", icon: TrendingUp, screen: "dashboard" },
     { id: "orders", label: "Orders", icon: ClipboardList, screen: "orders", tab: "orders" },
@@ -5988,28 +5989,8 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
     if (it.screen === "orders") return it.tab ? route.tab === it.tab : !route.tab;
     return true;
   };
-  const premium = isPremiumPlan(me);
   const content = (
     <>
-      {/* The Big Bold hero at the very top — Bulk Messaging is the headline
-         of the sidebar, not just another row in the nav list, so every
-         visitor and non-Premium account sees it before anything else. Goes
-         straight to the campaign manager: Premium lands on the real thing,
-         everyone else gets the locked preview with its own Upgrade CTA. */}
-      <button
-        onClick={() => {
-          navigate({ screen: "bulkMessaging" });
-          onClose?.();
-        }}
-        className="mx-1 mt-1 mb-4 p-4 rounded-2xl bg-gradient-to-br from-amber-400 to-yellow-500 text-left shadow-md hover:shadow-lg transition"
-      >
-        <div className="flex items-center gap-2">
-          <Megaphone size={22} className="text-amber-950 shrink-0" />
-          <span className="text-xl font-extrabold text-amber-950 leading-tight" style={displayFont}>Bulk Messaging</span>
-          {!premium && <Crown size={16} className="ml-auto text-amber-950 shrink-0" />}
-        </div>
-        <p className="text-xs font-semibold text-amber-900/80 mt-0.5">Send campaigns to your customers</p>
-      </button>
       <div className={`flex items-center ${isDrawer ? "justify-between" : ""} mb-8 px-2`}>
         <button
           onClick={() => {
@@ -6048,7 +6029,9 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
               }}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
             >
-              <it.icon size={18} /> {it.label}
+              <it.icon size={18} className={it.gold ? "text-amber-500 shrink-0" : "shrink-0"} />
+              {it.label}
+              {it.gold && <Crown size={15} className="ml-auto text-amber-500 shrink-0" />}
             </button>
           );
         })}
@@ -6122,7 +6105,7 @@ function SiteMapModal({ open, onClose, navigate, setExploreView, me, requireAuth
         <p className="text-xs text-stone-500 mb-4">
           {me
             ? "Every page in CropSwap."
-            : "Browse freely — Dashboard, Orders, and Bulk Messaging all show a live sample so you can see them before creating an account."}
+            : "Browse freely — every page here shows a live sample so you can see what it's like before creating an account."}
         </p>
         <div className="grid grid-cols-2 gap-2">
           {SITE_MAP_ITEMS.map((it) => (
@@ -9608,6 +9591,104 @@ function ShopToolsTab({ shop }) {
 /* ============================================================================
    SECTION 20: FAVORITES VIEW
 ============================================================================ */
+// Guest preview — a couple of sample favorites so a visitor can see what the
+// page is for and try the heart toggle (removes it from the sample list,
+// same as the real one would), without any account needed. Deliberately its
+// own small local-state sandbox rather than routed through the real
+// favProducts/favShops context, since those are genuinely empty for a guest
+// and this needs something to show.
+function FavoritesPreviewScreen({ navigate }) {
+  const { requireAuth } = useApp();
+  const [tab, setTab] = useState("shops");
+  const [favProducts, setFavProducts] = useState([
+    { id: "prev-fp1", name: "Heirloom Tomatoes", emoji: "🍅", price: "$4.50/lb", shopName: "Buzzy Bee Farm" },
+    { id: "prev-fp2", name: "Raw Honey", emoji: "🍯", price: "$9.00/pint", shopName: "Sunny Acres" },
+    { id: "prev-fp3", name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz", shopName: "Clucking Good Farm" },
+  ]);
+  const [favShops, setFavShops] = useState([
+    { id: "prev-fs1", name: "Buzzy Bee Farm", emoji: "🐝", category: "Produce", rating: "5.0" },
+    { id: "prev-fs2", name: "Sunny Acres", emoji: "🌻", category: "Honey & Preserves", rating: "4.8" },
+    { id: "prev-fs3", name: "Clucking Good Farm", emoji: "🐔", category: "Eggs & Dairy", rating: "4.9" },
+  ]);
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-4xl mx-auto px-4 pt-4">
+        <h1 className="text-2xl font-bold text-stone-900 mb-1" style={displayFont}>Your Favorites</h1>
+        <p className="text-stone-500 text-sm mb-4">A preview with sample favorites — try the heart, then sign up to save your own.</p>
+
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 mb-4">
+          <Heart size={15} className="text-amber-500 shrink-0" />
+          <p className="text-stone-600 text-xs">
+            <span className="font-semibold text-stone-700">Try it out</span> — these are sample favorites, fully interactive. {" "}
+            <button onClick={() => requireAuth("save your own favorites")} className="font-semibold text-emerald-700 underline underline-offset-2">Sign up free</button> to start saving real ones.
+          </p>
+        </div>
+
+        <div className="flex gap-1 mb-5 bg-stone-100 rounded-full p-1 w-fit">
+          <button onClick={() => setTab("shops")} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${tab === "shops" ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>Favorite Shops ({favShops.length})</button>
+          <button onClick={() => setTab("products")} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${tab === "products" ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>Favorite Items ({favProducts.length})</button>
+        </div>
+
+        {tab === "products" && (
+          favProducts.length === 0 ? (
+            <EmptyState icon={Heart} title="No favorite items" body="You unfavorited every sample item — reload the page to bring them back." />
+          ) : (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+              {favProducts.map((p) => (
+                <div key={p.id} className="bg-white rounded-xl border border-stone-200/70 overflow-hidden flex flex-col">
+                  <div className="relative aspect-square bg-stone-50 flex items-center justify-center text-5xl">
+                    {p.emoji}
+                    <div className="absolute top-2 right-2">
+                      <FavoriteHeart active count={0} onToggle={() => setFavProducts((prev) => prev.filter((x) => x.id !== p.id))} />
+                    </div>
+                  </div>
+                  <div className="p-3.5">
+                    <h3 className="font-semibold text-stone-900 leading-snug truncate" style={displayFont}>{p.name}</h3>
+                    <p className="cs-t11 text-stone-500 mt-0.5 truncate">{p.shopName}</p>
+                    <p className="cs-t17 font-semibold text-stone-900 mt-2 pt-2 border-t border-stone-100" style={displayFont}>{p.price}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+        {tab === "shops" && (
+          favShops.length === 0 ? (
+            <EmptyState icon={Store} title="No favorite shops" body="You unfavorited every sample shop — reload the page to bring them back." />
+          ) : (
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {favShops.map((s) => (
+                <div key={s.id} className="bg-white rounded-xl border border-stone-200/70 overflow-hidden">
+                  <div className="h-16 bg-gradient-to-br from-emerald-600 to-teal-500 flex items-center justify-center text-3xl relative">
+                    {s.emoji}
+                    <div className="absolute top-2 right-2">
+                      <FavoriteHeart active count={0} onToggle={() => setFavShops((prev) => prev.filter((x) => x.id !== s.id))} />
+                    </div>
+                  </div>
+                  <div className="p-3.5">
+                    <h3 className="font-semibold text-stone-900 leading-snug truncate" style={displayFont}>{s.name}</h3>
+                    <p className="cs-t11 text-stone-500 mt-0.5 truncate">{s.category} · {s.rating}★</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Guests get the sample-data preview above; anyone signed in gets the real
+// favorites (favorites are free at every plan tier, so there's no premium
+// branch here — the only gate this ever had was needing an account at all).
+function FavoritesScreenEntry({ navigate }) {
+  const { me } = useApp();
+  if (!me) return <FavoritesPreviewScreen navigate={navigate} />;
+  return <FavoritesView />;
+}
+
 function FavoritesView() {
   const { products, shops, favProducts, favShops, shopsById, userLoc } = useApp();
   const [tab, setTab] = useState("shops");
@@ -10136,6 +10217,136 @@ const MESSAGE_NAV_ITEMS = [
   { id: "spam", label: "Spam", icon: AlertTriangle },
   { id: "trash", label: "Trash", icon: Trash2 },
 ];
+
+// Guest preview — a couple of sample conversations with a real, typeable
+// compose box (appends to the sample thread locally), so a visitor can see
+// what messaging looks like without an account. Nothing here reaches an
+// actual person; the banner and any attempt to leave this sandbox both point
+// at signing up for real.
+function MessagesPreviewScreen({ navigate }) {
+  const { requireAuth } = useApp();
+  const SAMPLE_CONVOS = useMemo(
+    () => [
+      {
+        id: "prev-mc1",
+        name: "Buzzy Bee Farm",
+        avatar: "🐝",
+        messages: [
+          { id: "m1", from: "them", text: "Hey! Your order of tomatoes is ready for pickup Saturday morning." },
+          { id: "m2", from: "me", text: "Perfect, see you then — thank you!" },
+        ],
+      },
+      {
+        id: "prev-mc2",
+        name: "Sunny Acres",
+        avatar: "🌻",
+        messages: [{ id: "m1", from: "them", text: "Thanks so much for the 5-star review on the honey!" }],
+      },
+      {
+        id: "prev-mc3",
+        name: "Clucking Good Farm",
+        avatar: "🐔",
+        messages: [{ id: "m1", from: "them", text: "We just restocked farm-fresh eggs if you're still interested." }],
+      },
+    ],
+    []
+  );
+  const [activeId, setActiveId] = useState(SAMPLE_CONVOS[0].id);
+  const [threads, setThreads] = useState(() => Object.fromEntries(SAMPLE_CONVOS.map((c) => [c.id, c.messages])));
+  const [text, setText] = useState("");
+  const active = SAMPLE_CONVOS.find((c) => c.id === activeId);
+
+  const send = () => {
+    if (!text.trim()) return;
+    setThreads((prev) => ({ ...prev, [activeId]: [...prev[activeId], { id: uid("prev-msg"), from: "me", text: text.trim() }] }));
+    setText("");
+  };
+
+  return (
+    <div className="flex-1 flex overflow-hidden">
+      <div className="hidden sm:flex w-72 shrink-0 flex-col border-r border-stone-200 overflow-y-auto">
+        <div className="px-4 pt-4 pb-2">
+          <h1 className="text-xl font-bold text-stone-900" style={displayFont}>Messages</h1>
+        </div>
+        {SAMPLE_CONVOS.map((c) => {
+          const lastMsg = threads[c.id][threads[c.id].length - 1];
+          return (
+            <button
+              key={c.id}
+              onClick={() => setActiveId(c.id)}
+              className={`flex items-center gap-3 px-4 py-3 text-left hover:bg-stone-50 transition ${activeId === c.id ? "bg-stone-50" : ""}`}
+            >
+              <Avatar emoji={c.avatar} name={c.name} />
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm text-stone-800 truncate">{c.name}</p>
+                <p className="text-xs text-stone-400 truncate">{lastMsg?.text}</p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex items-center gap-2 px-4 pt-4 pb-2 border-b border-stone-200 sm:hidden">
+          <Avatar emoji={active?.avatar} name={active?.name} size="sm" />
+          <p className="font-semibold text-sm text-stone-800">{active?.name}</p>
+        </div>
+        <div className="px-4 pt-3 pb-1 hidden sm:block">
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5">
+            <MessageCircle size={15} className="text-amber-500 shrink-0" />
+            <p className="text-stone-600 text-xs">
+              <span className="font-semibold text-stone-700">Try it out</span> — pick a conversation and type below, it's fully interactive.{" "}
+              <button onClick={() => requireAuth("send real messages")} className="font-semibold text-emerald-700 underline underline-offset-2">Sign up free</button> to message real shoppers and vendors.
+            </p>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 bg-stone-50">
+          {(threads[activeId] || []).map((m) => (
+            <div
+              key={m.id}
+              className={`max-w-[75%] px-3.5 py-2 rounded-2xl text-sm ${m.from === "me" ? "self-end bg-emerald-800 text-white" : "self-start bg-white border border-stone-200 text-stone-800"}`}
+            >
+              {m.text}
+            </div>
+          ))}
+        </div>
+        <div className="p-3 border-t border-stone-200 flex items-end gap-2">
+          <TextField
+            value={text}
+            onChange={setText}
+            onSubmit={() => send()}
+            multiline
+            rows={1}
+            label="Message"
+            placeholder="Type a message…"
+            className="flex-1 bg-stone-100 rounded-2xl px-4 py-2.5 text-sm outline-none resize-none leading-6"
+          />
+          <button onClick={send} className="bg-emerald-800 text-white rounded-full w-10 h-10 flex items-center justify-center shrink-0 mb-0.5" aria-label="Send">
+            <Send size={16} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Guests get the interactive sample-conversation sandbox above; anyone
+// signed in gets the real thing (1:1 messaging is free at every plan tier —
+// see the standing "keep 1:1 messaging free" decision — so the only gate
+// this ever had was needing an account at all).
+function MessagesScreenEntry({ navigate, initialWithUserId, initialWithUserName, initialWithUserAvatar, initialCid }) {
+  const { me } = useApp();
+  if (!me) return <MessagesPreviewScreen navigate={navigate} />;
+  return (
+    <MessagesView
+      navigate={navigate}
+      initialWithUserId={initialWithUserId}
+      initialWithUserName={initialWithUserName}
+      initialWithUserAvatar={initialWithUserAvatar}
+      initialCid={initialCid}
+    />
+  );
+}
 
 function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserAvatar, initialCid, navigate }) {
   const {
@@ -11980,6 +12191,114 @@ function SponsorWizard({ shop, product, onClose, onDone }) {
   );
 }
 
+// Guest preview — a sample shop with a few sample listings, so a visitor can
+// try the actual "Sponsor" flow (pick a duration, confirm, watch the
+// countdown badge appear, stop it) without a real shop or a real payment
+// behind it. Local state only; resets on remount, same as every other
+// sandbox preview in the app.
+function AdsPreviewScreen({ navigate }) {
+  const { requireAuth } = useApp();
+  const [products, setProducts] = useState([
+    { id: "prev-ap1", name: "Heirloom Tomatoes", emoji: "🍅", price: "$4.50/lb", sponsoredUntil: null },
+    { id: "prev-ap2", name: "Raw Honey", emoji: "🍯", price: "$9.00/pint", sponsoredUntil: null },
+    { id: "prev-ap3", name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz", sponsoredUntil: null },
+  ]);
+  const [sponsorPickId, setSponsorPickId] = useState(null);
+  const [, forceTick] = useState(0);
+
+  // Re-render every 30s so a countdown badge actually counts down while the
+  // page sits open, same as the real screen's sponsorCountdown.
+  useEffect(() => {
+    const iv = setInterval(() => forceTick((n) => n + 1), 30000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const confirmSponsor = (rate) => {
+    const endsAt = Date.now() + rate.days * 86400000;
+    setProducts((prev) => prev.map((p) => (p.id === sponsorPickId ? { ...p, sponsoredUntil: endsAt } : p)));
+    setSponsorPickId(null);
+  };
+  const stopSponsor = (id) => setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, sponsoredUntil: null } : p)));
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-2xl mx-auto p-4">
+        <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+          <ArrowLeft size={15} /> Back
+        </button>
+        <div className="flex items-center gap-2 text-emerald-800 font-bold text-lg mb-1" style={displayFont}>
+          <Megaphone size={20} /> Sponsored Ads
+        </div>
+        <p className="text-sm text-stone-500 mb-4">Feature one of your listings in the Sponsored rail at the top of the homepage for a set number of days.</p>
+
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 mb-5">
+          <Megaphone size={15} className="text-amber-500 shrink-0" />
+          <p className="text-stone-600 text-xs">
+            <span className="font-semibold text-stone-700">Try it out</span> — sponsor a sample listing below and watch it go live, no payment or real shop needed.{" "}
+            <button onClick={() => requireAuth("start selling and run real sponsored ads")} className="font-semibold text-emerald-700 underline underline-offset-2">Sign up free</button> to do this for real.
+          </p>
+        </div>
+
+        <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Sample listings</p>
+        <div className="flex flex-col gap-2">
+          {products.map((pr) => {
+            const live = pr.sponsoredUntil && pr.sponsoredUntil > Date.now();
+            return (
+              <div key={pr.id} className="border border-stone-200 rounded-xl p-3 flex items-center gap-3">
+                <span className="w-11 h-11 rounded-lg bg-stone-50 flex items-center justify-center text-2xl shrink-0">{pr.emoji}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-stone-800 truncate">{pr.name}</p>
+                  {live ? (
+                    <p className="cs-t11 text-emerald-700 font-semibold flex items-center gap-1"><Megaphone size={11} /> Sponsored — {sponsorCountdown(pr.sponsoredUntil)}</p>
+                  ) : (
+                    <p className="cs-t11 text-stone-400">{pr.price}</p>
+                  )}
+                </div>
+                {live ? (
+                  <button onClick={() => stopSponsor(pr.id)} className="cs-t11 font-semibold text-rose-600 shrink-0">Stop</button>
+                ) : (
+                  <button onClick={() => setSponsorPickId(pr.id)} className="cs-t11 font-semibold text-emerald-800 shrink-0 flex items-center gap-1">
+                    <Megaphone size={12} /> Sponsor
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <Modal open={!!sponsorPickId} onClose={() => setSponsorPickId(null)} labelledBy="sponsor-preview-title">
+        <div className="p-6">
+          <h2 id="sponsor-preview-title" className="text-base font-bold text-stone-900 mb-1" style={displayFont}>Sponsor this listing</h2>
+          <p className="text-xs text-stone-400 mb-3">Test mode — no charge, confirms instantly.</p>
+          <div className="flex flex-col gap-1.5">
+            {SPONSOR_RATES.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => confirmSponsor(r)}
+                className="flex items-center justify-between px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-left"
+              >
+                <span className="text-sm font-semibold text-stone-800">{r.label}</span>
+                <span className="text-sm font-bold text-stone-900">{formatMoney(r.price)}</span>
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setSponsorPickId(null)} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+// Guests get the interactive sample-listing sandbox above; anyone signed in
+// falls through to the real AdsScreen, which already has its own "become a
+// vendor first" nudge for a non-vendor account — that part is unchanged.
+function AdsScreenEntry({ navigate }) {
+  const { me } = useApp();
+  if (!me) return <AdsPreviewScreen navigate={navigate} />;
+  return <AdsScreen navigate={navigate} />;
+}
+
 function AdsScreen({ navigate }) {
   const { me, shopsById, products, sponsorships, cancelSponsorCampaign, showToast } = useApp();
   const shop = me?.shopId ? shopsById[me.shopId] : null;
@@ -13187,20 +13506,20 @@ function PanelPeriodTabs({ value, onChange, monthOptions }) {
 // able to actually operate it — used for the handful of dashboard widgets
 // that are genuinely an action (send a broadcast, set a goal) rather than
 // just a number on display.
-function ToolLock({ locked, navigate, label = "Premium tool", children }) {
+function ToolLock({ locked, navigate, label = "Premium tool", dimClass = "opacity-40", large, children }) {
   if (!locked) return <>{children}</>;
   return (
     <div className="relative">
-      <div className="opacity-40 pointer-events-none select-none">{children}</div>
+      <div className={`${dimClass} pointer-events-none select-none`}>{children}</div>
       <div className="absolute inset-0 flex items-center justify-center px-4">
         <button
           onClick={() => navigate({ screen: "plans" })}
-          className="flex items-center gap-1.5 bg-white shadow-lg border border-amber-300 rounded-full pl-2 pr-3.5 py-1.5 hover:shadow-xl transition"
+          className={`flex items-center bg-white shadow-lg border border-amber-300 rounded-full hover:shadow-xl transition ${large ? "gap-2 pl-2.5 pr-4 py-2" : "gap-1.5 pl-2 pr-3.5 py-1.5"}`}
         >
-          <span className="w-5 h-5 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0">
-            <Crown size={11} />
+          <span className={`rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0 ${large ? "w-6 h-6" : "w-5 h-5"}`}>
+            <Crown size={large ? 13 : 11} />
           </span>
-          <span className="text-[11px] font-bold text-stone-900 whitespace-nowrap">{label}</span>
+          <span className={`font-bold text-stone-900 whitespace-nowrap ${large ? "text-[13px]" : "text-[11px]"}`}>{label}</span>
         </button>
       </div>
     </div>
@@ -14191,7 +14510,7 @@ function BulkMessagingCampaignPreview({ navigate }) {
   );
   return (
     <div className="flex-1 flex overflow-hidden relative">
-      <ToolLock locked navigate={navigate} label="Upgrade to Premium">
+      <ToolLock locked navigate={navigate} label="Upgrade to Premium" dimClass="opacity-95" large>
         <div className="flex-1 flex overflow-hidden">
           <div className="w-60 shrink-0 border-r border-stone-200 overflow-y-auto bg-white hidden md:flex md:flex-col">
             <div className="mx-3 mt-3 mb-1 px-4 py-2.5 rounded-2xl bg-emerald-800 text-white text-sm font-semibold flex items-center gap-2">
@@ -19569,6 +19888,80 @@ function VendorDashboard({ navigate }) {
 /* ============================================================================
    SECTION 25: STORE SCREEN (own shop or become-a-vendor prompt)
 ============================================================================ */
+// The same "here's what your storefront could look like" preview a signed-in
+// Free-tier account sees is also what a guest gets tapping Start Selling —
+// no account needed to see it. `me` is optional and only personalizes the
+// sample address line; everything else (the locked sample product grid, the
+// upgrade CTA) is identical either way, and the CTA's navigate-to-Plans
+// already handles a guest correctly (opens the sign-up card).
+function StartSellingPreviewScreen({ navigate, me }) {
+  const homeLoc = splitCityState(me?.homeLocation?.label);
+  const sampleProducts = [
+    { name: "Heirloom Tomatoes", emoji: "🍅", price: "$4.50/lb" },
+    { name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz" },
+    { name: "Raw Honey", emoji: "🍯", price: "$9.00/pint" },
+    { name: "Sweet Corn", emoji: "🌽", price: "$5.00/bushel" },
+  ];
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-2xl mx-auto p-4">
+        <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+          <ArrowLeft size={15} /> Back
+        </button>
+        <h1 className="text-2xl font-bold text-stone-900 mb-1" style={displayFont}>My Store</h1>
+        <p className="text-stone-500 text-sm mb-4">A preview of what your storefront could look like — upgrade any time to make it real.</p>
+
+        <div className="relative h-32 rounded-t-2xl overflow-hidden bg-gradient-to-br from-emerald-700 to-teal-600 flex items-center justify-center">
+          <p className="text-white font-bold text-xl" style={displayFont}>Example Farm Stand</p>
+        </div>
+        <div className="border border-t-0 border-stone-200 rounded-b-2xl px-5 pt-4 pb-5 mb-2">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="w-10 h-10 -mt-9 rounded-full bg-white border-4 border-white shadow-md flex items-center justify-center text-lg shrink-0">🧺</span>
+            <span className="cs-t11 font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Actively selling</span>
+          </div>
+          <p className="text-stone-500 font-medium text-sm">@yourfarmname · Your Town, {stateInfo((homeLoc.state || "").toUpperCase().slice(0, 2))?.name || "Your State"}</p>
+
+          <ToolLock locked navigate={navigate} label="Upgrade to build your own storefront">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4">
+              {sampleProducts.map((p) => (
+                <div key={p.name} className="border border-stone-200 rounded-xl p-2.5 text-center">
+                  <div className="text-2xl mb-1">{p.emoji}</div>
+                  <p className="text-xs font-semibold text-stone-800 leading-tight">{p.name}</p>
+                  <p className="cs-t10 text-emerald-700 font-bold mt-0.5">{p.price}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-1.5 mt-4">
+              {["Products", "Updates", "Tools", "Contact"].map((t) => (
+                <span key={t} className="px-3 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-500">{t}</span>
+              ))}
+            </div>
+          </ToolLock>
+        </div>
+
+        <LockedFeatureButton
+          label="Create your own storefront"
+          sub={`Upgrade to Basic (${formatMoney(PLAN_CATALOG.basic.monthly)}/mo) or Premium to start selling`}
+          navigate={navigate}
+          icon={Store}
+          className="mt-3"
+        />
+      </div>
+    </div>
+  );
+}
+
+// Guests reach this before StoreScreen even mounts (StoreScreen assumes a
+// real `me`), so this is the front door for "store" now that it's no longer
+// an auth-gated screen — logged in, it falls straight through to the real
+// StoreScreen, which still has its own identical preview branch for a
+// logged-in Free-tier account.
+function StoreScreenEntry({ navigate }) {
+  const { me } = useApp();
+  if (!me) return <StartSellingPreviewScreen navigate={navigate} />;
+  return <StoreScreen navigate={navigate} />;
+}
+
 function StoreScreen({ navigate }) {
   const { me, shops, shopsById, createShopForUser, updateMe, purchasePlan, showToast } = useApp();
   const [shopName, setShopName] = useState("");
@@ -19631,59 +20024,7 @@ function StoreScreen({ navigate }) {
   }
 
   if (!isBasicPlus(me)) {
-    const sampleProducts = [
-      { name: "Heirloom Tomatoes", emoji: "🍅", price: "$4.50/lb" },
-      { name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz" },
-      { name: "Raw Honey", emoji: "🍯", price: "$9.00/pint" },
-      { name: "Sweet Corn", emoji: "🌽", price: "$5.00/bushel" },
-    ];
-    return (
-      <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-        <div className="max-w-2xl mx-auto p-4">
-          <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
-            <ArrowLeft size={15} /> Back
-          </button>
-          <h1 className="text-2xl font-bold text-stone-900 mb-1" style={displayFont}>My Store</h1>
-          <p className="text-stone-500 text-sm mb-4">A preview of what your storefront could look like — upgrade any time to make it real.</p>
-
-          <div className="relative h-32 rounded-t-2xl overflow-hidden bg-gradient-to-br from-emerald-700 to-teal-600 flex items-center justify-center">
-            <p className="text-white font-bold text-xl" style={displayFont}>Example Farm Stand</p>
-          </div>
-          <div className="border border-t-0 border-stone-200 rounded-b-2xl px-5 pt-4 pb-5 mb-2">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              <span className="w-10 h-10 -mt-9 rounded-full bg-white border-4 border-white shadow-md flex items-center justify-center text-lg shrink-0">🧺</span>
-              <span className="cs-t11 font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Actively selling</span>
-            </div>
-            <p className="text-stone-500 font-medium text-sm">@yourfarmname · Your Town, {stateInfo((homeLoc.state || "").toUpperCase().slice(0, 2))?.name || "Your State"}</p>
-
-            <ToolLock locked navigate={navigate} label="Upgrade to build your own storefront">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4">
-                {sampleProducts.map((p) => (
-                  <div key={p.name} className="border border-stone-200 rounded-xl p-2.5 text-center">
-                    <div className="text-2xl mb-1">{p.emoji}</div>
-                    <p className="text-xs font-semibold text-stone-800 leading-tight">{p.name}</p>
-                    <p className="cs-t10 text-emerald-700 font-bold mt-0.5">{p.price}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="flex gap-1.5 mt-4">
-                {["Products", "Updates", "Tools", "Contact"].map((t) => (
-                  <span key={t} className="px-3 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-500">{t}</span>
-                ))}
-              </div>
-            </ToolLock>
-          </div>
-
-          <LockedFeatureButton
-            label="Create your own storefront"
-            sub={`Upgrade to Basic (${formatMoney(PLAN_CATALOG.basic.monthly)}/mo) or Premium to start selling`}
-            navigate={navigate}
-            icon={Store}
-            className="mt-3"
-          />
-        </div>
-      </div>
-    );
+    return <StartSellingPreviewScreen navigate={navigate} me={me} />;
   }
 
   return (
@@ -20062,15 +20403,22 @@ function Onboarding({ onCreate, reason, onCancel }) {
 // of the campaign manager with its own crown/Upgrade CTA), Premium sees the
 // real BulkMessagingCampaignManager. Unlike Orders, this one should never be
 // a free-to-operate sandbox (see the Sidebar hero and Messages' "⋮" entry).
-const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "store", "storeEditor", "places", "checkout", "ads"]);
+// "favorites", "messages", "store", and "ads" are ungated for the same
+// front-door reason, but the gate here is just "has an account" rather than
+// a plan tier — each routes through a small *ScreenEntry wrapper
+// (FavoritesScreenEntry, MessagesScreenEntry, StoreScreenEntry,
+// AdsScreenEntry) that shows a guest an interactive sample-data preview and
+// falls through to the real screen the moment `me` exists. "storeEditor",
+// "places", and "checkout" stay gated — there's nothing to preview there
+// that isn't already covered by one of the screens above.
+const AUTH_REQUIRED_SCREENS = new Set(["storeEditor", "places", "checkout"]);
+// Only screens still in AUTH_REQUIRED_SCREENS need an entry here — favorites/
+// messages/store/ads moved to their own guest-preview wrappers above and
+// call requireAuth with their own inline reason strings instead.
 const AUTH_REASON_BY_SCREEN = {
-  favorites: "see your favorites",
-  messages: "send and receive messages",
-  store: "start selling on CropSwap",
   storeEditor: "edit your storefront",
   places: "save your places",
   checkout: "subscribe to a plan",
-  ads: "sponsor a listing",
 };
 
 // A small card next to whatever the guest just tapped — "Create a free
@@ -20668,11 +21016,11 @@ function RootShell() {
           <main className="flex-1 flex flex-col overflow-hidden relative cs-paper">
             {route.screen === "explore" && <ExploreView navigate={navigate} />}
             {route.screen === "shop" && <ShopProfileView shopId={route.shopId} navigate={navigate} />}
-            {route.screen === "store" && <StoreScreen navigate={navigate} />}
+            {route.screen === "store" && <StoreScreenEntry navigate={navigate} />}
             {route.screen === "storeEditor" && <StorefrontEditor navigate={navigate} initialTab={route.tab} />}
-            {route.screen === "favorites" && <FavoritesView />}
+            {route.screen === "favorites" && <FavoritesScreenEntry navigate={navigate} />}
             {route.screen === "messages" && (
-              <MessagesView
+              <MessagesScreenEntry
                 navigate={navigate}
                 initialWithUserId={route.withUserId}
                 initialWithUserName={route.withUserName}
@@ -20688,7 +21036,7 @@ function RootShell() {
                map all land here and see the real chrome (BulkMessagingScreen
                picks the locked preview vs. the live campaign manager). */}
             {route.screen === "bulkMessaging" && <BulkMessagingScreen navigate={navigate} />}
-            {route.screen === "ads" && <AdsScreen navigate={navigate} />}
+            {route.screen === "ads" && <AdsScreenEntry navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
