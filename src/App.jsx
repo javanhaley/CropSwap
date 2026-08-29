@@ -5972,7 +5972,6 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
     { id: "orders", label: "Orders", icon: ClipboardList, screen: "orders", tab: "orders" },
     { id: "orders-calendar", label: "Calendar", icon: Calendar, screen: "orders", tab: "calendar" },
     { id: "orders-inventory", label: "Inventory", icon: Boxes, screen: "orders", tab: "inventory" },
-    { id: "bulkMessaging", label: "Bulk Messaging", icon: Megaphone, screen: "bulkMessaging", gold: true },
     { id: "ads", label: "Sponsored Ads", icon: Megaphone, screen: "ads" },
     // A quick jump straight to the Map view of Explore, not the separate
     // saved-Places screen this used to point to.
@@ -5989,8 +5988,28 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
     if (it.screen === "orders") return it.tab ? route.tab === it.tab : !route.tab;
     return true;
   };
+  const premium = isPremiumPlan(me);
   const content = (
     <>
+      {/* The Big Bold hero at the very top — Bulk Messaging is the headline
+         of the sidebar, not just another row in the nav list, so every
+         visitor and non-Premium account sees it before anything else. Goes
+         straight to the campaign manager: Premium lands on the real thing,
+         everyone else gets the locked preview with its own Upgrade CTA. */}
+      <button
+        onClick={() => {
+          navigate({ screen: "bulkMessaging" });
+          onClose?.();
+        }}
+        className="mx-1 mt-1 mb-4 p-4 rounded-2xl bg-gradient-to-br from-amber-400 to-yellow-500 text-left shadow-md hover:shadow-lg transition"
+      >
+        <div className="flex items-center gap-2">
+          <Megaphone size={22} className="text-amber-950 shrink-0" />
+          <span className="text-xl font-extrabold text-amber-950 leading-tight" style={displayFont}>Bulk Messaging</span>
+          {!premium && <Crown size={16} className="ml-auto text-amber-950 shrink-0" />}
+        </div>
+        <p className="text-xs font-semibold text-amber-900/80 mt-0.5">Send campaigns to your customers</p>
+      </button>
       <div className={`flex items-center ${isDrawer ? "justify-between" : ""} mb-8 px-2`}>
         <button
           onClick={() => {
@@ -6027,16 +6046,9 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
                 navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen });
                 onClose?.();
               }}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${
-                it.gold
-                  ? isActive ? "bg-amber-100 text-amber-900" : "text-amber-700 hover:bg-amber-50"
-                  : isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"
-              }`}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
             >
               <it.icon size={18} /> {it.label}
-              {/* Teases every non-Premium account (and guests) toward the
-                 real Bulk Messaging workspace — see BulkMessagingScreen. */}
-              {it.gold && <Crown size={13} className="ml-auto text-amber-500 shrink-0" />}
             </button>
           );
         })}
@@ -6077,9 +6089,10 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
 // screen (see the "Site map" bar in RootShell) whether or not anyone's
 // signed in. Guests can open all of it: gated screens (Messages, Favorites,
 // etc.) fall back to the normal sign-up prompt via `navigate`, while
-// Dashboard, Orders/Calendar/Inventory, and Bulk Messaging each show a full
-// live-sample demo with no account needed — so this is also how a guest
-// finds their way to those.
+// Dashboard and Orders/Calendar/Inventory show a full live-sample demo with
+// no account needed, and Bulk Messaging shows its locked campaign-manager
+// preview with its own Upgrade CTA — so this is also how a guest finds
+// their way to all of those.
 const SITE_MAP_ITEMS = [
   { id: "explore", label: "Explore", icon: Home, screen: "explore" },
   { id: "map", label: "Map", icon: MapPin, screen: "explore", isMap: true },
@@ -6090,7 +6103,7 @@ const SITE_MAP_ITEMS = [
   { id: "orders", label: "Orders", icon: ClipboardList, screen: "orders" },
   { id: "calendar", label: "Calendar", icon: Calendar, screen: "orders", tab: "calendar" },
   { id: "inventory", label: "Inventory", icon: Boxes, screen: "orders", tab: "inventory" },
-  { id: "bulkMessaging", label: "Bulk Messaging (live demo)", icon: Megaphone, screen: "bulkMessaging" },
+  { id: "bulkMessaging", label: "Bulk Messaging (Premium)", icon: Megaphone, screen: "bulkMessaging" },
   { id: "ads", label: "Sponsored Ads", icon: Megaphone, screen: "ads" },
   { id: "plans", label: "My Plan", icon: Crown, screen: "plans" },
 ];
@@ -9897,7 +9910,7 @@ function ConversationActionSheet({ conversation, view, onClose, onStar, onImport
 // toolbar. Unlike the old single-folder picker, a conversation can carry
 // several labels at once — same as Gmail — so each row is its own checkbox
 // rather than a destination you pick once.
-function LabelPickerModal({ open, labels, count, checkedIds, onClose, onToggle, onCreateAndApply }) {
+function LabelPickerModal({ open, labels, count, checkedIds, onClose, onToggle, onCreateAndApply, noun = "conversation", nounPlural }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   useEffect(() => {
@@ -9906,11 +9919,12 @@ function LabelPickerModal({ open, labels, count, checkedIds, onClose, onToggle, 
       setName("");
     }
   }, [open]);
+  const plural = nounPlural || `${noun}s`;
   return (
     <Modal open={open} onClose={onClose} labelledBy="label-picker-title">
       <div className="p-6">
         <h2 id="label-picker-title" className="text-base font-bold text-stone-900 mb-3" style={displayFont}>
-          Label {count > 1 ? `${count} conversations` : "conversation"}
+          Label {count > 1 ? `${count} ${plural}` : noun}
         </h2>
         {labels.length === 0 && !creating ? (
           <p className="text-sm text-stone-400 py-2">No labels yet.</p>
@@ -9961,7 +9975,7 @@ function LabelPickerModal({ open, labels, count, checkedIds, onClose, onToggle, 
 // Rename or delete labels themselves — deleting one just removes that tag
 // from whatever it was on, the same way deleting a Gmail label doesn't
 // touch the mail underneath it.
-function ManageLabelsModal({ open, labels, onClose, onRename, onDelete }) {
+function ManageLabelsModal({ open, labels, onClose, onRename, onDelete, noun = "conversation" }) {
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState("");
   useEffect(() => {
@@ -9979,7 +9993,7 @@ function ManageLabelsModal({ open, labels, onClose, onRename, onDelete }) {
       <div className="p-6">
         <h2 id="manage-labels-title" className="text-base font-bold text-stone-900 mb-3" style={displayFont}>Manage labels</h2>
         {labels.length === 0 ? (
-          <p className="text-sm text-stone-400 py-4 text-center">No labels yet — create one from any conversation's "⋮" menu.</p>
+          <p className="text-sm text-stone-400 py-4 text-center">No labels yet — create one from any {noun}'s "⋮" menu.</p>
         ) : (
           <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
             {labels.map((l) => (
@@ -10021,12 +10035,19 @@ function ManageLabelsModal({ open, labels, onClose, onRename, onDelete }) {
 // The Messages list's top-level "⋯" — one tap away, everything the bulk
 // toolbar and nav rail don't already cover. inTrash swaps the destructive
 // item to "Empty trash", which only makes sense while looking at Trash.
-function MessagesOverflowMenu({ open, onClose, onSelect, onManageLabels, onDeleteAll, inTrash }) {
+function MessagesOverflowMenu({ open, onClose, onSelect, onManageLabels, onDeleteAll, onBulkMessage, premium, inTrash }) {
   return (
     <Modal open={open} onClose={onClose} labelledBy="messages-menu-title">
       <div className="p-6">
         <h2 id="messages-menu-title" className="sr-only">Messages options</h2>
         <div className="flex flex-col gap-2">
+          <button
+            onClick={onBulkMessage}
+            className="text-left px-4 py-3 rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 text-sm font-semibold text-amber-900 flex items-center gap-2"
+          >
+            <Megaphone size={15} /> Send Bulk Message
+            {!premium && <Crown size={14} className="ml-auto text-amber-500 shrink-0" />}
+          </button>
           <button onClick={onSelect} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
             <Check size={15} /> Select conversations
           </button>
@@ -10178,7 +10199,7 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
     if (view === "inbox") return conversations.filter(notTrashedOrSpam);
     if (view === "starred") return conversations.filter((c) => c.starred && notTrashedOrSpam(c));
     if (view === "important") return conversations.filter((c) => c.important && notTrashedOrSpam(c));
-    if (view === "sent") return conversations.filter((c) => c.lastSenderId === me.id && notTrashedOrSpam(c));
+    if (view === "sent") return conversations.filter((c) => c.lastSenderId === me?.id && notTrashedOrSpam(c));
     if (view === "drafts") return conversations.filter((c) => (c.draft || "").trim() && notTrashedOrSpam(c));
     if (view === "spam") return conversations.filter((c) => c.spam);
     if (view === "trash") return conversations.filter((c) => c.trashed);
@@ -10198,7 +10219,6 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
     view === "trash" ? "Trash" :
     view === "scheduled" ? "Scheduled" :
     view === "purchases" ? "Purchases" :
-    view === "bulk" ? "Bulk Messaging" :
     activeLabel ? activeLabel.name : "Messages";
 
   const toggleSelect = (cid) => {
@@ -10463,18 +10483,6 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
               <ShoppingBag size={16} className="shrink-0" /> Purchases
             </button>
           )}
-          {/* Distinct gold styling + a Crown badge — visible to every vendor
-             so free/Basic users get teased by it, but only Premium actually
-             gets the real workspace (see the view === "bulk" branch below). */}
-          <button
-            onClick={() => goToView("bulk")}
-            className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left mt-1 ${
-              view === "bulk" ? "bg-amber-100 text-amber-900" : "text-amber-700 hover:bg-amber-50"
-            }`}
-          >
-            <Megaphone size={16} className="shrink-0" /> Bulk Messaging
-            <Crown size={13} className="ml-auto text-amber-500 shrink-0" />
-          </button>
         </div>
         <div className="px-4 pt-2 pb-1">
           <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Labels</span>
@@ -10514,10 +10522,6 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
 
       {sidebarOpen && <div className="fixed inset-0 bg-black/30 z-10 md:hidden" onClick={() => setSidebarOpen(false)} />}
 
-      {view === "bulk" ? (
-        isPremiumPlan(me) ? <BulkMessagingPanel me={me} navigate={navigate} showToast={showToast} /> : <BulkMessagingPreview navigate={navigate} />
-      ) : (
-      <>
       <div className={`${selectedCid ? "hidden md:flex" : "flex"} w-full md:w-80 shrink-0 flex-col border-r border-stone-200 overflow-y-auto`}>
         <div className="flex items-center gap-2 px-4 pt-4 pb-1">
           <button onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="md:hidden text-stone-500 p-1 -ml-1"><Menu size={18} /></button>
@@ -10757,8 +10761,6 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
           <MessageCircle size={48} />
         </div>
       )}
-      </>
-      )}
 
       <MessageActionSheet
         message={actionTarget}
@@ -10835,6 +10837,11 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
           if (view === "trash") setConfirmEmptyTrash(true);
           else setConfirmDeleteAllOpen(true);
         }}
+        onBulkMessage={() => {
+          setOverflowOpen(false);
+          navigate({ screen: "bulkMessaging" });
+        }}
+        premium={isPremiumPlan(me)}
         inTrash={view === "trash"}
       />
 
@@ -11056,7 +11063,7 @@ function CancelPlanModal({ tierName, withinWindow, cancelling, onKeep, onConfirm
 }
 
 function PlansScreen({ navigate }) {
-  const { me, cancelPlan, showToast } = useApp();
+  const { me, cancelPlan, showToast, requireAuth } = useApp();
   const [billingByPlan, setBillingByPlan] = useState({ basic: "monthly", premium: "monthly" });
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -11132,7 +11139,13 @@ function PlansScreen({ navigate }) {
 
         <div className="grid md:grid-cols-3 gap-4">
           {Object.values(PLAN_CATALOG).map((p) => {
-            const isCurrent = currentTier === p.id;
+            // A guest's planTier() reads as "free" (there's no account to
+            // hold a tier at all), but that's not the same thing as a real
+            // signed-in account actually sitting on the Free plan — so
+            // "current" only ever applies once `me` exists. This also keeps
+            // `me.plan` safely out of reach below for a guest, who has no
+            // `me` to read a plan off of.
+            const isCurrent = !!me && currentTier === p.id;
             const billing = isCurrent ? (me.plan?.billing || "monthly") : (billingByPlan[p.id] || "monthly");
             const price = p.id === "free" ? p.monthly : billing === "annual" ? p.annual : p.monthly;
             const isPremiumCard = p.id === "premium";
@@ -11167,13 +11180,29 @@ function PlansScreen({ navigate }) {
                   ))}
                 </ul>
                 <button
-                  onClick={() => (p.id === "free" ? null : navigate({ screen: "checkout", tier: p.id, billing }))}
-                  disabled={isCurrent || p.id === "free"}
+                  onClick={() => {
+                    if (p.id === "free") {
+                      // A guest has nothing to sign up "into" yet on this
+                      // card besides an account — requireAuth pops the
+                      // sign-up card right here with no pendingRoute, so
+                      // they land back on this same Plans page once they've
+                      // created one. A signed-in Free account already has
+                      // this plan, so the button is disabled below instead.
+                      if (!me) requireAuth("create a free account");
+                      return;
+                    }
+                    // Paid tiers: "checkout" is an auth-gated screen, so for
+                    // a guest this opens the sign-up card with the checkout
+                    // route captured as pendingRoute — completing sign-up
+                    // drops them straight onto that plan's checkout page.
+                    navigate({ screen: "checkout", tier: p.id, billing });
+                  }}
+                  disabled={isCurrent}
                   className={`w-full py-2.5 rounded-xl font-semibold text-sm transition disabled:opacity-40 ${
                     isPremiumCard ? "bg-gradient-to-r from-amber-400 to-yellow-500 text-amber-950" : "bg-emerald-800 text-white"
                   }`}
                 >
-                  {isCurrent ? "Current plan" : p.id === "free" ? "Included" : `Choose ${p.name}`}
+                  {isCurrent ? "Current plan" : p.id === "free" ? (me ? "Included" : "Sign up free") : `Choose ${p.name}`}
                 </button>
               </div>
             );
@@ -13318,269 +13347,892 @@ function MassMessageComposer({ me, shop, subscribers, onSent, showToast }) {
   );
 }
 
-// The real Bulk Messaging workspace, reachable from the Messages nav rail —
-// Premium only. Composes one message to any hand-picked selection of
-// mailing-list contacts, or a saved group, and doubles as where those
-// groups get created, renamed, reordered, and deleted.
-function BulkMessagingPanel({ me, navigate, showToast }) {
+// Bulk-message "campaigns" — the data layer behind the Premium campaign
+// manager. Same private, single-owner convention as orders/inventory (this
+// is the vendor's own business data, nobody else ever reads or writes it),
+// so every key here goes to the row-owned kv table (shared=false).
+// Campaign: { id, subject, body,
+//             audience: { type: "all"|"purchasers"|"group", groupId },
+//             status: "draft"|"scheduled"|"sent"|"spam"|"trash",
+//             starred, important, labelIds, sendAt, sentAt, recipientCount,
+//             createdAt, updatedAt }
+function useCampaigns(ownerId) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [labels, setLabels] = useState([]);
+  const listRef = useRef([]);
+
+  const load = useCallback(async () => {
+    if (!ownerId) {
+      listRef.current = [];
+      setList([]);
+      setLoading(false);
+      return;
+    }
+    const rec = await getJSON(`campaigns:${ownerId}`, false, []);
+    const safe = Array.isArray(rec) ? rec : [];
+    listRef.current = safe;
+    setList(safe);
+    setLoading(false);
+  }, [ownerId]);
+
+  const loadLabels = useCallback(async () => {
+    if (!ownerId) {
+      setLabels([]);
+      return;
+    }
+    const rec = await getJSON(`campaignLabels:${ownerId}`, false, []);
+    setLabels(Array.isArray(rec) ? rec : []);
+  }, [ownerId]);
+
+  useEffect(() => {
+    load();
+    loadLabels();
+  }, [load, loadLabels]);
+
+  const persistList = useCallback(
+    async (next) => {
+      listRef.current = next;
+      setList(next);
+      if (ownerId) await setJSON(`campaigns:${ownerId}`, next, false);
+    },
+    [ownerId]
+  );
+
+  const patchCampaigns = useCallback(
+    (ids, patch) => {
+      const set = new Set(ids);
+      return persistList(listRef.current.map((c) => (set.has(c.id) ? { ...c, ...patch, updatedAt: Date.now() } : c)));
+    },
+    [persistList]
+  );
+
+  const createDraft = useCallback(
+    async (data) => {
+      if (!ownerId) return null;
+      const campaign = {
+        id: uid("camp"),
+        subject: (data.subject || "").trim(),
+        body: (data.body || "").trim(),
+        audience: data.audience || { type: "all", groupId: null },
+        status: "draft",
+        starred: false,
+        important: false,
+        labelIds: [],
+        sendAt: null,
+        sentAt: null,
+        recipientCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      await persistList([campaign, ...listRef.current]);
+      return campaign;
+    },
+    [ownerId, persistList]
+  );
+
+  const updateCampaign = useCallback((id, patch) => patchCampaigns([id], patch), [patchCampaigns]);
+  const toggleStar = useCallback(
+    (id) => {
+      const cur = listRef.current.find((c) => c.id === id);
+      return patchCampaigns([id], { starred: !cur?.starred });
+    },
+    [patchCampaigns]
+  );
+  const toggleImportant = useCallback(
+    (id) => {
+      const cur = listRef.current.find((c) => c.id === id);
+      return patchCampaigns([id], { important: !cur?.important });
+    },
+    [patchCampaigns]
+  );
+
+  const trashCampaigns = useCallback((ids) => patchCampaigns(ids, { status: "trash" }), [patchCampaigns]);
+  const restoreCampaigns = useCallback((ids) => patchCampaigns(ids, { status: "draft" }), [patchCampaigns]);
+  const markSpam = useCallback((ids) => patchCampaigns(ids, { status: "spam" }), [patchCampaigns]);
+  const markNotSpam = useCallback((ids) => patchCampaigns(ids, { status: "draft" }), [patchCampaigns]);
+  const permanentlyDelete = useCallback(
+    (ids) => {
+      const drop = new Set(ids);
+      return persistList(listRef.current.filter((c) => !drop.has(c.id)));
+    },
+    [persistList]
+  );
+  const emptyTrash = useCallback(() => persistList(listRef.current.filter((c) => c.status !== "trash")), [persistList]);
+
+  const scheduleCampaign = useCallback((id, sendAt) => patchCampaigns([id], { status: "scheduled", sendAt }), [patchCampaigns]);
+  const cancelSchedule = useCallback((id) => patchCampaigns([id], { status: "draft", sendAt: null }), [patchCampaigns]);
+
+  // Delivers right now, to whatever recipients the caller resolved (it needs
+  // the mailing list + groups, which this hook deliberately doesn't own —
+  // same separation as BulkMessagingPanel always had between contacts and
+  // the send action itself).
+  const deliverCampaign = useCallback(
+    async (id, fromUser, recipients) => {
+      const campaign = listRef.current.find((c) => c.id === id);
+      let ok = 0;
+      for (const r of recipients) {
+        try {
+          const delivered = await deliverBroadcastMessage(fromUser, r.userId, r.name, r.avatar, campaign?.body || "");
+          if (delivered) ok++;
+        } catch (e) {
+          console.error("campaign send failed", e);
+        }
+      }
+      await patchCampaigns([id], { status: "sent", sentAt: Date.now(), sendAt: null, recipientCount: ok });
+      return ok;
+    },
+    [patchCampaigns]
+  );
+
+  // Fires any scheduled campaign whose time has come — same "next time
+  // someone with this open checks" tradeoff as the 1:1 scheduled-message
+  // sweep in useConversations, since there's no server cron in this stack.
+  const checkDue = useCallback(
+    async (fromUser, resolveRecipients) => {
+      if (!ownerId || !fromUser) return;
+      const rec = await readJSON(`campaigns:${ownerId}`, false, []);
+      if (!rec.ok) return;
+      const items = Array.isArray(rec.value) ? rec.value : [];
+      const now = Date.now();
+      const due = items.filter((c) => c.status === "scheduled" && c.sendAt && c.sendAt <= now);
+      if (!due.length) {
+        listRef.current = items;
+        setList(items);
+        return;
+      }
+      let next = items;
+      for (const campaign of due) {
+        const recipients = resolveRecipients(campaign.audience) || [];
+        let ok = 0;
+        for (const r of recipients) {
+          try {
+            const delivered = await deliverBroadcastMessage(fromUser, r.userId, r.name, r.avatar, campaign.body);
+            if (delivered) ok++;
+          } catch (e) {
+            console.error("scheduled campaign send failed", e);
+          }
+        }
+        next = next.map((c) => (c.id === campaign.id ? { ...c, status: "sent", sentAt: Date.now(), sendAt: null, recipientCount: ok } : c));
+      }
+      listRef.current = next;
+      setList(next);
+      await setJSON(`campaigns:${ownerId}`, next, false);
+    },
+    [ownerId]
+  );
+
+  const persistLabels = useCallback(
+    (next) => {
+      setLabels(next);
+      if (ownerId) setJSON(`campaignLabels:${ownerId}`, next, false);
+    },
+    [ownerId]
+  );
+  const createLabel = useCallback(
+    async (name) => {
+      const trimmed = (name || "").trim();
+      if (!trimmed) return null;
+      const label = { id: uid("clabel"), name: trimmed, createdAt: Date.now() };
+      await persistLabels([...labels, label]);
+      return label;
+    },
+    [labels, persistLabels]
+  );
+  const renameLabel = useCallback(
+    (id, name) => {
+      const trimmed = (name || "").trim();
+      if (!trimmed) return;
+      return persistLabels(labels.map((l) => (l.id === id ? { ...l, name: trimmed } : l)));
+    },
+    [labels, persistLabels]
+  );
+  const deleteLabel = useCallback(
+    async (id) => {
+      await persistLabels(labels.filter((l) => l.id !== id));
+      await persistList(listRef.current.map((c) => ((c.labelIds || []).includes(id) ? { ...c, labelIds: c.labelIds.filter((x) => x !== id) } : c)));
+    },
+    [labels, persistLabels, persistList]
+  );
+  const toggleLabel = useCallback(
+    (id, labelId) => {
+      const cur = listRef.current.find((c) => c.id === id);
+      const has = (cur?.labelIds || []).includes(labelId);
+      const nextIds = has ? (cur.labelIds || []).filter((x) => x !== labelId) : [...(cur?.labelIds || []), labelId];
+      return patchCampaigns([id], { labelIds: nextIds });
+    },
+    [patchCampaigns]
+  );
+  const addLabelToCampaigns = useCallback(
+    (ids, labelId) => {
+      const set = new Set(ids);
+      return persistList(
+        listRef.current.map((c) => {
+          if (!set.has(c.id)) return c;
+          const cur = c.labelIds || [];
+          return cur.includes(labelId) ? c : { ...c, labelIds: [...cur, labelId] };
+        })
+      );
+    },
+    [persistList]
+  );
+
+  return {
+    campaigns: list,
+    loading,
+    refresh: load,
+    labels,
+    createLabel,
+    renameLabel,
+    deleteLabel,
+    toggleLabel,
+    addLabelToCampaigns,
+    createDraft,
+    updateCampaign,
+    toggleStar,
+    toggleImportant,
+    trashCampaigns,
+    restoreCampaigns,
+    markSpam,
+    markNotSpam,
+    permanentlyDelete,
+    emptyTrash,
+    scheduleCampaign,
+    cancelSchedule,
+    deliverCampaign,
+    checkDue,
+  };
+}
+
+// Turns a campaign's stored audience into the actual contact list it points
+// at right now — "all", "purchasers" (customers with a completed order), or
+// one saved contact group.
+function resolveCampaignAudience(audience, { mailing, groupsApi, purchaserIds }) {
+  const contacts = mailing?.list || [];
+  if (audience?.type === "purchasers") {
+    return contacts.filter((c) => purchaserIds?.has(c.userId));
+  }
+  if (audience?.type === "group") {
+    const g = groupsApi?.groups?.find((x) => x.id === audience.groupId);
+    if (!g) return [];
+    return contacts.filter((c) => g.contactIds.includes(c.userId));
+  }
+  return contacts;
+}
+
+function campaignAudienceLabel(audience, groupsApi) {
+  if (audience?.type === "purchasers") return "Purchasers";
+  if (audience?.type === "group") return groupsApi?.groups?.find((g) => g.id === audience.groupId)?.name || "Group (deleted)";
+  return "All contacts";
+}
+
+// Create/edit a campaign. A sent campaign opens read-only — its content and
+// audience are history at that point, same as a Sent email you can't re-edit.
+function CampaignComposerModal({ open, onClose, initial, mailing, groupsApi, hasPurchasers, purchaserIds, onSaveDraft, onSchedule, onSend }) {
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [audienceValue, setAudienceValue] = useState("all");
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const readOnly = initial?.status === "sent";
+
+  useEffect(() => {
+    if (!open) return;
+    setSubject(initial?.subject || "");
+    setBody(initial?.body || "");
+    const a = initial?.audience;
+    setAudienceValue(a?.type === "group" ? `group:${a.groupId}` : a?.type === "purchasers" ? "purchasers" : "all");
+    setSending(false);
+  }, [open, initial]);
+
+  const audience = useMemo(() => {
+    if (audienceValue === "purchasers") return { type: "purchasers", groupId: null };
+    if (audienceValue.startsWith("group:")) return { type: "group", groupId: audienceValue.slice(6) };
+    return { type: "all", groupId: null };
+  }, [audienceValue]);
+
+  const recipientCount = useMemo(() => resolveCampaignAudience(audience, { mailing, groupsApi, purchaserIds }).length, [audience, mailing, groupsApi, purchaserIds]);
+
+  const canSave = body.trim().length > 0;
+  const data = { subject: subject.trim(), body: body.trim(), audience };
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="campaign-composer-title">
+      <div className="p-6">
+        <h2 id="campaign-composer-title" className="text-base font-bold text-stone-900 mb-3 flex items-center gap-2" style={displayFont}>
+          {readOnly ? "Campaign" : initial ? "Edit campaign" : "New campaign"}
+          {initial?.status === "scheduled" && <span className="cs-t10 font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Scheduled</span>}
+          {readOnly && <span className="cs-t10 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Sent</span>}
+        </h2>
+        <input
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          disabled={readOnly}
+          placeholder="Subject (optional)"
+          className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-700 mb-2 disabled:bg-stone-50 disabled:text-stone-500"
+        />
+        <label className="block cs-t10 font-bold text-stone-400 uppercase tracking-wide mb-1">Audience</label>
+        <select
+          value={audienceValue}
+          onChange={(e) => setAudienceValue(e.target.value)}
+          disabled={readOnly}
+          className="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-700 mb-2 bg-white disabled:bg-stone-50 disabled:text-stone-500"
+        >
+          <option value="all">All contacts ({mailing?.list.length || 0})</option>
+          {hasPurchasers && <option value="purchasers">Purchasers</option>}
+          {(groupsApi?.groups || []).map((g) => (
+            <option key={g.id} value={`group:${g.id}`}>
+              {g.name} ({g.contactIds.length})
+            </option>
+          ))}
+        </select>
+        {!readOnly && <p className="cs-t11 text-stone-400 mb-2">Will reach {recipientCount} contact{recipientCount === 1 ? "" : "s"}</p>}
+        {readOnly ? (
+          <div className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm bg-stone-50 text-stone-700 whitespace-pre-wrap mb-1 min-h-[5rem]">
+            {body || "(no message)"}
+          </div>
+        ) : (
+          <TextField
+            value={body}
+            onChange={setBody}
+            multiline
+            rows={4}
+            placeholder="Write your campaign…"
+            label="Message"
+            className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700 mb-1"
+          />
+        )}
+        {readOnly ? (
+          <p className="cs-t11 text-stone-400 mt-2">
+            Sent to {initial.recipientCount || 0} contact{initial.recipientCount === 1 ? "" : "s"} on {initial.sentAt ? new Date(initial.sentAt).toLocaleString() : "—"}
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <button
+              onClick={() => onSaveDraft(data)}
+              disabled={!canSave}
+              className="px-3.5 py-2 rounded-xl border border-stone-200 text-sm font-semibold text-stone-700 disabled:opacity-40"
+            >
+              Save draft
+            </button>
+            <button
+              onClick={() => setScheduleOpen(true)}
+              disabled={!canSave || recipientCount === 0}
+              className="px-3.5 py-2 rounded-xl border border-stone-200 text-sm font-semibold text-stone-700 disabled:opacity-40"
+            >
+              Schedule…
+            </button>
+            <button
+              onClick={async () => {
+                setSending(true);
+                await onSend(data);
+                setSending(false);
+              }}
+              disabled={!canSave || recipientCount === 0 || sending}
+              className="ml-auto px-4 py-2 rounded-xl bg-emerald-800 text-white text-sm font-semibold disabled:opacity-40"
+            >
+              {sending ? "Sending…" : `Send now to ${recipientCount}`}
+            </button>
+          </div>
+        )}
+        <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">{readOnly ? "Close" : "Cancel"}</button>
+      </div>
+      <ScheduleSendModal
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        onSchedule={(at) => {
+          setScheduleOpen(false);
+          onSchedule(data, at);
+        }}
+      />
+    </Modal>
+  );
+}
+
+// The per-row "⋮" for a single campaign — star/important/labels plus
+// whichever destructive/restorative action fits its current folder, same
+// shape as ConversationActionSheet.
+function CampaignActionSheet({ campaign, view, onClose, onEdit, onStar, onImportant, onLabels, onCancelSchedule, onSpam, onNotSpam, onTrash, onRestore, onDeleteForever }) {
+  if (!campaign) return null;
+  const inTrash = campaign.status === "trash";
+  const inSpam = campaign.status === "spam";
+  return (
+    <Modal open={!!campaign} onClose={onClose} labelledBy="campaign-action-title">
+      <div className="p-6">
+        <h2 id="campaign-action-title" className="sr-only">Campaign actions</h2>
+        <p className="text-xs text-stone-400 mb-4 line-clamp-1">{campaign.subject || "(no subject)"}</p>
+        <div className="flex flex-col gap-2">
+          {(campaign.status === "draft" || campaign.status === "scheduled") && (
+            <button onClick={onEdit} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+              <Pencil size={15} /> Edit
+            </button>
+          )}
+          {campaign.status === "scheduled" && (
+            <button onClick={onCancelSchedule} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-amber-50 text-sm font-semibold text-amber-700 flex items-center gap-2">
+              <Clock size={15} /> Cancel schedule
+            </button>
+          )}
+          <button onClick={onStar} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <Star size={15} className={campaign.starred ? "fill-amber-400 text-amber-400" : ""} /> {campaign.starred ? "Unstar" : "Star"}
+          </button>
+          <button onClick={onImportant} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <AlertCircle size={15} className={campaign.important ? "fill-amber-100 text-amber-600" : ""} /> {campaign.important ? "Mark not important" : "Mark important"}
+          </button>
+          <button onClick={onLabels} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
+            <Tag size={15} /> Labels…
+          </button>
+          {inTrash ? (
+            <button onClick={onRestore} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-emerald-50 text-sm font-semibold text-emerald-700 flex items-center gap-2">
+              <Inbox size={15} /> Move to Drafts
+            </button>
+          ) : inSpam ? (
+            <button onClick={onNotSpam} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-emerald-50 text-sm font-semibold text-emerald-700 flex items-center gap-2">
+              <Inbox size={15} /> Not spam
+            </button>
+          ) : (
+            <>
+              <button onClick={onSpam} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-amber-50 text-sm font-semibold text-amber-700 flex items-center gap-2">
+                <AlertTriangle size={15} /> Mark as spam
+              </button>
+              <button onClick={onTrash} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
+                <Trash2 size={15} /> Move to Trash
+              </button>
+            </>
+          )}
+          {(inTrash || inSpam) && (
+            <button onClick={onDeleteForever} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
+              <Trash2 size={15} /> Delete forever
+            </button>
+          )}
+        </div>
+        <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
+// The real Bulk Messaging workspace — Premium only, reachable as its own
+// screen (Sidebar's big gold hero, or Messages' "⋮ → Send Bulk Message").
+// Repurposes the exact Compose/Inbox/Starred/Important/Sent/Scheduled/
+// Drafts/Spam/Trash/Purchases/Labels vocabulary from 1:1 Messages, but every
+// row here is a broadcast campaign, not a conversation with one person.
+function BulkMessagingCampaignManager({ navigate }) {
+  const { me, showToast } = useApp();
   const ownerId = me?.isVendor && me?.shopId ? me.id : null;
   const mailing = useMailingList(ownerId);
   const groupsApi = useMessageGroups(ownerId);
-  const [activeGroupId, setActiveGroupId] = useState(null); // null = "All contacts"
-  const [selectedIds, setSelectedIds] = useState(() => new Set());
-  const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
-  const [renamingId, setRenamingId] = useState(null);
-  const [renameValue, setRenameValue] = useState("");
+  const campaignsApi = useCampaigns(ownerId);
 
-  const contacts = mailing.list;
-  const activeGroup = groupsApi.groups.find((g) => g.id === activeGroupId) || null;
-  const visibleContacts = activeGroup ? contacts.filter((c) => activeGroup.contactIds.includes(c.userId)) : contacts;
+  const [view, setView] = useState("inbox");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [editingCampaign, setEditingCampaign] = useState(null);
+  const [actionTarget, setActionTarget] = useState(null);
+  const [labelPickerFor, setLabelPickerFor] = useState(null);
+  const [labelCheckedIds, setLabelCheckedIds] = useState(() => new Set());
+  const [manageLabelsOpen, setManageLabelsOpen] = useState(false);
+  const [purchaseCustomerIds, setPurchaseCustomerIds] = useState(null);
 
-  const allVisibleSelected = visibleContacts.length > 0 && visibleContacts.every((c) => selectedIds.has(c.userId));
-  const toggleSelectAll = () => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (allVisibleSelected) visibleContacts.forEach((c) => next.delete(c.userId));
-      else visibleContacts.forEach((c) => next.add(c.userId));
-      return next;
-    });
-  };
-  const toggleContact = (userId) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(userId)) next.delete(userId);
-      else next.add(userId);
-      return next;
-    });
-  };
-
-  const handleCreateGroup = async () => {
-    const name = window.prompt("New group name");
-    if (!name || !name.trim()) return;
-    const group = await groupsApi.createGroup(name, Array.from(selectedIds));
-    setActiveGroupId(group.id);
-    showToast(`Group "${group.name}" created`);
-  };
-  const startRename = (g) => {
-    setRenamingId(g.id);
-    setRenameValue(g.name);
-  };
-  const commitRename = async () => {
-    if (renameValue.trim()) await groupsApi.renameGroup(renamingId, renameValue);
-    setRenamingId(null);
-  };
-  const handleDeleteGroup = async (g) => {
-    if (!window.confirm(`Delete the group "${g.name}"? This won't remove any contacts, just the group.`)) return;
-    await groupsApi.deleteGroup(g.id);
-    if (activeGroupId === g.id) setActiveGroupId(null);
-    showToast("Group deleted");
-  };
-  const handleSaveSelectionToGroup = async () => {
-    if (!activeGroup) return handleCreateGroup();
-    await groupsApi.setGroupContacts(activeGroup.id, Array.from(selectedIds));
-    showToast(`Saved to "${activeGroup.name}"`);
-  };
-
-  const send = async () => {
-    const recipients = contacts.filter((c) => selectedIds.has(c.userId));
-    if (!text.trim() || !recipients.length) return;
-    setSending(true);
-    let ok = 0;
-    for (const r of recipients) {
-      try {
-        const delivered = await deliverBroadcastMessage(me, r.userId, r.name, r.avatar, text.trim());
-        if (delivered) ok++;
-      } catch (e) {
-        console.error("bulk send failed", e);
-      }
+  // Same cross-reference as Messages' own Purchases tab: our own shop's
+  // order history (private kv) tells us which contacts have completed a
+  // purchase, so a "Purchases" campaign can target just them.
+  useEffect(() => {
+    let cancelled = false;
+    if (!me?.isVendor || !me?.shopId) {
+      setPurchaseCustomerIds(null);
+      return;
     }
-    setSending(false);
-    setText("");
-    showToast(`Sent to ${ok} contact${ok === 1 ? "" : "s"}`);
+    (async () => {
+      const orders = await getJSON(`orders:${me.shopId}`, false, []);
+      if (cancelled) return;
+      const ids = new Set((Array.isArray(orders) ? orders : []).filter((o) => o.completed).map((o) => o.customerUserId));
+      setPurchaseCustomerIds(ids);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [me?.isVendor, me?.shopId]);
+
+  const resolveRecipients = useCallback(
+    (audience) => resolveCampaignAudience(audience, { mailing, groupsApi, purchaserIds: purchaseCustomerIds }),
+    [mailing, groupsApi, purchaseCustomerIds]
+  );
+
+  // Fires any due scheduled campaign — on mount and every 20s, same
+  // "next time someone checks" tradeoff as every other scheduled-send
+  // sweep in this app (there's no server cron here).
+  useEffect(() => {
+    if (!ownerId) return;
+    campaignsApi.checkDue(me, resolveRecipients);
+    const iv = setInterval(() => campaignsApi.checkDue(me, resolveRecipients), 20000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownerId, resolveRecipients]);
+
+  const hasPurchasers = !!purchaseCustomerIds && purchaseCustomerIds.size > 0;
+
+  const visibleCampaigns = useMemo(() => {
+    const active = (c) => c.status !== "trash" && c.status !== "spam";
+    let rows;
+    if (view === "inbox") rows = campaignsApi.campaigns.filter(active);
+    else if (view === "starred") rows = campaignsApi.campaigns.filter((c) => c.starred && active(c));
+    else if (view === "important") rows = campaignsApi.campaigns.filter((c) => c.important && active(c));
+    else if (view === "sent") rows = campaignsApi.campaigns.filter((c) => c.status === "sent");
+    else if (view === "scheduled") rows = campaignsApi.campaigns.filter((c) => c.status === "scheduled");
+    else if (view === "drafts") rows = campaignsApi.campaigns.filter((c) => c.status === "draft");
+    else if (view === "spam") rows = campaignsApi.campaigns.filter((c) => c.status === "spam");
+    else if (view === "trash") rows = campaignsApi.campaigns.filter((c) => c.status === "trash");
+    else if (view === "purchases") rows = campaignsApi.campaigns.filter((c) => c.audience?.type === "purchasers" && active(c));
+    else rows = campaignsApi.campaigns.filter((c) => (c.labelIds || []).includes(view) && active(c));
+    return rows.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  }, [campaignsApi.campaigns, view]);
+
+  const activeLabel = campaignsApi.labels.find((l) => l.id === view) || null;
+  const viewTitle =
+    view === "inbox" ? "Campaigns" :
+    view === "starred" ? "Starred" :
+    view === "important" ? "Important" :
+    view === "sent" ? "Sent" :
+    view === "scheduled" ? "Scheduled" :
+    view === "drafts" ? "Drafts" :
+    view === "spam" ? "Spam" :
+    view === "trash" ? "Trash" :
+    view === "purchases" ? "Purchases" :
+    activeLabel ? activeLabel.name : "Campaigns";
+
+  const goToView = (v) => {
+    setView(v);
+    setSidebarOpen(false);
   };
+
+  const openLabelPicker = (id) => {
+    const c = campaignsApi.campaigns.find((x) => x.id === id);
+    setLabelCheckedIds(new Set(c?.labelIds || []));
+    setLabelPickerFor(id);
+  };
+  const runToggleLabel = (labelId) => {
+    campaignsApi.toggleLabel(labelPickerFor, labelId);
+    setLabelCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(labelId)) next.delete(labelId);
+      else next.add(labelId);
+      return next;
+    });
+  };
+  const runCreateAndApplyLabel = async (name) => {
+    const label = await campaignsApi.createLabel(name);
+    if (label) runToggleLabel(label.id);
+  };
+
+  const openComposer = (campaign) => {
+    setEditingCampaign(campaign || null);
+    setComposerOpen(true);
+  };
+  const closeComposer = () => {
+    setComposerOpen(false);
+    setEditingCampaign(null);
+  };
+
+  const handleSaveDraft = async (data) => {
+    if (editingCampaign) await campaignsApi.updateCampaign(editingCampaign.id, data);
+    else await campaignsApi.createDraft(data);
+    showToast("Draft saved");
+    closeComposer();
+  };
+  const handleSchedule = async (data, sendAt) => {
+    let id = editingCampaign?.id;
+    if (id) await campaignsApi.updateCampaign(id, data);
+    else {
+      const created = await campaignsApi.createDraft(data);
+      id = created?.id;
+    }
+    if (id) await campaignsApi.scheduleCampaign(id, sendAt);
+    showToast(`Scheduled for ${new Date(sendAt).toLocaleString()}`);
+    closeComposer();
+  };
+  const handleSend = async (data) => {
+    let id = editingCampaign?.id;
+    if (id) await campaignsApi.updateCampaign(id, data);
+    else {
+      const created = await campaignsApi.createDraft(data);
+      id = created?.id;
+    }
+    if (!id) return;
+    const recipients = resolveRecipients(data.audience);
+    const ok = await campaignsApi.deliverCampaign(id, me, recipients);
+    showToast(`Sent to ${ok} contact${ok === 1 ? "" : "s"}`);
+    closeComposer();
+  };
+
+  if (!ownerId) {
+    return (
+      <EmptyState
+        icon={Store}
+        title="No storefront yet"
+        body="Become a vendor first to unlock Bulk Messaging."
+        action={<button onClick={() => navigate({ screen: "store" })} className="text-sm font-semibold text-emerald-800">Start selling</button>}
+      />
+    );
+  }
 
   return (
-    <div className="flex-1 flex overflow-hidden">
-      {/* Groups rail */}
-      <div className="w-56 shrink-0 border-r border-stone-200 overflow-y-auto p-3 hidden sm:flex sm:flex-col">
+    <div className="flex-1 flex overflow-hidden relative">
+      <div
+        className={`${sidebarOpen ? "flex absolute inset-y-0 left-0 z-20 shadow-xl" : "hidden"} md:flex md:relative md:shadow-none w-60 shrink-0 flex-col border-r border-stone-200 overflow-y-auto bg-white`}
+      >
+        <div className="flex items-center justify-between px-4 pt-4 pb-2 md:hidden">
+          <span className="font-bold text-sm text-stone-700">Menu</span>
+          <button onClick={() => setSidebarOpen(false)} aria-label="Close menu" className="text-stone-400 p-1"><X size={16} /></button>
+        </div>
         <button
-          onClick={() => setActiveGroupId(null)}
-          className={`flex items-center gap-2 px-3 py-2 rounded-full text-sm font-semibold text-left mb-1 ${!activeGroupId ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"}`}
+          onClick={() => { openComposer(null); setSidebarOpen(false); }}
+          className="mx-3 mt-3 mb-1 px-4 py-2.5 rounded-2xl bg-emerald-800 text-white text-sm font-semibold flex items-center gap-2 shadow-sm hover:bg-emerald-700"
         >
-          <Users size={15} className="shrink-0" /> All contacts
-          <span className="ml-auto cs-t10 text-stone-400">{contacts.length}</span>
+          <Pencil size={15} /> Compose
         </button>
-        <div className="px-3 pt-3 pb-1">
-          <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Groups</span>
-        </div>
-        <div className="flex flex-col gap-0.5 mb-2">
-          {groupsApi.groups.map((g, i) => (
-            <div key={g.id} className={`group flex items-center gap-1 px-2 py-1.5 rounded-full text-sm font-semibold ${activeGroupId === g.id ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"}`}>
-              {renamingId === g.id ? (
-                <input
-                  autoFocus
-                  value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  onBlur={commitRename}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") commitRename();
-                    if (e.key === "Escape") setRenamingId(null);
-                  }}
-                  className="flex-1 min-w-0 border border-emerald-300 rounded-lg px-1.5 py-0.5 text-sm outline-none"
-                />
-              ) : (
-                <button onClick={() => setActiveGroupId(g.id)} className="flex-1 min-w-0 text-left truncate">
-                  {g.name} <span className="cs-t10 text-stone-400">({g.contactIds.length})</span>
-                </button>
-              )}
-              <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                <button onClick={() => groupsApi.moveGroup(g.id, -1)} disabled={i === 0} aria-label="Move up" className="text-stone-400 hover:text-stone-700 disabled:opacity-20 p-0.5">
-                  <ChevronUp size={13} />
-                </button>
-                <button onClick={() => groupsApi.moveGroup(g.id, 1)} disabled={i === groupsApi.groups.length - 1} aria-label="Move down" className="text-stone-400 hover:text-stone-700 disabled:opacity-20 p-0.5">
-                  <ChevronDown size={13} />
-                </button>
-                <button onClick={() => startRename(g)} aria-label="Rename group" className="text-stone-400 hover:text-emerald-700 p-0.5">
-                  <Pencil size={12} />
-                </button>
-                <button onClick={() => handleDeleteGroup(g)} aria-label="Delete group" className="text-stone-400 hover:text-rose-600 p-0.5">
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            </div>
+        <div className="flex flex-col gap-0.5 px-2 py-2">
+          {MESSAGE_NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => goToView(item.id)}
+              className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
+                view === item.id ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <item.icon size={16} className="shrink-0" /> {item.label}
+            </button>
           ))}
+          <button
+            onClick={() => goToView("purchases")}
+            className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
+              view === "purchases" ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
+            }`}
+          >
+            <ShoppingBag size={16} className="shrink-0" /> Purchases
+          </button>
         </div>
-        <button onClick={handleCreateGroup} className="flex items-center gap-2 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left">
-          <Plus size={15} className="shrink-0" /> Create group
-        </button>
+        <div className="px-4 pt-2 pb-1">
+          <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Labels</span>
+        </div>
+        <div className="flex flex-col gap-0.5 px-2 pb-3">
+          {campaignsApi.labels.map((l) => (
+            <button
+              key={l.id}
+              onClick={() => goToView(l.id)}
+              className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
+                view === l.id ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <Tag size={15} className="text-amber-600 shrink-0" /> <span className="truncate">{l.name}</span>
+            </button>
+          ))}
+          <button
+            onClick={async () => {
+              const name = window.prompt("New label name");
+              if (name && name.trim()) {
+                const label = await campaignsApi.createLabel(name);
+                if (label) goToView(label.id);
+              }
+            }}
+            className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
+          >
+            <Plus size={15} className="shrink-0" /> Create new label
+          </button>
+          <button
+            onClick={() => { setManageLabelsOpen(true); setSidebarOpen(false); }}
+            className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
+          >
+            <Folder size={15} className="shrink-0" /> Manage labels
+          </button>
+        </div>
       </div>
 
-      {/* Contacts + composer */}
+      {sidebarOpen && <div className="fixed inset-0 bg-black/30 z-10 md:hidden" onClick={() => setSidebarOpen(false)} />}
+
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-4 pt-4 pb-2 border-b border-stone-200">
-          <div className="flex items-center gap-2 mb-1">
-            <Megaphone size={18} className="text-emerald-800" />
-            <h1 className="text-xl font-bold text-stone-900" style={displayFont}>Bulk Messaging</h1>
-            <CrownPill />
-          </div>
-          <p className="cs-t11 text-stone-400">{activeGroup ? activeGroup.name : "All contacts"} · {selectedIds.size} selected of {visibleContacts.length}</p>
+        <div className="flex items-center gap-2 px-4 pt-4 pb-2 border-b border-stone-200">
+          <button onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="md:hidden text-stone-500 p-1 -ml-1"><Menu size={18} /></button>
+          <Megaphone size={18} className="text-amber-600 shrink-0" />
+          <h1 className="text-xl font-bold text-stone-900 flex-1" style={displayFont}>{viewTitle}</h1>
         </div>
-        <div className="flex-1 overflow-y-auto p-4">
-          {contacts.length === 0 ? (
-            <EmptyState icon={Users} title="No contacts yet" body="Anyone who messages your shop is added here automatically — come back once your first message rolls in." />
+        <div className="flex-1 overflow-y-auto">
+          {campaignsApi.campaigns.length === 0 ? (
+            <EmptyState icon={Megaphone} title="No campaigns yet" body="Compose your first campaign to reach your mailing list." />
+          ) : visibleCampaigns.length === 0 ? (
+            <EmptyState
+              icon={view === "trash" ? Trash2 : view === "spam" ? AlertTriangle : view === "purchases" ? ShoppingBag : Inbox}
+              title={`Nothing in ${viewTitle}`}
+              body="Nothing here yet."
+            />
           ) : (
-            <>
-              <label className="flex items-center gap-2 mb-2 text-sm font-semibold text-stone-600">
-                <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} className="w-4 h-4 accent-emerald-700" />
-                Select all
-              </label>
-              <div className="space-y-1 mb-4">
-                {visibleContacts.map((c) => (
-                  <label key={c.userId} className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl hover:bg-stone-50 cursor-pointer">
-                    <input type="checkbox" checked={selectedIds.has(c.userId)} onChange={() => toggleContact(c.userId)} className="w-4 h-4 accent-emerald-700 shrink-0" />
-                    <Avatar emoji={c.avatar} name={c.name} size="sm" />
-                    <span className="text-sm font-medium text-stone-700 truncate">{c.name}</span>
-                  </label>
-                ))}
-              </div>
-              <button onClick={handleSaveSelectionToGroup} disabled={selectedIds.size === 0} className="text-xs font-semibold text-emerald-700 disabled:opacity-40 mb-4">
-                {activeGroup ? `Update "${activeGroup.name}" with current selection` : "Save selection as a new group"}
-              </button>
-              <TextField
-                value={text}
-                onChange={setText}
-                multiline
-                rows={3}
-                placeholder="Write your message…"
-                label="Message"
-                className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700 mb-2"
-              />
-              <div className="flex items-center justify-between gap-2">
-                <p className="cs-t11 text-stone-400">Delivered as an in-app message + notification to each selected contact</p>
+            visibleCampaigns.map((c) => (
+              <div
+                key={c.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => openComposer(c)}
+                onKeyDown={(e) => { if (e.key === "Enter") openComposer(c); }}
+                className="flex items-center gap-3 px-4 py-3 text-left hover:bg-stone-50 transition cursor-pointer border-b border-stone-100"
+              >
                 <button
-                  onClick={send}
-                  disabled={sending || !text.trim() || selectedIds.size === 0}
-                  className="bg-emerald-800 text-white text-sm font-semibold px-4 py-2 rounded-full disabled:opacity-40 shrink-0"
+                  onClick={(e) => { e.stopPropagation(); campaignsApi.toggleStar(c.id); }}
+                  aria-label={c.starred ? "Unstar" : "Star"}
+                  className="shrink-0 text-stone-300 hover:text-amber-400"
                 >
-                  {sending ? "Sending…" : `Send to ${selectedIds.size}`}
+                  <Star size={15} className={c.starred ? "fill-amber-400 text-amber-400" : ""} />
+                </button>
+                <span className="w-9 h-9 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                  <Megaphone size={16} />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-stone-800 truncate flex items-center gap-1.5">
+                    <span className="truncate">{c.subject || "(no subject)"}</span>
+                    {(c.labelIds || []).slice(0, 2).map((lid) => {
+                      const l = campaignsApi.labels.find((x) => x.id === lid);
+                      return l ? (
+                        <span key={lid} className="cs-t10 bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold shrink-0">
+                          {l.name}
+                        </span>
+                      ) : null;
+                    })}
+                  </p>
+                  <p className="text-xs text-stone-400 truncate">
+                    {campaignAudienceLabel(c.audience, groupsApi)} · {c.body || "No message yet"}
+                  </p>
+                  {c.status === "scheduled" && (
+                    <p className="cs-t10 text-amber-700 font-semibold mt-0.5">Sends {c.sendAt ? new Date(c.sendAt).toLocaleString() : "—"}</p>
+                  )}
+                </div>
+                <span className="cs-t10 text-stone-400 shrink-0">
+                  {c.status === "sent" ? timeAgo(c.sentAt) : c.status === "draft" ? "Draft" : timeAgo(c.updatedAt)}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setActionTarget(c); }}
+                  aria-label="Campaign options"
+                  className="shrink-0 text-stone-300 hover:text-stone-600 p-1 -mr-1"
+                >
+                  <MoreVertical size={16} />
                 </button>
               </div>
-            </>
+            ))
           )}
         </div>
       </div>
+
+      <CampaignComposerModal
+        open={composerOpen}
+        onClose={closeComposer}
+        initial={editingCampaign}
+        mailing={mailing}
+        groupsApi={groupsApi}
+        hasPurchasers={hasPurchasers}
+        purchaserIds={purchaseCustomerIds}
+        onSaveDraft={handleSaveDraft}
+        onSchedule={handleSchedule}
+        onSend={handleSend}
+      />
+
+      <CampaignActionSheet
+        campaign={actionTarget}
+        view={view}
+        onClose={() => setActionTarget(null)}
+        onEdit={() => { const c = actionTarget; setActionTarget(null); openComposer(c); }}
+        onStar={() => { campaignsApi.toggleStar(actionTarget.id); setActionTarget(null); }}
+        onImportant={() => { campaignsApi.toggleImportant(actionTarget.id); setActionTarget(null); }}
+        onLabels={() => { openLabelPicker(actionTarget.id); setActionTarget(null); }}
+        onCancelSchedule={() => { campaignsApi.cancelSchedule(actionTarget.id); setActionTarget(null); showToast("Schedule canceled"); }}
+        onSpam={() => { campaignsApi.markSpam([actionTarget.id]); setActionTarget(null); showToast("Marked as spam"); }}
+        onNotSpam={() => { campaignsApi.markNotSpam([actionTarget.id]); setActionTarget(null); }}
+        onTrash={() => { campaignsApi.trashCampaigns([actionTarget.id]); setActionTarget(null); showToast("Moved to trash"); }}
+        onRestore={() => { campaignsApi.restoreCampaigns([actionTarget.id]); setActionTarget(null); showToast("Moved to Drafts"); }}
+        onDeleteForever={() => { campaignsApi.permanentlyDelete([actionTarget.id]); setActionTarget(null); showToast("Deleted forever"); }}
+      />
+
+      <LabelPickerModal
+        open={!!labelPickerFor}
+        labels={campaignsApi.labels}
+        count={1}
+        checkedIds={labelCheckedIds}
+        onClose={() => setLabelPickerFor(null)}
+        onToggle={runToggleLabel}
+        onCreateAndApply={runCreateAndApplyLabel}
+        noun="campaign"
+      />
+
+      <ManageLabelsModal
+        open={manageLabelsOpen}
+        labels={campaignsApi.labels}
+        onClose={() => setManageLabelsOpen(false)}
+        onRename={campaignsApi.renameLabel}
+        onDelete={(id) => {
+          if (view === id) setView("inbox");
+          campaignsApi.deleteLabel(id);
+        }}
+        noun="campaign"
+      />
     </div>
   );
 }
 
-// Non-Premium (or non-vendor) preview of Bulk Messaging: same shell, sample
-// contacts and groups, wrapped in ToolLock so clicking anything routes to
-// Plans — the same "see it, then unlock it" treatment as My Store's preview.
-function BulkMessagingPreview({ navigate }) {
-  const sampleGroups = [
-    { id: "g1", name: "Regular customers", contactIds: [1, 2, 3] },
-    { id: "g2", name: "Market day only", contactIds: [4, 5] },
-  ];
-  const sampleContacts = [
-    { userId: 1, name: "Maria Alvarez", avatar: "🧑🏽" },
-    { userId: 2, name: "Dwight Combs", avatar: "🧔" },
-    { userId: 3, name: "Priya Nair", avatar: "👩🏾" },
-    { userId: 4, name: "Tom Riley", avatar: "🧑" },
-    { userId: 5, name: "Sam Okafor", avatar: "👨🏿" },
-  ];
+// Non-Premium preview of the campaign manager — same shell, a few sample
+// campaigns across different folders, but every control is locked behind
+// ToolLock: this is the one part of Bulk Messaging the user explicitly
+// wants gated ("should not be accessible unless you have premium... put a
+// crown on it and lead them to sign up"), unlike the Orders/Calendar
+// previews which stay fully interactive sandboxes.
+function BulkMessagingCampaignPreview({ navigate }) {
+  const SAMPLE = useMemo(
+    () => [
+      { id: "prev-1", subject: "Fresh peaches just picked!", body: "Stop by this weekend — limited boxes available.", audienceLabel: "All contacts", status: "sent", sentAt: Date.now() - 86400000 * 2, recipientCount: 48 },
+      { id: "prev-2", subject: "Loyalty thank-you", body: "10% off your next pickup, just for our regulars.", audienceLabel: "Purchasers", status: "scheduled", sendAt: Date.now() + 86400000 },
+      { id: "prev-3", subject: "New winter squash varieties", body: "", audienceLabel: "Regular customers", status: "draft" },
+    ],
+    []
+  );
   return (
-    <div className="flex-1 flex overflow-hidden">
-      <ToolLock locked navigate={navigate} label="Premium — Bulk Messaging">
-        <div className="flex flex-1 overflow-hidden">
-          <div className="w-56 shrink-0 border-r border-stone-200 p-3 hidden sm:flex sm:flex-col">
-            <div className="flex items-center gap-2 px-3 py-2 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-900 mb-1">
-              <Users size={15} /> All contacts <span className="ml-auto cs-t10 text-stone-400">5</span>
+    <div className="flex-1 flex overflow-hidden relative">
+      <ToolLock locked navigate={navigate} label="Upgrade to Premium">
+        <div className="flex-1 flex overflow-hidden">
+          <div className="w-60 shrink-0 border-r border-stone-200 overflow-y-auto bg-white hidden md:flex md:flex-col">
+            <div className="mx-3 mt-3 mb-1 px-4 py-2.5 rounded-2xl bg-emerald-800 text-white text-sm font-semibold flex items-center gap-2">
+              <Pencil size={15} /> Compose
             </div>
-            <div className="px-3 pt-3 pb-1">
-              <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Groups</span>
-            </div>
-            {sampleGroups.map((g) => (
-              <div key={g.id} className="px-3 py-1.5 rounded-full text-sm font-semibold text-stone-600">
-                {g.name} <span className="cs-t10 text-stone-400">({g.contactIds.length})</span>
+            <div className="flex flex-col gap-0.5 px-2 py-2">
+              {MESSAGE_NAV_ITEMS.map((item, i) => (
+                <div key={item.id} className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold ${i === 0 ? "bg-emerald-100 text-emerald-900" : "text-stone-600"}`}>
+                  <item.icon size={16} className="shrink-0" /> {item.label}
+                </div>
+              ))}
+              <div className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-600">
+                <ShoppingBag size={16} className="shrink-0" /> Purchases
               </div>
-            ))}
-            <div className="flex items-center gap-2 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 mt-1">
-              <Plus size={15} /> Create group
+            </div>
+            <div className="px-4 pt-2 pb-1">
+              <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Labels</span>
             </div>
           </div>
           <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="px-4 pt-4 pb-2 border-b border-stone-200">
-              <div className="flex items-center gap-2 mb-1">
-                <Megaphone size={18} className="text-emerald-800" />
-                <h1 className="text-xl font-bold text-stone-900" style={displayFont}>Bulk Messaging</h1>
-                <CrownPill />
-              </div>
-              <p className="cs-t11 text-stone-400">All contacts · 0 selected of 5</p>
+            <div className="flex items-center gap-2 px-4 pt-4 pb-2 border-b border-stone-200">
+              <Megaphone size={18} className="text-amber-600 shrink-0" />
+              <h1 className="text-xl font-bold text-stone-900 flex-1" style={displayFont}>Campaigns</h1>
+              <CrownPill />
             </div>
-            <div className="flex-1 overflow-y-auto p-4">
-              <label className="flex items-center gap-2 mb-2 text-sm font-semibold text-stone-600">
-                <input type="checkbox" readOnly className="w-4 h-4 accent-emerald-700" /> Select all
-              </label>
-              <div className="space-y-1 mb-4">
-                {sampleContacts.map((c) => (
-                  <div key={c.userId} className="flex items-center gap-2.5 px-2 py-1.5 rounded-xl">
-                    <input type="checkbox" readOnly className="w-4 h-4 accent-emerald-700 shrink-0" />
-                    <Avatar emoji={c.avatar} name={c.name} size="sm" />
-                    <span className="text-sm font-medium text-stone-700 truncate">{c.name}</span>
+            <div className="flex-1 overflow-y-auto">
+              {SAMPLE.map((c) => (
+                <div key={c.id} className="flex items-center gap-3 px-4 py-3 border-b border-stone-100">
+                  <Star size={15} className="text-stone-300 shrink-0" />
+                  <span className="w-9 h-9 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                    <Megaphone size={16} />
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm text-stone-800 truncate">{c.subject}</p>
+                    <p className="text-xs text-stone-400 truncate">{c.audienceLabel} · {c.body || "No message yet"}</p>
+                    {c.status === "scheduled" && <p className="cs-t10 text-amber-700 font-semibold mt-0.5">Sends {new Date(c.sendAt).toLocaleString()}</p>}
                   </div>
-                ))}
-              </div>
-              <textarea
-                readOnly
-                value="What's new at your shop?"
-                rows={3}
-                className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none mb-2 resize-none text-stone-400"
-              />
-              <div className="flex items-center justify-between gap-2">
-                <p className="cs-t11 text-stone-400">Delivered as an in-app message + notification to each selected contact</p>
-                <button className="bg-emerald-800 text-white text-sm font-semibold px-4 py-2 rounded-full opacity-60 shrink-0">Send to 0</button>
-              </div>
+                  <span className="cs-t10 text-stone-400 shrink-0">{c.status === "sent" ? timeAgo(c.sentAt) : c.status === "draft" ? "Draft" : ""}</span>
+                  <MoreVertical size={16} className="shrink-0 text-stone-300" />
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -13589,21 +14241,13 @@ function BulkMessagingPreview({ navigate }) {
   );
 }
 
-// Standalone entry point for Bulk Messaging that does NOT require signing in
-// first — same "show it before you ask for an account" treatment as
-// VendorDashboard's isDemo branch. The nav button inside MessagesView (see
-// the `view === "bulk"` branch there) is how an already-logged-in Premium
-// vendor reaches the real workspace while browsing their inbox; this screen
-// is the separate, ungated front door for everyone else — a visitor or a
-// Basic/Free account — reached from the Sidebar or the Site map without ever
-// having to pass through the (auth-required) Messages inbox at all.
+// Route entry point for "bulkMessaging" — Premium gets the real campaign
+// manager, everyone else (guests included) gets the locked preview with its
+// own Upgrade CTA, same premium-gate-first pattern as OrdersScreen.
 function BulkMessagingScreen({ navigate }) {
-  const { me, showToast } = useApp();
-  return isPremiumPlan(me) ? (
-    <BulkMessagingPanel me={me} navigate={navigate} showToast={showToast} />
-  ) : (
-    <BulkMessagingPreview navigate={navigate} />
-  );
+  const { me } = useApp();
+  if (!isPremiumPlan(me)) return <BulkMessagingCampaignPreview navigate={navigate} />;
+  return <BulkMessagingCampaignManager navigate={navigate} />;
 }
 
 /* ============================================================================
@@ -15787,23 +16431,212 @@ function buildOrdersPreviewDemoData() {
   return { items, orders, events };
 }
 
+// A real, working sandbox — not a locked, greyed-out mockup. Every add/edit/
+// complete/archive/delete action here genuinely works, exactly like the
+// Premium version, so a visitor or Basic vendor can actually try the tool
+// instead of just staring at it. The only thing that makes this a "preview"
+// is that none of it is persisted anywhere (plain useState, reset to the
+// same sample data on reload) and it never touches a real shop's storage —
+// nothing here can leak into, or collide with, anyone's real Orders data.
 function OrdersPreviewScreen({ navigate, tab, setTab }) {
   const demo = useMemo(() => buildOrdersPreviewDemoData(), []);
-  const lockNudge = useCallback(() => navigate({ screen: "plans" }), [navigate]);
-  const previewShop = useMemo(() => ({ id: "preview-shop", inventoryEnabled: true, autoOutOfStock: true }), []);
-  const mockOrders = useMemo(
-    () => ({ orders: demo.orders, loading: false, addOrder: lockNudge, updateOrder: lockNudge, removeOrder: lockNudge, archiveOrder: lockNudge, reload: () => {} }),
-    [demo.orders, lockNudge]
-  );
-  const mockInventory = useMemo(
-    () => ({ items: demo.items, log: [], loading: false, addItem: lockNudge, updateItem: lockNudge, removeItem: lockNudge, adjustStock: lockNudge, adjustStockBatch: lockNudge, reload: () => {} }),
-    [demo.items, lockNudge]
-  );
-  const mockCalendar = useMemo(
-    () => ({ events: demo.events, loading: false, addEvent: lockNudge, updateEvent: lockNudge, removeEvent: lockNudge, reload: () => {} }),
-    [demo.events, lockNudge]
-  );
+  const [previewShop, setPreviewShop] = useState({ id: "preview-shop", inventoryEnabled: true, autoOutOfStock: true });
+  const [ordersList, setOrdersList] = useState(demo.orders);
+  const [items, setItems] = useState(demo.items);
+  const [events, setEvents] = useState(demo.events);
   const now = Date.now();
+
+  const patchShop = useCallback((partial) => setPreviewShop((prev) => ({ ...prev, ...partial })), []);
+
+  const addOrder = useCallback(async (draft) => {
+    const order = {
+      id: uid("prev-order"),
+      customerName: (draft.customerName || "").trim(),
+      customerUserId: null,
+      items: normalizeOrderItems(draft.items),
+      pickupDate: draft.pickupDate || "",
+      pickupTime: draft.pickupTime || "",
+      pickupLocation: draft.pickupLocation || "",
+      notes: draft.notes || "",
+      completed: false,
+      completedAt: null,
+      archived: false,
+      calendarEventId: draft.calendarEventId || null,
+      createdAt: Date.now(),
+    };
+    setOrdersList((prev) => [order, ...prev]);
+    return order;
+  }, []);
+  const updateOrder = useCallback(async (id, patch) => {
+    const norm = { ...patch };
+    if (norm.items) norm.items = normalizeOrderItems(norm.items);
+    setOrdersList((prev) => prev.map((o) => (o.id === id ? { ...o, ...norm } : o)));
+  }, []);
+  const removeOrder = useCallback(async (id) => {
+    setOrdersList((prev) => prev.filter((o) => o.id !== id));
+  }, []);
+  const archiveOrder = useCallback(async (id, archived = true) => {
+    setOrdersList((prev) => prev.map((o) => (o.id === id ? { ...o, archived } : o)));
+  }, []);
+  const orders = useMemo(
+    () => ({ orders: ordersList, loading: false, addOrder, updateOrder, removeOrder, archiveOrder, reload: () => {} }),
+    [ordersList, addOrder, updateOrder, removeOrder, archiveOrder]
+  );
+
+  const adjustStockBatch = useCallback(async (deltas) => {
+    setItems((prev) =>
+      prev.map((it) => {
+        const d = deltas.find((x) => x.id === it.id);
+        if (!d) return it;
+        return { ...it, qty: Math.max(0, it.qty + d.delta), updatedAt: Date.now() };
+      })
+    );
+  }, []);
+  const adjustStock = useCallback((id, delta) => adjustStockBatch([{ id, delta }]), [adjustStockBatch]);
+  const addItem = useCallback(async (draft) => {
+    const item = {
+      id: uid("prev-item"),
+      name: (draft.name || "").trim(),
+      category: draft.category || "Other",
+      unit: draft.unit || "each",
+      qty: Number(draft.qty) || 0,
+      lowStockThreshold: draft.lowStockThreshold === "" || draft.lowStockThreshold == null ? null : Number(draft.lowStockThreshold),
+      price: Number(draft.price) || 0,
+      notes: draft.notes || "",
+      // Preview items never link to a real storefront listing — there's no
+      // real shop behind this sandbox to link one to.
+      linkedProductId: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    setItems((prev) => [item, ...prev]);
+    return item;
+  }, []);
+  const updateItem = useCallback(async (id, patch) => {
+    const norm = { ...patch, linkedProductId: null };
+    if (norm.qty !== undefined) norm.qty = Number(norm.qty) || 0;
+    if (norm.price !== undefined) norm.price = Number(norm.price) || 0;
+    if (norm.lowStockThreshold !== undefined) {
+      norm.lowStockThreshold = norm.lowStockThreshold === "" || norm.lowStockThreshold == null ? null : Number(norm.lowStockThreshold);
+    }
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...norm, updatedAt: Date.now() } : it)));
+  }, []);
+  const removeItem = useCallback(async (id) => {
+    setItems((prev) => prev.filter((it) => it.id !== id));
+  }, []);
+  const inventory = useMemo(
+    () => ({ items, log: [], loading: false, addItem, updateItem, removeItem, adjustStock, adjustStockBatch, reload: () => {} }),
+    [items, addItem, updateItem, removeItem, adjustStock, adjustStockBatch]
+  );
+
+  const addEvent = useCallback(async (draft) => {
+    const ev = {
+      id: uid("prev-cal"),
+      title: (draft.title || "").trim(),
+      date: draft.date || "",
+      time: draft.time || "",
+      notes: draft.notes || "",
+      orderId: draft.orderId || null,
+      kind: draft.kind || "note",
+      reminderMinutesBefore: draft.reminderMinutesBefore ?? null,
+      reminderAt: draft.reminderAt ?? null,
+      createdAt: Date.now(),
+    };
+    setEvents((prev) => [ev, ...prev]);
+    return ev;
+  }, []);
+  const updateEvent = useCallback(async (id, patch) => {
+    setEvents((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  }, []);
+  const removeEvent = useCallback(async (id) => {
+    setEvents((prev) => prev.filter((e) => e.id !== id));
+  }, []);
+  const calendar = useMemo(
+    () => ({ events, loading: false, addEvent, updateEvent, removeEvent, reload: () => {} }),
+    [events, addEvent, updateEvent, removeEvent]
+  );
+
+  const [orderModal, setOrderModal] = useState(null);
+  const [itemModal, setItemModal] = useState(null);
+  const [noteModal, setNoteModal] = useState(null);
+  const [eventDetail, setEventDetail] = useState(null);
+  const [calendarPickModal, setCalendarPickModal] = useState(null);
+  const [dayView, setDayView] = useState(null);
+
+  const linkOrderToCalendar = async (order, draft) => {
+    const ev = await calendar.addEvent({
+      title: `${draft.customerName} pickup`,
+      date: draft.pickupDate,
+      time: draft.pickupTime,
+      notes: draft.pickupLocation,
+      orderId: order.id,
+      kind: "order",
+    });
+    await orders.updateOrder(order.id, { calendarEventId: ev.id });
+  };
+  const handleCreateOrder = async (draft) => {
+    const order = await orders.addOrder(draft);
+    if (draft.pickupDate) await linkOrderToCalendar(order, draft);
+  };
+  const handleUpdateOrder = async (order, draft) => {
+    await orders.updateOrder(order.id, draft);
+    if (order.calendarEventId) {
+      if (draft.pickupDate) {
+        await calendar.updateEvent(order.calendarEventId, {
+          title: `${draft.customerName} pickup`,
+          date: draft.pickupDate,
+          time: draft.pickupTime,
+          notes: draft.pickupLocation,
+        });
+      } else {
+        await calendar.removeEvent(order.calendarEventId);
+        await orders.updateOrder(order.id, { calendarEventId: null });
+      }
+    } else if (draft.pickupDate) {
+      await linkOrderToCalendar(order, draft);
+    }
+  };
+  const handleAddOrderToCalendar = async (order, draft) => {
+    const ev = await calendar.addEvent({ title: `${order.customerName} pickup`, date: draft.date, time: draft.time, notes: order.pickupLocation, orderId: order.id, kind: "order" });
+    await orders.updateOrder(order.id, { calendarEventId: ev.id, pickupDate: draft.date, pickupTime: draft.time });
+  };
+  const handleToggleComplete = async (order) => {
+    const nowCompleting = !order.completed;
+    const trackingOn = previewShop.inventoryEnabled !== false;
+    let items2 = order.items;
+    let deltas = [];
+    if (trackingOn) {
+      if (nowCompleting) {
+        items2 = order.items.map((li) => {
+          if (li.inventoryItemId) return li;
+          const match = inventory.items.find((it) => it.name.trim().toLowerCase() === (li.name || "").trim().toLowerCase());
+          return match ? { ...li, inventoryItemId: match.id } : li;
+        });
+        deltas = items2.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: -li.qty }));
+      } else {
+        deltas = order.items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: li.qty }));
+      }
+    }
+    if (deltas.length) await inventory.adjustStockBatch(deltas);
+    await orders.updateOrder(order.id, { items: items2, completed: nowCompleting, completedAt: nowCompleting ? Date.now() : null });
+  };
+  const handleSaveInventoryItem = async (draft) => {
+    const { showStock, prevLinkedProductId, ...itemDraft } = draft;
+    if (itemModal.mode === "edit") await inventory.updateItem(itemModal.item.id, itemDraft);
+    else await inventory.addItem(itemDraft);
+  };
+  const handleArchive = async (id, archived) => {
+    await orders.archiveOrder(id, archived);
+  };
+  const handleDeleteOrder = async (id) => {
+    const order = orders.orders.find((o) => o.id === id);
+    if (order?.calendarEventId) await calendar.removeEvent(order.calendarEventId);
+    await orders.removeOrder(id);
+  };
+  const unlinkOrderEvent = async (ev) => {
+    await calendar.removeEvent(ev.id);
+    if (ev.orderId) await orders.updateOrder(ev.orderId, { calendarEventId: null });
+  };
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
@@ -15832,28 +16665,113 @@ function OrdersPreviewScreen({ navigate, tab, setTab }) {
         </div>
       </div>
       <div className="max-w-3xl mx-auto p-4">
-        <p className="text-stone-500 text-sm mb-4">A preview with sample data — upgrade to Premium to track your own orders, inventory, and calendar.</p>
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 mb-4">
+          <Crown size={15} className="text-amber-500 shrink-0" />
+          <p className="text-stone-600 text-xs">
+            <span className="font-semibold text-stone-700">Try it out</span> — everything here is fully interactive with sample data. Nothing you do is saved, and it's never connected to real
+            customers. <button onClick={() => navigate({ screen: "plans" })} className="font-semibold text-emerald-700 underline underline-offset-2">Upgrade to Premium</button> to do this for real.
+          </p>
+        </div>
         {tab === "orders" && (
-          <ToolLock locked navigate={navigate} label="Premium — track real orders">
-            <OrdersTab orders={mockOrders} now={now} onAddOrder={lockNudge} onEdit={lockNudge} onToggleComplete={lockNudge} onArchive={lockNudge} onDelete={lockNudge} onAddToCalendar={lockNudge} />
-          </ToolLock>
+          <OrdersTab
+            orders={orders}
+            now={now}
+            onAddOrder={() => setOrderModal({ mode: "add" })}
+            onEdit={(o) => setOrderModal({ mode: "edit", order: o })}
+            onToggleComplete={handleToggleComplete}
+            onArchive={(id) => handleArchive(id, true)}
+            onDelete={handleDeleteOrder}
+            onAddToCalendar={(order) => setCalendarPickModal(order)}
+          />
         )}
         {tab === "calendar" && (
-          <ToolLock locked navigate={navigate} label="Premium — sync your real calendar">
-            <CalendarTab calendar={mockCalendar} orders={mockOrders} now={now} onAddNote={lockNudge} onOpenEvent={lockNudge} onOpenDay={lockNudge} />
-          </ToolLock>
+          <CalendarTab
+            calendar={calendar}
+            orders={orders}
+            now={now}
+            onAddNote={(date, time) => setNoteModal({ mode: "add", date, time })}
+            onOpenEvent={(ev) => setEventDetail(ev)}
+            onOpenDay={(date) => setDayView(date)}
+          />
         )}
         {tab === "inventory" && (
-          <ToolLock locked navigate={navigate} label="Premium — track real inventory">
-            <InventoryTab shop={previewShop} patchShop={lockNudge} products={[]} inventory={mockInventory} orders={mockOrders.orders} onAdd={lockNudge} onEdit={lockNudge} />
-          </ToolLock>
+          <InventoryTab shop={previewShop} patchShop={patchShop} products={[]} inventory={inventory} orders={orders.orders} onAdd={() => setItemModal({ mode: "add" })} onEdit={(it) => setItemModal({ mode: "edit", item: it })} />
         )}
-        {tab === "archive" && (
-          <ToolLock locked navigate={navigate} label="Premium — keep your real archive">
-            <ArchiveTab orders={mockOrders} onRestore={lockNudge} onDelete={lockNudge} />
-          </ToolLock>
-        )}
+        {tab === "archive" && <ArchiveTab orders={orders} onRestore={(id) => handleArchive(id, false)} onDelete={handleDeleteOrder} />}
       </div>
+
+      {orderModal && (
+        <OrderFormModal
+          open
+          onClose={() => setOrderModal(null)}
+          inventory={inventory}
+          products={[]}
+          initial={orderModal.mode === "edit" ? orderModal.order : null}
+          onSave={(draft) => (orderModal.mode === "edit" ? handleUpdateOrder(orderModal.order, draft) : handleCreateOrder(draft))}
+        />
+      )}
+      {itemModal && (
+        <InventoryItemModal open onClose={() => setItemModal(null)} initial={itemModal.mode === "edit" ? itemModal.item : null} products={[]} onSave={handleSaveInventoryItem} />
+      )}
+      {noteModal && (
+        <CalendarNoteModal
+          open
+          onClose={() => setNoteModal(null)}
+          initialDate={noteModal.mode === "add" ? noteModal.date : null}
+          initialTime={noteModal.mode === "add" ? noteModal.time : null}
+          initial={noteModal.mode === "edit" ? noteModal.event : null}
+          onSave={(draft) => (noteModal.mode === "edit" ? calendar.updateEvent(noteModal.event.id, draft) : calendar.addEvent(draft))}
+        />
+      )}
+      {calendarPickModal && (
+        <AddOrderToCalendarModal open order={calendarPickModal} onClose={() => setCalendarPickModal(null)} onSave={(draft) => handleAddOrderToCalendar(calendarPickModal, draft)} />
+      )}
+      {eventDetail && (
+        <EventDetailModal
+          open
+          onClose={() => setEventDetail(null)}
+          event={eventDetail}
+          order={eventDetail.kind === "order" ? orders.orders.find((o) => o.id === eventDetail.orderId) : null}
+          onManageOrder={(order) => {
+            setEventDetail(null);
+            setTab("orders");
+            setOrderModal({ mode: "edit", order });
+          }}
+          onUnlinkOrder={eventDetail.kind === "order" ? unlinkOrderEvent : null}
+          onEditNote={
+            eventDetail.kind === "note"
+              ? (ev) => {
+                  setEventDetail(null);
+                  setNoteModal({ mode: "edit", event: ev });
+                }
+              : null
+          }
+          onDeleteNote={eventDetail.kind === "note" ? (id) => calendar.removeEvent(id) : null}
+        />
+      )}
+      {dayView && (
+        <DayViewModal
+          open
+          onClose={() => setDayView(null)}
+          date={dayView}
+          events={calendar.events.filter((e) => e.date === dayView)}
+          onAddNote={(date) => {
+            setDayView(null);
+            setNoteModal({ mode: "add", date });
+          }}
+          onOpenEvent={(ev) => {
+            setDayView(null);
+            setEventDetail(ev);
+          }}
+          onEditNote={(ev) => {
+            setDayView(null);
+            setNoteModal({ mode: "edit", event: ev });
+          }}
+          onDeleteNote={(id) => calendar.removeEvent(id)}
+          onSetReminder={(id, patch) => calendar.updateEvent(id, patch)}
+          onUnlinkOrder={unlinkOrderEvent}
+        />
+      )}
     </div>
   );
 }
@@ -19135,10 +20053,15 @@ function Onboarding({ onCreate, reason, onCancel }) {
 // can open it and see the full sample/demo dashboard (see VendorDashboard's
 // isDemo branch) as a Premium selling point. Gating it here would bounce
 // guests straight to a signup card instead of ever showing them that page.
-// "orders" and "bulkMessaging" follow the same rule for the same reason: a
-// non-Premium account (Basic, Free, or no account at all) needs to land on
-// the sample-data preview built into OrdersScreen / BulkMessagingScreen, not
-// get bounced to a signup card before ever seeing what Premium unlocks.
+// "orders" follows the same rule for the same reason: a non-Premium account
+// (Basic, Free, or no account at all) needs to land on the interactive
+// sample-data preview built into OrdersPreviewScreen, not get bounced to a
+// signup card before ever seeing what Premium unlocks. "bulkMessaging" is
+// ungated too, but for a narrower reason: BulkMessagingScreen itself is the
+// gate — non-Premium sees BulkMessagingCampaignPreview (a ToolLock'd sample
+// of the campaign manager with its own crown/Upgrade CTA), Premium sees the
+// real BulkMessagingCampaignManager. Unlike Orders, this one should never be
+// a free-to-operate sandbox (see the Sidebar hero and Messages' "⋮" entry).
 const AUTH_REQUIRED_SCREENS = new Set(["favorites", "messages", "store", "storeEditor", "places", "checkout", "ads"]);
 const AUTH_REASON_BY_SCREEN = {
   favorites: "see your favorites",
@@ -19759,6 +20682,11 @@ function RootShell() {
             )}
             {route.screen === "dashboard" && <VendorDashboard navigate={navigate} />}
             {route.screen === "orders" && <OrdersScreen navigate={navigate} initialTab={route.tab} />}
+            {/* Ungated front door to Bulk Messaging (see AUTH_REQUIRED_SCREENS
+               above) — a guest or non-Premium account reaching this from the
+               Sidebar hero, Messages' "⋮ → Send Bulk Message", or the Site
+               map all land here and see the real chrome (BulkMessagingScreen
+               picks the locked preview vs. the live campaign manager). */}
             {route.screen === "bulkMessaging" && <BulkMessagingScreen navigate={navigate} />}
             {route.screen === "ads" && <AdsScreen navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} />}
