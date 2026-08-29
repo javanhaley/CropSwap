@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Sparkles, Loader2, ArrowLeft } from "lucide-react";
+import { Loader2, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
 const displayFont = { fontFamily: "'Fraunces', serif" };
@@ -35,12 +35,16 @@ const RESEND_COOLDOWN_SECONDS = 60;
 // picked a new password they're already logged in — no separate sign-in
 // step needed afterward.
 export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "signin" }) {
-  const [mode, setMode] = useState(initialMode); // signin | signup | forgot-request | forgot-verify | forgot-newpassword
+  const [mode, setMode] = useState(initialMode); // signin | signup | signup-verify | forgot-request | forgot-verify | forgot-newpassword
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [signupCode, setSignupCode] = useState("");
   const [resetCode, setResetCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -63,21 +67,17 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
     setBusy(true);
     try {
       if (mode === "signup") {
-        // Explicitly pointing the confirmation link back at wherever this
-        // copy of the app is actually running (rather than leaving it to
-        // whatever "Site URL" happens to be configured in Supabase) is what
-        // keeps that link from ever landing somewhere stale.
-        const { data, error: err } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: window.location.origin },
-        });
+        // No link involved at all — the "Confirm signup" email template is
+        // configured to show {{ .Token }} (a 6-digit code) instead of the
+        // default confirmation link, so there's nothing here that could ever
+        // point at a stale or wrong URL.
+        const { data, error: err } = await supabase.auth.signUp({ email, password });
         if (err) throw err;
         if (data.session) {
           onSignedIn?.();
         } else {
-          setNotice("Check your email to confirm your account, then sign in below.");
-          setMode("signin");
+          setMode("signup-verify");
+          setNotice(`We sent a 6-digit code to ${email}. Enter it below to finish creating your account.`);
           setResendCooldown(RESEND_COOLDOWN_SECONDS);
         }
       } else {
@@ -88,6 +88,47 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
     } catch (err) {
       setError(friendlyAuthError(err, "Something went wrong. Try again."));
       if (/rate limit/i.test(err?.message || "")) setResendCooldown(RESEND_COOLDOWN_SECONDS);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifySignupCode(e) {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      const { data, error: err } = await supabase.auth.verifyOtp({
+        email,
+        token: signupCode.trim(),
+        type: "signup",
+      });
+      if (err) throw err;
+      if (!data.session) throw new Error("That code didn't work. Double-check it and try again.");
+      // verifyOtp hands back a real session on success — already logged in,
+      // no separate sign-in step needed.
+      onSignedIn?.();
+    } catch (err) {
+      setError(err?.message || "That code didn't work. Double-check it and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resendSignupCode() {
+    if (resendCooldown > 0) return;
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      const { error: err } = await supabase.auth.resend({ type: "signup", email });
+      if (err) throw err;
+      setNotice(`We sent a new code to ${email}.`);
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
+    } catch (err) {
+      setError(friendlyAuthError(err, "Couldn't resend the code. Try again shortly."));
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } finally {
       setBusy(false);
     }
@@ -187,6 +228,7 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
   }
 
   const isForgotFlow = mode.startsWith("forgot-");
+  const isMainFlow = mode === "signin" || mode === "signup";
 
   return (
     <div className="h-screen w-full flex items-start justify-center bg-stone-50 p-6 pt-10 overflow-y-auto" style={{ ...bodyFont, height: "100dvh" }}>
@@ -194,7 +236,9 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
         <div className="flex justify-center mb-1">
           <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-7 w-auto" />
         </div>
-        {isForgotFlow ? (
+        {mode === "signup-verify" ? (
+          <p className="text-center text-stone-500 mb-7 text-sm">Almost there — verify your email to finish creating your account.</p>
+        ) : isForgotFlow ? (
           <p className="text-center text-stone-500 mb-7 text-sm">Reset your password — no need to remember the old one.</p>
         ) : reason ? (
           <p className="text-center text-stone-500 mb-7 text-sm">Create a free account to {reason} — browsing is always open, this is just for that.</p>
@@ -202,13 +246,13 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
           <p className="text-center text-stone-500 mb-7 text-sm">A hyper-local, nationwide hub connecting growers and buyers.</p>
         )}
 
-        {onCancel && !isForgotFlow && (
+        {onCancel && isMainFlow && (
           <button type="button" onClick={onCancel} className="text-xs font-semibold text-stone-400 hover:text-stone-600 mb-3 block mx-auto">
             Not now — keep browsing
           </button>
         )}
 
-        {!isForgotFlow && (
+        {isMainFlow && (
           <form onSubmit={submit} className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm">
             <div className="flex mb-4 bg-stone-100 rounded-xl p-1">
               <button
@@ -261,15 +305,26 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
                 </button>
               )}
             </div>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 6 characters"
-              className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700"
-            />
+            <div className="relative mb-4">
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                minLength={6}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="At least 6 characters"
+                className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 pr-10 text-sm outline-none focus:border-emerald-700"
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+              >
+                {showPassword ? <Eye size={16} /> : <EyeOff size={16} className="text-rose-500" />}
+              </button>
+            </div>
 
             {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
             {notice && <p className="text-xs text-emerald-700 mb-3">{notice}</p>}
@@ -281,6 +336,51 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
             >
               {busy && <Loader2 size={16} className="animate-spin" />}
               {mode === "signup" ? "Create account" : "Sign in"}
+            </button>
+          </form>
+        )}
+
+        {mode === "signup-verify" && (
+          <form onSubmit={verifySignupCode} className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm">
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setNotice("");
+                setMode("signup");
+              }}
+              className="flex items-center gap-1 text-xs font-semibold text-stone-400 hover:text-stone-600 mb-4"
+            >
+              <ArrowLeft size={13} /> Use a different email
+            </button>
+            {notice && <p className="text-xs text-emerald-700 mb-3">{notice}</p>}
+            <p className="text-xs font-bold text-stone-400 uppercase mb-2">6-digit code</p>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              required
+              value={signupCode}
+              onChange={(e) => setSignupCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
+              placeholder="123456"
+              className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700 tracking-[0.3em] text-center font-mono text-lg"
+            />
+            {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
+            <button
+              type="submit"
+              disabled={busy || signupCode.length < 6}
+              className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition flex items-center justify-center gap-2"
+            >
+              {busy && <Loader2 size={16} className="animate-spin" />}
+              Verify &amp; finish signing up
+            </button>
+            <button
+              type="button"
+              onClick={resendSignupCode}
+              disabled={busy || resendCooldown > 0}
+              className="w-full text-center text-xs font-semibold text-emerald-700 hover:text-emerald-800 disabled:text-stone-400 mt-3"
+            >
+              {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Didn't get it? Resend code"}
             </button>
           </form>
         )}
@@ -368,25 +468,47 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
           <form onSubmit={submitNewPassword} className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm">
             {notice && <p className="text-xs text-emerald-700 mb-3">{notice}</p>}
             <p className="text-xs font-bold text-stone-400 uppercase mb-2">New password</p>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="At least 6 characters"
-              className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700"
-            />
+            <div className="relative mb-4">
+              <input
+                type={showNewPassword ? "text" : "password"}
+                required
+                minLength={6}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="At least 6 characters"
+                className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 pr-10 text-sm outline-none focus:border-emerald-700"
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setShowNewPassword((v) => !v)}
+                aria-label={showNewPassword ? "Hide password" : "Show password"}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+              >
+                {showNewPassword ? <Eye size={16} /> : <EyeOff size={16} className="text-rose-500" />}
+              </button>
+            </div>
             <p className="text-xs font-bold text-stone-400 uppercase mb-2">Confirm new password</p>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Type it again"
-              className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700"
-            />
+            <div className="relative mb-4">
+              <input
+                type={showConfirmPassword ? "text" : "password"}
+                required
+                minLength={6}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Type it again"
+                className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 pr-10 text-sm outline-none focus:border-emerald-700"
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setShowConfirmPassword((v) => !v)}
+                aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+              >
+                {showConfirmPassword ? <Eye size={16} /> : <EyeOff size={16} className="text-rose-500" />}
+              </button>
+            </div>
             {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
             <button
               type="submit"
@@ -399,7 +521,7 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
           </form>
         )}
 
-        {!isForgotFlow && (
+        {isMainFlow && (
           <>
             <p className="text-center text-[11px] text-stone-400 mt-4">
               Your name and avatar are set up on the next screen — this just secures your account across devices.
