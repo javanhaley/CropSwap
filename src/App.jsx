@@ -5985,7 +5985,7 @@ function BottomNav({ route, navigate }) {
 // tapping a nav item there also closes the drawer, and it gets its own
 // close button since there's no persistent rail to leave open beside it.
 function Sidebar({ route, navigate, variant = "inline", onClose }) {
-  const { me, exploreView, setExploreView, signOut } = useApp();
+  const { me, exploreView, setExploreView, signOut, requireAuth } = useApp();
   const isDrawer = variant === "drawer";
   const items = [
     { id: "explore", label: "Explore", icon: Home, screen: "explore" },
@@ -6073,9 +6073,21 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
         >
           <Crown size={18} /> My Plan
         </button>
-        <button onClick={signOut} className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition text-stone-500 hover:bg-stone-50">
-          <LogOut size={18} /> Sign Out
-        </button>
+        {me ? (
+          <button onClick={signOut} className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition text-stone-500 hover:bg-stone-50">
+            <LogOut size={18} /> Sign Out
+          </button>
+        ) : (
+          <button
+            onClick={() => {
+              requireAuth("sign in to your account");
+              onClose?.();
+            }}
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition text-stone-500 hover:bg-stone-50"
+          >
+            <LogOut size={18} /> Sign In
+          </button>
+        )}
       </div>
     </>
   );
@@ -9624,22 +9636,39 @@ function ShopToolsTab({ shop }) {
 function FavoritesPreviewScreen({ navigate }) {
   const { requireAuth } = useApp();
   const [tab, setTab] = useState("shops");
+  const [search, setSearch] = useState("");
   const [favProducts, setFavProducts] = useState([
     { id: "prev-fp1", name: "Heirloom Tomatoes", emoji: "🍅", price: "$4.50/lb", shopName: "Buzzy Bee Farm" },
     { id: "prev-fp2", name: "Raw Honey", emoji: "🍯", price: "$9.00/pint", shopName: "Sunny Acres" },
-    { id: "prev-fp3", name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz", shopName: "Clucking Good Farm" },
+    { id: "prev-fp3", name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz", shopName: "Humble Hen Farm" },
   ]);
   const [favShops, setFavShops] = useState([
     { id: "prev-fs1", name: "Buzzy Bee Farm", emoji: "🐝", category: "Produce", rating: "5.0" },
     { id: "prev-fs2", name: "Sunny Acres", emoji: "🌻", category: "Honey & Preserves", rating: "4.8" },
-    { id: "prev-fs3", name: "Clucking Good Farm", emoji: "🐔", category: "Eggs & Dairy", rating: "4.9" },
+    { id: "prev-fs3", name: "Humble Hen Farm", emoji: "🐔", category: "Eggs & Dairy", rating: "4.9" },
   ]);
+  const q = search.trim().toLowerCase();
+  const visibleProducts = q ? favProducts.filter((p) => p.name.toLowerCase().includes(q) || p.shopName.toLowerCase().includes(q)) : favProducts;
+  const visibleShops = q ? favShops.filter((s) => s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q)) : favShops;
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
       <div className="max-w-4xl mx-auto px-4 pt-4">
-        <h1 className="text-2xl font-bold text-stone-900 mb-1" style={displayFont}>Your Favorites</h1>
-        <p className="text-stone-500 text-sm mb-4">A preview with sample favorites — try the heart, then sign up to save your own.</p>
+        <h1 className="text-2xl font-bold text-stone-900 mb-4" style={displayFont}>Your Favorites</h1>
+        <div className="flex items-center gap-2 mb-4">
+          <div className="flex-1 flex items-center gap-2 bg-stone-100 rounded-full px-3.5 py-2.5">
+            <Search size={16} className="text-stone-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search your favorites"
+              className="bg-transparent outline-none text-sm w-full"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </div>
+        </div>
 
         <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 mb-4">
           <Heart size={15} className="text-amber-500 shrink-0" />
@@ -9650,16 +9679,16 @@ function FavoritesPreviewScreen({ navigate }) {
         </div>
 
         <div className="flex gap-1 mb-5 bg-stone-100 rounded-full p-1 w-fit">
-          <button onClick={() => setTab("shops")} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${tab === "shops" ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>Favorite Shops ({favShops.length})</button>
-          <button onClick={() => setTab("products")} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${tab === "products" ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>Favorite Items ({favProducts.length})</button>
+          <button onClick={() => setTab("shops")} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${tab === "shops" ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>Favorite Shops ({visibleShops.length})</button>
+          <button onClick={() => setTab("products")} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition ${tab === "products" ? "bg-white shadow text-stone-900" : "text-stone-500"}`}>Favorite Items ({visibleProducts.length})</button>
         </div>
 
         {tab === "products" && (
-          favProducts.length === 0 ? (
+          visibleProducts.length === 0 ? (
             <EmptyState icon={Heart} title="No favorite items" body="You unfavorited every sample item — reload the page to bring them back." />
           ) : (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-              {favProducts.map((p) => (
+              {visibleProducts.map((p) => (
                 <div key={p.id} className="bg-white rounded-xl border border-stone-200/70 overflow-hidden flex flex-col">
                   <div className="relative aspect-square bg-stone-50 flex items-center justify-center text-5xl">
                     {p.emoji}
@@ -9678,11 +9707,11 @@ function FavoritesPreviewScreen({ navigate }) {
           )
         )}
         {tab === "shops" && (
-          favShops.length === 0 ? (
+          visibleShops.length === 0 ? (
             <EmptyState icon={Store} title="No favorite shops" body="You unfavorited every sample shop — reload the page to bring them back." />
           ) : (
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3.5">
-              {favShops.map((s) => (
+              {visibleShops.map((s) => (
                 <div key={s.id} className="bg-white rounded-xl border border-stone-200/70 overflow-hidden">
                   <div className="h-16 bg-gradient-to-br from-emerald-600 to-teal-500 flex items-center justify-center text-3xl relative">
                     {s.emoji}
@@ -10268,7 +10297,7 @@ function MessagesPreviewScreen({ navigate }) {
       },
       {
         id: "prev-mc3",
-        name: "Clucking Good Farm",
+        name: "Humble Hen Farm",
         avatar: "🐔",
         messages: [{ id: "m1", from: "them", text: "We just restocked farm-fresh eggs if you're still interested." }],
       },
@@ -10276,14 +10305,18 @@ function MessagesPreviewScreen({ navigate }) {
     []
   );
   const [activeId, setActiveId] = useState(SAMPLE_CONVOS[0].id);
-  const [threads, setThreads] = useState(() => Object.fromEntries(SAMPLE_CONVOS.map((c) => [c.id, c.messages])));
+  const threads = useMemo(() => Object.fromEntries(SAMPLE_CONVOS.map((c) => [c.id, c.messages])), [SAMPLE_CONVOS]);
   const [text, setText] = useState("");
   const active = SAMPLE_CONVOS.find((c) => c.id === activeId);
 
+  // Guests can browse a sample inbox and read sample replies, but never
+  // actually send anything — even into fake local state — since the whole
+  // point is to nudge toward a real account rather than fake the experience
+  // of having sent something.
   const send = () => {
     if (!text.trim()) return;
-    setThreads((prev) => ({ ...prev, [activeId]: [...prev[activeId], { id: uid("prev-msg"), from: "me", text: text.trim() }] }));
     setText("");
+    requireAuth("send real messages");
   };
 
   return (
@@ -12229,6 +12262,12 @@ function AdsPreviewScreen({ navigate }) {
   ]);
   const [sponsorPickId, setSponsorPickId] = useState(null);
   const [, forceTick] = useState(0);
+  // A pre-seeded past campaign so the "Campaign history" section — a real
+  // part of the premium screen — is visible on first load, not just after
+  // someone happens to stop a sample campaign themselves.
+  const [history, setHistory] = useState([
+    { id: "prev-hist1", name: "Raw Honey", rateLabel: "Weekly", price: 5, status: "ended" },
+  ]);
 
   // Re-render every 30s so a countdown badge actually counts down while the
   // page sits open, same as the real screen's sponsorCountdown.
@@ -12242,7 +12281,11 @@ function AdsPreviewScreen({ navigate }) {
     setProducts((prev) => prev.map((p) => (p.id === sponsorPickId ? { ...p, sponsoredUntil: endsAt } : p)));
     setSponsorPickId(null);
   };
-  const stopSponsor = (id) => setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, sponsoredUntil: null } : p)));
+  const stopSponsor = (id) => {
+    const pr = products.find((p) => p.id === id);
+    setProducts((prev) => prev.map((p) => (p.id === id ? { ...p, sponsoredUntil: null } : p)));
+    if (pr) setHistory((prev) => [{ id: uid("prev-hist"), name: pr.name, rateLabel: "Sponsored run", price: null, status: "cancelled" }, ...prev]);
+  };
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
@@ -12289,6 +12332,25 @@ function AdsPreviewScreen({ navigate }) {
             );
           })}
         </div>
+
+        {history.length > 0 && (
+          <>
+            <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Campaign history</p>
+            <div className="flex flex-col gap-2">
+              {history.map((h) => (
+                <div key={h.id} className="border border-stone-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-stone-800 truncate">{h.name}</p>
+                    <p className="cs-t11 text-stone-400">{h.rateLabel}{h.price != null ? ` · ${formatMoney(h.price)}` : ""}</p>
+                  </div>
+                  <span className="cs-t10 font-bold px-2 py-0.5 rounded-full shrink-0 bg-stone-100 text-stone-500">
+                    {h.status === "cancelled" ? "Stopped" : "Ended"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
 
       <Modal open={!!sponsorPickId} onClose={() => setSponsorPickId(null)} labelledBy="sponsor-preview-title">
