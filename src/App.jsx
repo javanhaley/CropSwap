@@ -5819,21 +5819,11 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-stone-200">
       <div className="px-3 py-3 flex items-center gap-1 max-w-6xl mx-auto">
-        {/* Sprout and stacked wordmark are a single control that returns home. */}
-        <button
-          onClick={onGoHome}
-          className="flex items-center gap-1.5 shrink-0 text-emerald-800 hover:opacity-75 active:opacity-60 transition rounded-xl"
-          aria-label="CropSwap home"
-          title="Home"
-        >
-          <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-emerald-50 shrink-0">
-            <SproutMark size={17} />
-          </span>
-          <span className="cs-hide-tiny flex flex-col items-start font-bold leading-none" style={{ ...displayFont, fontSize: "12px", lineHeight: 1.05 }}>
-            <span>Crop</span>
-            <span>Swap</span>
-          </span>
-        </button>
+        {/* The old icon+stacked-text "home" control lived here before the
+           real wordmark logo existed anywhere in the app. Now that the
+           Sidebar carries the actual logo (and doubles as the home button
+           there), duplicating a second, smaller home button here was just
+           redundant — removed rather than re-skinned. */}
 
         {/* 30% shorter: the pill takes 70% of the space it used to fill. */}
         {/* Fills the row and never shrinks below the width of its own placeholder. */}
@@ -6016,7 +6006,10 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
   };
   const content = (
     <>
-      <div className={`flex items-center ${isDrawer ? "justify-between" : ""} mb-8 px-2`}>
+      {/* Bottom margin matches the sidebar's own top padding (p-5 = 20px,
+         i.e. mb-5) so the logo sits with the same breathing room above and
+         below it, instead of the old oversized gap pushing the nav down. */}
+      <div className={`flex items-center ${isDrawer ? "justify-between" : ""} mb-5 px-2`}>
         <button
           onClick={() => {
             setExploreView("grid");
@@ -6027,7 +6020,7 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
           aria-label="CropSwap home"
           title="Home"
         >
-          <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-6 w-auto" />
+          <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-9 w-auto" />
         </button>
         {isDrawer && (
           <button onClick={onClose} className="text-stone-400 hover:text-stone-600 p-1" aria-label="Hide sidebar" title="Hide sidebar">
@@ -9887,7 +9880,7 @@ function useLongPress(onLongPress, ms = 450) {
 // A single text's own "⋮" — star, mark important, and label it just like a
 // whole conversation, plus the existing copy/delete-for-me. One tap opens
 // this; nothing here requires a long-press.
-function MessageActionSheet({ message, flags, onClose, onCopy, onDelete, onStar, onImportant, onLabels }) {
+function MessageActionSheet({ message, flags, onClose, onCopy, onDelete, onStar, onImportant }) {
   return (
     <Modal open={!!message} onClose={onClose} labelledBy="msg-action-title">
       <div className="p-6">
@@ -9899,9 +9892,6 @@ function MessageActionSheet({ message, flags, onClose, onCopy, onDelete, onStar,
           </button>
           <button onClick={onImportant} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
             <AlertCircle size={15} className={flags?.important ? "fill-amber-100 text-amber-600" : ""} /> {flags?.important ? "Mark not important" : "Mark important"}
-          </button>
-          <button onClick={onLabels} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
-            <Tag size={15} /> Labels…
           </button>
           <button onClick={onCopy} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800">
             Copy text
@@ -9916,13 +9906,13 @@ function MessageActionSheet({ message, flags, onClose, onCopy, onDelete, onStar,
   );
 }
 
-// Tapping/clicking the bubble itself opens the same star/flag/label/copy/
-// delete sheet as the "⋮" — no need to find a tiny button first. The "⋮"
-// stays too, mainly as a visual hint that the bubble is interactive.
-// Starred/important/labeled messages get a tiny badge row under the bubble
-// so it's visible at a glance without opening anything.
+// Tapping/clicking the bubble itself opens the same star/flag/copy/delete
+// sheet as the "⋮" — no need to find a tiny button first. The "⋮" stays too,
+// mainly as a visual hint that the bubble is interactive. Starred/important
+// messages get a tiny badge row under the bubble so it's visible at a glance
+// without opening anything or needing a folder to browse by.
 function MessageBubble({ message, isMine, flags, onOpenActions }) {
-  const hasBadges = !!(flags?.starred || flags?.important || (flags?.labelIds || []).length > 0);
+  const hasBadges = !!(flags?.starred || flags?.important);
   return (
     <div className={`flex items-end gap-1 max-w-[85%] ${isMine ? "self-end flex-row-reverse" : "self-start"}`}>
       <div
@@ -9938,7 +9928,6 @@ function MessageBubble({ message, isMine, flags, onOpenActions }) {
           <div className={`flex items-center gap-1 mt-1 ${isMine ? "justify-end" : "justify-start"}`}>
             {flags.starred && <Star size={10} className={isMine ? "fill-amber-300 text-amber-300" : "fill-amber-400 text-amber-400"} />}
             {flags.important && <AlertCircle size={10} className={isMine ? "text-amber-200" : "text-amber-600"} />}
-            {(flags.labelIds || []).length > 0 && <Tag size={10} className={isMine ? "text-amber-200" : "text-amber-600"} />}
           </div>
         )}
       </div>
@@ -9991,10 +9980,12 @@ function ConfirmModal({ open, title, body, confirmLabel = "Delete", onConfirm, o
 // actions plus its right-click menu would offer. Which context actions show
 // up depends on which view the row is sitting in (Trash gets Restore/Delete
 // forever, Spam gets Not spam, everywhere else gets Spam/Trash).
-function ConversationActionSheet({ conversation, view, onClose, onStar, onImportant, onLabels, onSpam, onNotSpam, onTrash, onRestore, onDeleteForever }) {
+// Trimmed down to just the two actions that make sense without a Gmail-style
+// folder browser behind them: pin something to the top (Star) or get rid of
+// it (Delete, a soft-delete under the hood so nothing is destroyed). Shared
+// by the real inbox and the guest preview sandbox.
+function ConversationActionSheet({ conversation, onClose, onStar, onTrash }) {
   if (!conversation) return null;
-  const inTrash = view === "trash";
-  const inSpam = view === "spam";
   return (
     <Modal open={!!conversation} onClose={onClose} labelledBy="convo-action-title">
       <div className="p-6">
@@ -10004,35 +9995,9 @@ function ConversationActionSheet({ conversation, view, onClose, onStar, onImport
           <button onClick={onStar} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
             <Star size={15} className={conversation.starred ? "fill-amber-400 text-amber-400" : ""} /> {conversation.starred ? "Unstar" : "Star"}
           </button>
-          <button onClick={onImportant} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
-            <AlertCircle size={15} className={conversation.important ? "fill-amber-100 text-amber-600" : ""} /> {conversation.important ? "Mark not important" : "Mark important"}
+          <button onClick={onTrash} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
+            <Trash2 size={15} /> Delete conversation
           </button>
-          <button onClick={onLabels} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
-            <Tag size={15} /> Labels…
-          </button>
-          {inTrash ? (
-            <button onClick={onRestore} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-emerald-50 text-sm font-semibold text-emerald-700 flex items-center gap-2">
-              <Inbox size={15} /> Move to Inbox
-            </button>
-          ) : inSpam ? (
-            <button onClick={onNotSpam} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-emerald-50 text-sm font-semibold text-emerald-700 flex items-center gap-2">
-              <Inbox size={15} /> Not spam
-            </button>
-          ) : (
-            <>
-              <button onClick={onSpam} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-amber-50 text-sm font-semibold text-amber-700 flex items-center gap-2">
-                <AlertTriangle size={15} /> Mark as spam
-              </button>
-              <button onClick={onTrash} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
-                <Trash2 size={15} /> Move to Trash
-              </button>
-            </>
-          )}
-          {(inTrash || inSpam) && (
-            <button onClick={onDeleteForever} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
-              <Trash2 size={15} /> Delete forever
-            </button>
-          )}
         </div>
         <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
       </div>
@@ -10109,7 +10074,9 @@ function LabelPickerModal({ open, labels, count, checkedIds, onClose, onToggle, 
 // Rename or delete labels themselves — deleting one just removes that tag
 // from whatever it was on, the same way deleting a Gmail label doesn't
 // touch the mail underneath it.
-function ManageLabelsModal({ open, labels, onClose, onRename, onDelete, noun = "conversation" }) {
+// `onMove` is optional — pass it (a (id, direction) => void mover) to get
+// up/down reorder arrows on every row, same pattern as Manage Groups below.
+function ManageLabelsModal({ open, labels, onClose, onRename, onDelete, onMove, noun = "conversation" }) {
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState("");
   useEffect(() => {
@@ -10130,8 +10097,18 @@ function ManageLabelsModal({ open, labels, onClose, onRename, onDelete, noun = "
           <p className="text-sm text-stone-400 py-4 text-center">No labels yet — create one from any {noun}'s "⋮" menu.</p>
         ) : (
           <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto">
-            {labels.map((l) => (
+            {labels.map((l, i) => (
               <div key={l.id} className="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-stone-50">
+                {onMove && (
+                  <div className="flex flex-col shrink-0 -my-1">
+                    <button onClick={() => onMove(l.id, -1)} disabled={i === 0} aria-label={`Move ${l.name} up`} className="text-stone-300 hover:text-stone-600 disabled:opacity-30 p-0.5">
+                      <ChevronUp size={13} />
+                    </button>
+                    <button onClick={() => onMove(l.id, 1)} disabled={i === labels.length - 1} aria-label={`Move ${l.name} down`} className="text-stone-300 hover:text-stone-600 disabled:opacity-30 p-0.5">
+                      <ChevronDown size={13} />
+                    </button>
+                  </div>
+                )}
                 <Tag size={15} className="text-amber-600 shrink-0" />
                 {editingId === l.id ? (
                   <input
@@ -10166,10 +10143,170 @@ function ManageLabelsModal({ open, labels, onClose, onRename, onDelete, noun = "
   );
 }
 
-// The Messages list's top-level "⋯" — one tap away, everything the bulk
-// toolbar and nav rail don't already cover. inTrash swaps the destructive
-// item to "Empty trash", which only makes sense while looking at Trash.
-function MessagesOverflowMenu({ open, onClose, onSelect, onManageLabels, onDeleteAll, onBulkMessage, premium, inTrash }) {
+// Create/rename/delete/reorder a vendor's saved contact groups (mailing-list
+// subsets like "Regulars" or "Market day only"), and pick which contacts
+// belong to each one. This is the one piece of Bulk Messaging that had a
+// full data layer (useMessageGroups) but no UI at all until now.
+function ManageGroupsModal({ open, onClose, groups, mailing, onCreate, onRename, onDelete, onMove, onSetContacts }) {
+  const [editingId, setEditingId] = useState(null);
+  const [draft, setDraft] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [membersFor, setMembersFor] = useState(null); // group id, or null when closed
+  const [checkedIds, setCheckedIds] = useState(() => new Set());
+
+  useEffect(() => {
+    if (!open) {
+      setEditingId(null);
+      setDraft("");
+      setCreating(false);
+      setNewName("");
+      setMembersFor(null);
+    }
+  }, [open]);
+
+  const commitRename = (id) => {
+    if (draft.trim()) onRename(id, draft);
+    setEditingId(null);
+  };
+
+  const openMembers = (g) => {
+    setCheckedIds(new Set(g.contactIds || []));
+    setMembersFor(g.id);
+  };
+  const toggleMember = (userId) => {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+  const saveMembers = () => {
+    onSetContacts(membersFor, Array.from(checkedIds));
+    setMembersFor(null);
+  };
+
+  const activeGroup = groups.find((g) => g.id === membersFor) || null;
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="manage-groups-title">
+      <div className="p-6">
+        {membersFor ? (
+          <>
+            <h2 id="manage-groups-title" className="text-base font-bold text-stone-900 mb-1" style={displayFont}>
+              {activeGroup?.name || "Group"} members
+            </h2>
+            <p className="cs-t11 text-stone-400 mb-3">Pick who's in this group — {checkedIds.size} selected.</p>
+            {(mailing?.list || []).length === 0 ? (
+              <p className="text-sm text-stone-400 py-4 text-center">No contacts yet — your mailing list fills up as people message your shop.</p>
+            ) : (
+              <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
+                {mailing.list.map((c) => {
+                  const checked = checkedIds.has(c.userId);
+                  return (
+                    <button key={c.userId} onClick={() => toggleMember(c.userId)} className="text-left px-3 py-2.5 rounded-xl hover:bg-stone-50 text-sm font-semibold text-stone-700 flex items-center gap-2.5">
+                      <span className={`w-4.5 h-4.5 rounded-md border-2 flex items-center justify-center shrink-0 ${checked ? "bg-emerald-700 border-emerald-700" : "border-stone-300"}`}>
+                        {checked && <Check size={12} className="text-white" />}
+                      </span>
+                      <Avatar emoji={c.avatar} name={c.name} size="sm" /> <span className="truncate">{c.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <button onClick={saveMembers} className="w-full mt-3 px-4 py-2 rounded-xl bg-emerald-800 text-white text-sm font-semibold">Save members</button>
+            <button onClick={() => setMembersFor(null)} className="w-full mt-2 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Back</button>
+          </>
+        ) : (
+          <>
+            <h2 id="manage-groups-title" className="text-base font-bold text-stone-900 mb-3" style={displayFont}>Manage groups</h2>
+            {groups.length === 0 && !creating ? (
+              <p className="text-sm text-stone-400 py-4 text-center">No groups yet — add one to target a subset of your contacts.</p>
+            ) : (
+              <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+                {groups.map((g, i) => (
+                  <div key={g.id} className="flex items-center gap-2 px-2 py-1.5 rounded-xl hover:bg-stone-50">
+                    <div className="flex flex-col shrink-0 -my-1">
+                      <button onClick={() => onMove(g.id, -1)} disabled={i === 0} aria-label={`Move ${g.name} up`} className="text-stone-300 hover:text-stone-600 disabled:opacity-30 p-0.5">
+                        <ChevronUp size={13} />
+                      </button>
+                      <button onClick={() => onMove(g.id, 1)} disabled={i === groups.length - 1} aria-label={`Move ${g.name} down`} className="text-stone-300 hover:text-stone-600 disabled:opacity-30 p-0.5">
+                        <ChevronDown size={13} />
+                      </button>
+                    </div>
+                    <Users size={15} className="text-amber-600 shrink-0" />
+                    {editingId === g.id ? (
+                      <input
+                        autoFocus
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onBlur={() => commitRename(g.id)}
+                        onKeyDown={(e) => e.key === "Enter" && commitRename(g.id)}
+                        className="flex-1 border border-stone-200 rounded-lg px-2 py-1 text-sm outline-none focus:border-emerald-700"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setEditingId(g.id);
+                          setDraft(g.name);
+                        }}
+                        className="flex-1 text-left text-sm font-semibold text-stone-800 truncate"
+                      >
+                        {g.name} <span className="text-stone-400 font-normal">({(g.contactIds || []).length})</span>
+                      </button>
+                    )}
+                    <button onClick={() => openMembers(g)} aria-label={`Edit ${g.name} members`} className="text-stone-400 hover:text-emerald-700 shrink-0 p-1">
+                      <UserPlus size={14} />
+                    </button>
+                    <button onClick={() => onDelete(g.id)} aria-label={`Delete ${g.name} group`} className="text-stone-400 hover:text-rose-600 shrink-0 p-1">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {creating ? (
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-stone-100">
+                <input
+                  autoFocus
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && newName.trim() && (onCreate(newName), setNewName(""), setCreating(false))}
+                  placeholder="Group name"
+                  className="flex-1 border border-stone-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-700"
+                />
+                <button
+                  onClick={() => {
+                    if (!newName.trim()) return;
+                    onCreate(newName);
+                    setNewName("");
+                    setCreating(false);
+                  }}
+                  disabled={!newName.trim()}
+                  className="px-3 py-2 rounded-xl bg-emerald-800 text-white text-sm font-semibold disabled:opacity-40"
+                >
+                  Create
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setCreating(true)} className="w-full text-left px-3 py-2.5 mt-2 pt-3 border-t border-stone-100 text-sm font-semibold text-emerald-700 flex items-center gap-2">
+                <Plus size={15} /> Add group
+              </button>
+            )}
+            <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Done</button>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// The Messages list's top-level "⋯". No folder browser behind this one
+// anymore — just the handful of actions that make sense for a flat 1:1
+// inbox, plus a shortcut into the real toolbar (Bulk Messaging), which is
+// where Inbox/Starred/Drafts/Labels/etc. now live exclusively.
+function MessagesOverflowMenu({ open, onClose, onSelect, onDeleteAll, onBulkMessage, premium }) {
   return (
     <Modal open={open} onClose={onClose} labelledBy="messages-menu-title">
       <div className="p-6">
@@ -10185,11 +10322,8 @@ function MessagesOverflowMenu({ open, onClose, onSelect, onManageLabels, onDelet
           <button onClick={onSelect} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
             <Check size={15} /> Select conversations
           </button>
-          <button onClick={onManageLabels} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 text-sm font-semibold text-stone-800 flex items-center gap-2">
-            <Tag size={15} /> Manage labels
-          </button>
           <button onClick={onDeleteAll} className="text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-rose-50 text-sm font-semibold text-rose-600 flex items-center gap-2">
-            <Trash2 size={15} /> {inTrash ? "Empty Trash" : "Delete all conversations"}
+            <Trash2 size={15} /> Delete all conversations
           </button>
         </div>
         <button onClick={onClose} className="w-full mt-3 px-4 py-2 rounded-lg text-sm font-semibold text-stone-500">Cancel</button>
@@ -10276,113 +10410,318 @@ const MESSAGE_NAV_ITEMS = [
 // what messaging looks like without an account. Nothing here reaches an
 // actual person; the banner and any attempt to leave this sandbox both point
 // at signing up for real.
-function MessagesPreviewScreen({ navigate }) {
-  const { requireAuth } = useApp();
-  const SAMPLE_CONVOS = useMemo(
-    () => [
-      {
-        id: "prev-mc1",
-        name: "Buzzy Bee Farm",
-        avatar: "🐝",
-        messages: [
-          { id: "m1", from: "them", text: "Hey! Your order of tomatoes is ready for pickup Saturday morning." },
-          { id: "m2", from: "me", text: "Perfect, see you then — thank you!" },
-        ],
-      },
-      {
-        id: "prev-mc2",
-        name: "Sunny Acres",
-        avatar: "🌻",
-        messages: [{ id: "m1", from: "them", text: "Thanks so much for the 5-star review on the honey!" }],
-      },
-      {
-        id: "prev-mc3",
-        name: "Humble Hen Farm",
-        avatar: "🐔",
-        messages: [{ id: "m1", from: "them", text: "We just restocked farm-fresh eggs if you're still interested." }],
-      },
-    ],
-    []
-  );
-  const [activeId, setActiveId] = useState(SAMPLE_CONVOS[0].id);
-  const threads = useMemo(() => Object.fromEntries(SAMPLE_CONVOS.map((c) => [c.id, c.messages])), [SAMPLE_CONVOS]);
-  const [text, setText] = useState("");
-  const active = SAMPLE_CONVOS.find((c) => c.id === activeId);
+// A fresh, independent copy every time the screen mounts — since guests
+// bounce in and out of this preview via the *ScreenEntry gate, a plain
+// literal here would get mutated in place and "remember" edits across
+// visits. Content is modeled on a real, established shop (Buzzy Bee Farm)
+// rather than generic placeholder text, so the sandbox feels like the real
+// inbox instead of a demo.
+function buildPreviewConversations() {
+  return [
+    {
+      id: "prev-mc1",
+      otherUserName: "Buzzy Bee Farm",
+      otherUserAvatar: "🐝",
+      starred: true,
+      trashed: false,
+      blocked: false,
+      messages: [
+        { id: "m1", from: "them", text: "Hey! Your order of 2 dozen farm-fresh eggs and a jar of raw wildflower honey is ready for pickup Saturday morning at the Chestnut Rd. stand.", starred: false, important: false },
+        { id: "m2", from: "me", text: "Perfect, see you then — thank you!", starred: false, important: false },
+        { id: "m3", from: "them", text: "You're welcome! We'll have fresh basil and heirloom tomatoes out too if you want to add anything on.", starred: true, important: false },
+      ],
+    },
+    {
+      id: "prev-mc2",
+      otherUserName: "Sunny Acres",
+      otherUserAvatar: "🌻",
+      starred: false,
+      trashed: false,
+      blocked: false,
+      messages: [
+        { id: "m1", from: "them", text: "Thanks so much for the 5-star review on the honey! Want us to set aside a jar every month for you?", starred: false, important: false },
+      ],
+    },
+    {
+      id: "prev-mc3",
+      otherUserName: "Humble Hen Farm",
+      otherUserAvatar: "🐔",
+      starred: false,
+      trashed: false,
+      blocked: false,
+      messages: [
+        { id: "m1", from: "them", text: "We just restocked farm-fresh eggs if you're still interested — $6/dozen, ready whenever you can swing by.", starred: false, important: false },
+      ],
+    },
+  ];
+}
 
-  // Guests can browse a sample inbox and read sample replies, but never
-  // actually send anything — even into fake local state — since the whole
-  // point is to nudge toward a real account rather than fake the experience
-  // of having sent something.
+// Guests get the exact same inbox shape as a signed-in account — same
+// header, same star/select/delete/overflow controls, same per-message
+// "⋮" — all fully clickable against local sample state so it doesn't feel
+// like a mockup. The one thing that stays fake is actually sending: Send
+// nudges toward signing up instead of appending to the sample thread, same
+// as every other "do this for real" gate in the guest sandbox. Everything
+// else — starring, deleting a conversation or a message, blocking,
+// reporting, selecting several and deleting them — happens for real against
+// this local copy, and simply resets next time the screen is opened.
+function MessagesPreviewScreen({ navigate }) {
+  const { requireAuth, showToast } = useApp();
+  const [convos, setConvos] = useState(buildPreviewConversations);
+  const [selectedCid, setSelectedCid] = useState(null);
+  const [text, setText] = useState("");
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [rowMenuFor, setRowMenuFor] = useState(null);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
+  const [actionTarget, setActionTarget] = useState(null); // a message being acted on
+  const scrollRef = useRef(null);
+
+  const visibleConvos = useMemo(
+    () => convos.filter((c) => !c.trashed).slice().sort((a, b) => (b.starred ? 1 : 0) - (a.starred ? 1 : 0)),
+    [convos]
+  );
+  const active = convos.find((c) => c.id === selectedCid) || null;
+
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ block: "end" });
+  }, [active?.messages.length, selectedCid]);
+
+  const toggleSelect = (cid) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cid)) next.delete(cid);
+      else next.add(cid);
+      return next;
+    });
+  };
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const runTrash = (cids) => {
+    setConvos((prev) => prev.map((c) => (cids.includes(c.id) ? { ...c, trashed: true } : c)));
+    if (selectedCid && cids.includes(selectedCid)) setSelectedCid(null);
+    exitSelectMode();
+    showToast(cids.length > 1 ? "Conversations deleted" : "Conversation deleted");
+  };
+  const runDeleteAll = () => {
+    setConvos((prev) => prev.map((c) => ({ ...c, trashed: true })));
+    setSelectedCid(null);
+    exitSelectMode();
+    setConfirmDeleteAllOpen(false);
+    showToast("All conversations deleted");
+  };
+
+  // Nothing here ever reaches a real person — sending is the one action
+  // that stays a nudge toward signing up rather than a working button.
   const send = () => {
     if (!text.trim()) return;
     setText("");
     requireAuth("send real messages");
   };
 
-  return (
-    <div className="flex-1 flex overflow-hidden">
-      <div className="hidden sm:flex w-72 shrink-0 flex-col border-r border-stone-200 overflow-y-auto">
-        <div className="px-4 pt-4 pb-2">
-          <h1 className="text-xl font-bold text-stone-900" style={displayFont}>Messages</h1>
-        </div>
-        {SAMPLE_CONVOS.map((c) => {
-          const lastMsg = threads[c.id][threads[c.id].length - 1];
-          return (
-            <button
-              key={c.id}
-              onClick={() => setActiveId(c.id)}
-              className={`flex items-center gap-3 px-4 py-3 text-left hover:bg-stone-50 transition ${activeId === c.id ? "bg-stone-50" : ""}`}
-            >
-              <Avatar emoji={c.avatar} name={c.name} />
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm text-stone-800 truncate">{c.name}</p>
-                <p className="text-xs text-stone-400 truncate">{lastMsg?.text}</p>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+  const toggleMsgFlag = (mid, key) => {
+    setConvos((prev) =>
+      prev.map((c) => (c.id !== selectedCid ? c : { ...c, messages: c.messages.map((m) => (m.id === mid ? { ...m, [key]: !m[key] } : m)) }))
+    );
+  };
+  const deleteMessage = (mid) => {
+    setConvos((prev) => prev.map((c) => (c.id !== selectedCid ? c : { ...c, messages: c.messages.filter((m) => m.id !== mid) })));
+    setActionTarget(null);
+    showToast("Message deleted");
+  };
+  const copyMessage = async (m) => {
+    try {
+      await navigator.clipboard.writeText(m.text);
+      showToast("Copied");
+    } catch (e) {
+      showToast("Couldn't copy — try selecting the text instead");
+    }
+    setActionTarget(null);
+  };
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex items-center gap-2 px-4 pt-4 pb-2 border-b border-stone-200 sm:hidden">
-          <Avatar emoji={active?.avatar} name={active?.name} size="sm" />
-          <p className="font-semibold text-sm text-stone-800">{active?.name}</p>
+  return (
+    <div className="flex-1 flex overflow-hidden relative">
+      <div className={`${selectedCid ? "hidden md:flex" : "flex"} w-full md:w-80 shrink-0 flex-col border-r border-stone-200 overflow-y-auto`}>
+        <div className="flex items-center gap-2 px-4 pt-4 pb-1">
+          <h1 className="text-xl font-bold text-stone-900 flex-1" style={displayFont}>Messages</h1>
+          <button onClick={() => setOverflowOpen(true)} aria-label="Messages options" className="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100">
+            <MoreVertical size={18} />
+          </button>
         </div>
-        <div className="px-4 pt-3 pb-1 hidden sm:block">
+
+        <div className="px-4 pt-2 pb-1">
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5">
             <MessageCircle size={15} className="text-amber-500 shrink-0" />
             <p className="text-stone-600 text-xs">
-              <span className="font-semibold text-stone-700">Try it out</span> — pick a conversation and type below, it's fully interactive.{" "}
+              <span className="font-semibold text-stone-700">Try it out</span> — everything here is fully clickable.{" "}
               <button onClick={() => requireAuth("send real messages")} className="font-semibold text-emerald-700 underline underline-offset-2">Sign up free</button> to message real shoppers and vendors.
             </p>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 bg-stone-50">
-          {(threads[activeId] || []).map((m) => (
-            <div
-              key={m.id}
-              className={`max-w-[75%] px-3.5 py-2 rounded-2xl text-sm ${m.from === "me" ? "self-end bg-emerald-800 text-white" : "self-start bg-white border border-stone-200 text-stone-800"}`}
-            >
-              {m.text}
-            </div>
-          ))}
-        </div>
-        <div className="p-3 border-t border-stone-200 flex items-end gap-2">
-          <TextField
-            value={text}
-            onChange={setText}
-            onSubmit={() => send()}
-            multiline
-            rows={1}
-            label="Message"
-            placeholder="Type a message…"
-            className="flex-1 bg-stone-100 rounded-2xl px-4 py-2.5 text-sm outline-none resize-none leading-6"
-          />
-          <button onClick={send} className="bg-emerald-800 text-white rounded-full w-10 h-10 flex items-center justify-center shrink-0 mb-0.5" aria-label="Send">
-            <Send size={16} />
-          </button>
-        </div>
+
+        {selectMode && (
+          <div className="flex items-center gap-1.5 px-4 py-2 border-y border-stone-200 bg-stone-50 flex-wrap mt-2">
+            <span className="text-xs font-semibold text-stone-600 mr-1">{selectedIds.size} selected</span>
+            <button onClick={() => setSelectedIds(new Set(visibleConvos.map((c) => c.id)))} className="text-xs font-semibold text-emerald-700">Select all</button>
+            <button onClick={() => runTrash(Array.from(selectedIds))} disabled={selectedIds.size === 0} className="text-xs font-semibold text-rose-600 disabled:opacity-40">Delete</button>
+            <button onClick={exitSelectMode} className="text-xs font-semibold text-stone-400 ml-auto">Cancel</button>
+          </div>
+        )}
+
+        {visibleConvos.length === 0 ? (
+          <EmptyState icon={Inbox} title="Nothing here yet" body="Nothing here yet." />
+        ) : (
+          visibleConvos.map((c) => {
+            const last = c.messages[c.messages.length - 1];
+            return (
+              <div
+                key={c.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => (selectMode ? toggleSelect(c.id) : setSelectedCid(c.id))}
+                onKeyDown={(e) => { if (e.key === "Enter") (selectMode ? toggleSelect(c.id) : setSelectedCid(c.id)); }}
+                className={`flex items-center gap-3 px-4 py-3 text-left hover:bg-stone-50 transition cursor-pointer ${selectedCid === c.id ? "bg-stone-50" : ""}`}
+              >
+                {selectMode && (
+                  <span
+                    aria-hidden="true"
+                    className={`shrink-0 w-5 h-5 rounded-md border-2 flex items-center justify-center ${selectedIds.has(c.id) ? "bg-emerald-700 border-emerald-700" : "border-stone-300"}`}
+                  >
+                    {selectedIds.has(c.id) && <Check size={13} className="text-white" />}
+                  </span>
+                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); setConvos((prev) => prev.map((x) => (x.id === c.id ? { ...x, starred: !x.starred } : x))); }}
+                  aria-label={c.starred ? "Unstar" : "Star"}
+                  className="shrink-0 text-stone-300 hover:text-amber-400"
+                >
+                  <Star size={15} className={c.starred ? "fill-amber-400 text-amber-400" : ""} />
+                </button>
+                <Avatar emoji={c.otherUserAvatar} name={c.otherUserName} />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-stone-800 truncate">{c.otherUserName}</p>
+                  <p className="text-xs text-stone-400 truncate">{last?.text || "Say hello…"}</p>
+                </div>
+                {!selectMode && (
+                  <button onClick={(e) => { e.stopPropagation(); setRowMenuFor(c); }} aria-label="Conversation options" className="shrink-0 text-stone-300 hover:text-stone-600 p-1 -mr-1">
+                    <MoreVertical size={16} />
+                  </button>
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
+
+      {active ? (
+        <div className="flex-1 flex flex-col">
+          <div className="px-4 py-3 border-b border-stone-200 flex items-center gap-2">
+            <button onClick={() => setSelectedCid(null)} className="md:hidden" aria-label="Back to list"><ArrowLeft size={18} /></button>
+            <Avatar emoji={active.otherUserAvatar} name={active.otherUserName} size="sm" />
+            <p className="font-semibold text-sm text-stone-800 flex-1">{active.otherUserName}</p>
+            {active.blocked ? (
+              <button
+                onClick={() => setConvos((prev) => prev.map((c) => (c.id === active.id ? { ...c, blocked: false } : c)))}
+                className="text-xs font-semibold text-emerald-700"
+              >
+                Unblock
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => {
+                    setConvos((prev) => prev.map((c) => (c.id === active.id ? { ...c, blocked: true } : c)));
+                    showToast("Reported and blocked — our team will review this");
+                  }}
+                  className="text-xs font-semibold text-stone-400 hover:text-rose-600"
+                >
+                  Report
+                </button>
+                <button
+                  onClick={() => setConvos((prev) => prev.map((c) => (c.id === active.id ? { ...c, blocked: true } : c)))}
+                  className="text-xs font-semibold text-stone-400 hover:text-rose-600"
+                >
+                  Block
+                </button>
+              </>
+            )}
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 bg-stone-50">
+            {active.messages.map((m) => (
+              <MessageBubble
+                key={m.id}
+                message={{ id: m.id, body: m.text }}
+                isMine={m.from === "me"}
+                flags={{ starred: m.starred, important: m.important }}
+                onOpenActions={() => setActionTarget(m)}
+              />
+            ))}
+            <div ref={scrollRef} />
+          </div>
+          {active.blocked ? (
+            <div className="p-4 text-center text-xs text-stone-400 border-t border-stone-200">You've blocked this person. Unblock to send messages.</div>
+          ) : (
+            <div className="p-3 border-t border-stone-200 flex items-end gap-2">
+              <TextField
+                value={text}
+                onChange={setText}
+                onSubmit={() => send()}
+                multiline
+                rows={1}
+                label="Message"
+                placeholder="Type a message…"
+                className="flex-1 bg-stone-100 rounded-2xl px-4 py-2.5 text-sm outline-none resize-none leading-6"
+              />
+              <button onClick={send} className="bg-emerald-800 text-white rounded-full w-10 h-10 flex items-center justify-center shrink-0 mb-0.5" aria-label="Send">
+                <Send size={16} />
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="hidden md:flex flex-1 items-center justify-center text-stone-300">
+          <MessageCircle size={48} />
+        </div>
+      )}
+
+      <MessageActionSheet
+        message={actionTarget ? { body: actionTarget.text } : null}
+        flags={actionTarget}
+        onClose={() => setActionTarget(null)}
+        onCopy={() => copyMessage(actionTarget)}
+        onDelete={() => deleteMessage(actionTarget.id)}
+        onStar={() => { toggleMsgFlag(actionTarget.id, "starred"); setActionTarget(null); }}
+        onImportant={() => { toggleMsgFlag(actionTarget.id, "important"); setActionTarget(null); }}
+      />
+
+      <ConversationActionSheet
+        conversation={rowMenuFor}
+        onClose={() => setRowMenuFor(null)}
+        onStar={() => { setConvos((prev) => prev.map((c) => (c.id === rowMenuFor.id ? { ...c, starred: !c.starred } : c))); setRowMenuFor(null); }}
+        onTrash={() => { runTrash([rowMenuFor.id]); setRowMenuFor(null); }}
+      />
+
+      <MessagesOverflowMenu
+        open={overflowOpen}
+        onClose={() => setOverflowOpen(false)}
+        onSelect={() => { setSelectMode(true); setOverflowOpen(false); }}
+        onDeleteAll={() => { setOverflowOpen(false); setConfirmDeleteAllOpen(true); }}
+        onBulkMessage={() => { setOverflowOpen(false); requireAuth("access Bulk Messaging"); }}
+        premium={false}
+      />
+
+      <ConfirmModal
+        open={confirmDeleteAllOpen}
+        title="Delete all conversations?"
+        body="Every conversation will be deleted. The people you talked with keep their side of it."
+        confirmLabel="Delete all"
+        onClose={() => setConfirmDeleteAllOpen(false)}
+        onConfirm={runDeleteAll}
+      />
     </div>
   );
 }
@@ -10405,14 +10744,18 @@ function MessagesScreenEntry({ navigate, initialWithUserId, initialWithUserName,
   );
 }
 
+// Plain 1:1 inbox — no Gmail-style folder browser here anymore. That whole
+// toolbar (Inbox/Starred/Sent/Drafts/Spam/Trash/Scheduled/Purchases/Labels)
+// now lives exclusively in Bulk Messaging, where "folders" of broadcast
+// campaigns actually make sense. A real conversation with a real person just
+// needs a list and a thread: star to pin someone to the top, delete to make
+// a conversation go away (a soft delete under the hood, so nothing already
+// sent is destroyed), block/report for safety. Shared row/action components
+// with the guest preview sandbox below, which mirrors this exact shape.
 function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserAvatar, initialCid, navigate }) {
   const {
     me, conversations, ensureConversation, updateMe, showToast, openProfileCard,
-    messageLabels, createMessageLabel, renameMessageLabel, deleteMessageLabel,
-    toggleConversationLabel, addLabelToConversations, toggleConversationStar, toggleConversationImportant,
-    trashConversations, trashAllConversations, restoreConversations,
-    markConversationsSpam, markConversationsNotSpam, permanentlyDeleteConversations, emptyMessageTrash,
-    setConversationDraft, scheduledMessages, scheduleMessage, cancelScheduledMessage,
+    toggleConversationStar, trashConversations, trashAllConversations, setConversationDraft,
   } = useApp();
   const [selectedCid, setSelectedCid] = useState(initialCid || null);
   const [activeOther, setActiveOther] = useState(initialWithUserId ? { id: initialWithUserId, name: initialWithUserName, avatar: initialWithUserAvatar } : null);
@@ -10421,73 +10764,22 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
   const initRan = useRef(false);
   const scrollRef = useRef(null);
 
-  // Gmail-style layout: a nav rail of views (Inbox/Starred/.../Trash, plus
-  // Purchases for vendors and a Labels section) instead of the old single
-  // folder-chip row, a checkbox select mode for bulk actions, and a per-row
-  // "⋮" for the single-conversation version of the same actions — no
-  // long-press anywhere in this list.
-  const [view, setView] = useState("inbox"); // a MESSAGE_NAV_ITEMS id, "purchases", or a label id
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [rowMenuFor, setRowMenuFor] = useState(null);
-  const [labelPickerFor, setLabelPickerFor] = useState(null); // array of cids, or null when closed
-  const [labelCheckedIds, setLabelCheckedIds] = useState(() => new Set());
-  const [manageLabelsOpen, setManageLabelsOpen] = useState(false);
   const [overflowOpen, setOverflowOpen] = useState(false);
-  const [confirmPermDelete, setConfirmPermDelete] = useState(null); // { cids, title, body } | null
-  const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
   const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
-  const [scheduleSendOpen, setScheduleSendOpen] = useState(false);
-  const [purchaseCustomerIds, setPurchaseCustomerIds] = useState(null); // null = not a vendor / not loaded yet
 
-  // Purchases only exists for vendor accounts: it's built by cross-referencing
-  // *our own* shop's order history (private kv — only we can read it) for
-  // customers with a completed order. There's no shopper-side purchase record
-  // in the schema today, so a pure shopper account never sees this tab.
-  useEffect(() => {
-    let cancelled = false;
-    if (!me?.isVendor || !me?.shopId) {
-      setPurchaseCustomerIds(null);
-      return;
-    }
-    (async () => {
-      const orders = await getJSON(`orders:${me.shopId}`, false, []);
-      if (cancelled) return;
-      const ids = new Set((Array.isArray(orders) ? orders : []).filter((o) => o.completed).map((o) => o.customerUserId));
-      setPurchaseCustomerIds(ids);
-    })();
-    return () => { cancelled = true; };
-  }, [me?.isVendor, me?.shopId]);
-
-  const isVendorAccount = !!(me?.isVendor && me?.shopId);
-
-  const visibleConversations = useMemo(() => {
-    const notTrashedOrSpam = (c) => !c.trashed && !c.spam;
-    if (view === "inbox") return conversations.filter(notTrashedOrSpam);
-    if (view === "starred") return conversations.filter((c) => c.starred && notTrashedOrSpam(c));
-    if (view === "important") return conversations.filter((c) => c.important && notTrashedOrSpam(c));
-    if (view === "sent") return conversations.filter((c) => c.lastSenderId === me?.id && notTrashedOrSpam(c));
-    if (view === "drafts") return conversations.filter((c) => (c.draft || "").trim() && notTrashedOrSpam(c));
-    if (view === "spam") return conversations.filter((c) => c.spam);
-    if (view === "trash") return conversations.filter((c) => c.trashed);
-    if (view === "purchases") return conversations.filter((c) => purchaseCustomerIds?.has(c.otherUserId) && notTrashedOrSpam(c));
-    // Anything else is a label id.
-    return conversations.filter((c) => (c.labelIds || []).includes(view) && notTrashedOrSpam(c));
-  }, [conversations, view, me?.id, purchaseCustomerIds]);
-
-  const activeLabel = messageLabels.find((l) => l.id === view) || null;
-  const viewTitle =
-    view === "inbox" ? "Inbox" :
-    view === "starred" ? "Starred" :
-    view === "important" ? "Important" :
-    view === "sent" ? "Sent" :
-    view === "drafts" ? "Drafts" :
-    view === "spam" ? "Spam" :
-    view === "trash" ? "Trash" :
-    view === "scheduled" ? "Scheduled" :
-    view === "purchases" ? "Purchases" :
-    activeLabel ? activeLabel.name : "Messages";
+  // Starred conversations float to the top of the one flat list — a
+  // lightweight "pin" that doesn't need its own folder to be useful.
+  const visibleConversations = useMemo(
+    () =>
+      conversations
+        .filter((c) => !c.trashed && !c.spam)
+        .slice()
+        .sort((a, b) => (b.starred ? 1 : 0) - (a.starred ? 1 : 0) || (b.lastAt || 0) - (a.lastAt || 0)),
+    [conversations]
+  );
 
   const toggleSelect = (cid) => {
     setSelectedIds((prev) => {
@@ -10507,83 +10799,21 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
       setActiveOther(null);
     }
   };
-  const goToView = (v) => {
-    setView(v);
-    setSidebarOpen(false);
-    exitSelectMode();
-  };
 
   const runTrash = async (cids) => {
     await trashConversations(cids);
     closeIfSelected(cids);
     setSelectedIds((prev) => { const next = new Set(prev); cids.forEach((id) => next.delete(id)); return next; });
-    showToast(cids.length > 1 ? "Conversations moved to trash" : "Conversation moved to trash");
-  };
-  const runRestore = async (cids) => {
-    await restoreConversations(cids);
-    setSelectedIds((prev) => { const next = new Set(prev); cids.forEach((id) => next.delete(id)); return next; });
-    showToast(cids.length > 1 ? "Conversations moved to Inbox" : "Conversation moved to Inbox");
-  };
-  const runSpam = async (cids) => {
-    await markConversationsSpam(cids);
-    closeIfSelected(cids);
-    setSelectedIds((prev) => { const next = new Set(prev); cids.forEach((id) => next.delete(id)); return next; });
-    showToast("Marked as spam");
-  };
-  const runNotSpam = async (cids) => {
-    await markConversationsNotSpam(cids);
-    setSelectedIds((prev) => { const next = new Set(prev); cids.forEach((id) => next.delete(id)); return next; });
-    showToast("Marked not spam");
-  };
-  const runPermDelete = async () => {
-    if (!confirmPermDelete) return;
-    await permanentlyDeleteConversations(confirmPermDelete.cids);
-    closeIfSelected(confirmPermDelete.cids);
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      confirmPermDelete.cids.forEach((id) => next.delete(id));
-      return next;
-    });
-    showToast(confirmPermDelete.cids.length > 1 ? "Conversations deleted forever" : "Conversation deleted forever");
-  };
-  const runEmptyTrash = async () => {
-    await emptyMessageTrash();
-    setSelectedCid(null);
-    setActiveOther(null);
     exitSelectMode();
-    showToast("Trash emptied");
+    showToast(cids.length > 1 ? "Conversations deleted" : "Conversation deleted");
   };
   const runDeleteAllInbox = async () => {
     await trashAllConversations();
     setSelectedCid(null);
     setActiveOther(null);
     exitSelectMode();
-    showToast("All conversations moved to trash");
-  };
-
-  const openLabelPicker = (cids) => {
-    const first = conversations.find((c) => c.id === cids[0]);
-    setLabelCheckedIds(new Set(cids.length === 1 ? first?.labelIds || [] : []));
-    setLabelPickerFor(cids);
-  };
-  const runToggleLabel = (labelId) => {
-    if (!labelPickerFor) return;
-    if (labelPickerFor.length === 1) {
-      toggleConversationLabel(labelPickerFor[0], labelId);
-      setLabelCheckedIds((prev) => {
-        const next = new Set(prev);
-        if (next.has(labelId)) next.delete(labelId);
-        else next.add(labelId);
-        return next;
-      });
-    } else {
-      addLabelToConversations(labelPickerFor, labelId);
-      setLabelCheckedIds((prev) => new Set(prev).add(labelId));
-    }
-  };
-  const runCreateAndApplyLabel = async (name) => {
-    const label = await createMessageLabel(name);
-    if (label) runToggleLabel(label.id);
+    setConfirmDeleteAllOpen(false);
+    showToast("All conversations deleted");
   };
 
   useEffect(() => {
@@ -10604,33 +10834,14 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
 
   const activeConvo = useMemo(() => conversations.find((c) => c.id === selectedCid) || null, [conversations, selectedCid]);
 
-  const { messages, send, blockedByOther, deleteMessage, msgFlags, toggleMessageStar, toggleMessageImportant, toggleMessageLabel } = useMessages(me, selectedCid, activeOther);
-  const [msgLabelPickerFor, setMsgLabelPickerFor] = useState(null); // a message id, or null when closed
-  const [msgLabelCheckedIds, setMsgLabelCheckedIds] = useState(() => new Set());
-  const openMessageLabelPicker = (msgId) => {
-    setMsgLabelCheckedIds(new Set(msgFlags[msgId]?.labelIds || []));
-    setMsgLabelPickerFor(msgId);
-  };
-  const runToggleMessageLabel = (labelId) => {
-    if (!msgLabelPickerFor) return;
-    toggleMessageLabel(msgLabelPickerFor, labelId);
-    setMsgLabelCheckedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(labelId)) next.delete(labelId);
-      else next.add(labelId);
-      return next;
-    });
-  };
-  const runCreateAndApplyMessageLabel = async (name) => {
-    const label = await createMessageLabel(name);
-    if (label) runToggleMessageLabel(label.id);
-  };
+  const { messages, send, blockedByOther, deleteMessage, msgFlags, toggleMessageStar, toggleMessageImportant } = useMessages(me, selectedCid, activeOther);
   const isBlocked = !!activeOther && (me.blockedUserIds || []).includes(activeOther.id);
   const [actionTarget, setActionTarget] = useState(null);
 
-  // Compose box mirrors Gmail's autosaving drafts: prefill from whatever was
-  // saved for this thread, and push every keystroke back through the
-  // debounced setConversationDraft so switching away and back keeps it.
+  // Compose box autosaves per-thread drafts: prefill from whatever was saved
+  // for this conversation, push every keystroke back through the debounced
+  // setConversationDraft so switching away and back keeps it — no separate
+  // "Drafts" folder needed for that to work.
   useEffect(() => {
     setText(activeConvo?.draft || "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -10669,20 +10880,6 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
     if (res && res.reason === "blocked") showToast("This person isn't accepting messages right now");
   };
 
-  const handleScheduleSend = async (sendAt) => {
-    if (!text.trim() || !selectedCid) return;
-    await scheduleMessage(activeOther, selectedCid, text, sendAt);
-    setText("");
-    setConversationDraft(selectedCid, "");
-    setScheduleSendOpen(false);
-    showToast("Message scheduled");
-  };
-
-  const cancelSchedule = async (id) => {
-    await cancelScheduledMessage(id);
-    showToast("Send canceled");
-  };
-
   // Reporting files the report with recent context, then blocks — someone you
   // report is someone you almost certainly don't want to keep hearing from.
   const handleReport = async () => {
@@ -10713,87 +10910,9 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
 
   return (
     <div className="flex-1 flex overflow-hidden relative">
-      {/* Gmail-style nav rail: Inbox/Starred/.../Trash, Purchases for
-         vendors, then a Labels section with create/manage entries.
-         Collapses to a slide-over on mobile via the header's hamburger. */}
-      <div
-        className={`${sidebarOpen ? "flex absolute inset-y-0 left-0 z-20 shadow-xl" : "hidden"} md:flex md:relative md:shadow-none w-60 shrink-0 flex-col border-r border-stone-200 overflow-y-auto bg-white`}
-      >
-        <div className="flex items-center justify-between px-4 pt-4 pb-2 md:hidden">
-          <span className="font-bold text-sm text-stone-700">Menu</span>
-          <button onClick={() => setSidebarOpen(false)} aria-label="Close menu" className="text-stone-400 p-1"><X size={16} /></button>
-        </div>
-        <button
-          onClick={() => { setSelectedCid(null); setActiveOther(null); setText(""); setSidebarOpen(false); }}
-          className="mx-3 mt-3 mb-1 px-4 py-2.5 rounded-2xl bg-emerald-800 text-white text-sm font-semibold flex items-center gap-2 shadow-sm hover:bg-emerald-700"
-        >
-          <Pencil size={15} /> Compose
-        </button>
-        <div className="flex flex-col gap-0.5 px-2 py-2">
-          {MESSAGE_NAV_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => goToView(item.id)}
-              className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
-                view === item.id ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
-              }`}
-            >
-              <item.icon size={16} className="shrink-0" /> {item.label}
-            </button>
-          ))}
-          {isVendorAccount && (
-            <button
-              onClick={() => goToView("purchases")}
-              className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
-                view === "purchases" ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
-              }`}
-            >
-              <ShoppingBag size={16} className="shrink-0" /> Purchases
-            </button>
-          )}
-        </div>
-        <div className="px-4 pt-2 pb-1">
-          <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Labels</span>
-        </div>
-        <div className="flex flex-col gap-0.5 px-2 pb-3">
-          {messageLabels.map((l) => (
-            <button
-              key={l.id}
-              onClick={() => goToView(l.id)}
-              className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
-                view === l.id ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
-              }`}
-            >
-              <Tag size={15} className="text-amber-600 shrink-0" /> <span className="truncate">{l.name}</span>
-            </button>
-          ))}
-          <button
-            onClick={async () => {
-              const name = window.prompt("New label name");
-              if (name && name.trim()) {
-                const label = await createMessageLabel(name);
-                if (label) goToView(label.id);
-              }
-            }}
-            className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
-          >
-            <Plus size={15} className="shrink-0" /> Create new label
-          </button>
-          <button
-            onClick={() => { setManageLabelsOpen(true); setSidebarOpen(false); }}
-            className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
-          >
-            <Folder size={15} className="shrink-0" /> Manage labels
-          </button>
-        </div>
-      </div>
-
-      {sidebarOpen && <div className="fixed inset-0 bg-black/30 z-10 md:hidden" onClick={() => setSidebarOpen(false)} />}
-
       <div className={`${selectedCid ? "hidden md:flex" : "flex"} w-full md:w-80 shrink-0 flex-col border-r border-stone-200 overflow-y-auto`}>
         <div className="flex items-center gap-2 px-4 pt-4 pb-1">
-          <button onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="md:hidden text-stone-500 p-1 -ml-1"><Menu size={18} /></button>
-          <h1 className="text-xl font-bold text-stone-900 flex-1" style={displayFont}>{view === "inbox" ? "Messages" : viewTitle}</h1>
+          <h1 className="text-xl font-bold text-stone-900 flex-1" style={displayFont}>Messages</h1>
           {conversations.length > 0 && (
             <button onClick={() => setOverflowOpen(true)} aria-label="Messages options" className="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100">
               <MoreVertical size={18} />
@@ -10810,77 +10929,17 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
             >
               Select all
             </button>
-            <button
-              onClick={() => openLabelPicker(Array.from(selectedIds))}
-              disabled={selectedIds.size === 0}
-              className="text-xs font-semibold text-stone-600 disabled:opacity-40 ml-1"
-            >
-              Labels
+            <button onClick={() => runTrash(Array.from(selectedIds))} disabled={selectedIds.size === 0} className="text-xs font-semibold text-rose-600 disabled:opacity-40">
+              Delete
             </button>
-            {view === "trash" ? (
-              <>
-                <button onClick={() => runRestore(Array.from(selectedIds))} disabled={selectedIds.size === 0} className="text-xs font-semibold text-emerald-700 disabled:opacity-40">
-                  Move to Inbox
-                </button>
-                <button
-                  onClick={() => setConfirmPermDelete({ cids: Array.from(selectedIds), title: `Delete ${selectedIds.size} conversation${selectedIds.size === 1 ? "" : "s"} forever?`, body: "This can't be undone." })}
-                  disabled={selectedIds.size === 0}
-                  className="text-xs font-semibold text-rose-600 disabled:opacity-40"
-                >
-                  Delete forever
-                </button>
-              </>
-            ) : view === "spam" ? (
-              <>
-                <button onClick={() => runNotSpam(Array.from(selectedIds))} disabled={selectedIds.size === 0} className="text-xs font-semibold text-emerald-700 disabled:opacity-40">
-                  Not spam
-                </button>
-                <button
-                  onClick={() => setConfirmPermDelete({ cids: Array.from(selectedIds), title: `Delete ${selectedIds.size} conversation${selectedIds.size === 1 ? "" : "s"} forever?`, body: "This can't be undone." })}
-                  disabled={selectedIds.size === 0}
-                  className="text-xs font-semibold text-rose-600 disabled:opacity-40"
-                >
-                  Delete forever
-                </button>
-              </>
-            ) : (
-              <>
-                <button onClick={() => runSpam(Array.from(selectedIds))} disabled={selectedIds.size === 0} className="text-xs font-semibold text-amber-700 disabled:opacity-40">
-                  Spam
-                </button>
-                <button onClick={() => runTrash(Array.from(selectedIds))} disabled={selectedIds.size === 0} className="text-xs font-semibold text-rose-600 disabled:opacity-40">
-                  Trash
-                </button>
-              </>
-            )}
             <button onClick={exitSelectMode} className="text-xs font-semibold text-stone-400 ml-auto">Cancel</button>
           </div>
         )}
 
-        {view === "scheduled" ? (
-          scheduledMessages.length === 0 ? (
-            <EmptyState icon={Clock} title="Nothing scheduled" body="Schedule a message from the compose box's clock icon." />
-          ) : (
-            scheduledMessages.map((s) => (
-              <div key={s.id} className="flex items-center gap-3 px-4 py-3 border-b border-stone-100">
-                <Avatar emoji={s.otherUserAvatar} name={s.otherUserName} />
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-sm text-stone-800 truncate">{s.otherUserName}</p>
-                  <p className="text-xs text-stone-400 truncate">{s.body}</p>
-                  <p className="cs-t10 text-emerald-700 font-semibold mt-0.5">Sends {new Date(s.sendAt).toLocaleString()}</p>
-                </div>
-                <button onClick={() => cancelSchedule(s.id)} className="shrink-0 text-xs font-semibold text-rose-600">Cancel</button>
-              </div>
-            ))
-          )
-        ) : conversations.length === 0 ? (
+        {conversations.length === 0 ? (
           <EmptyState icon={MessageCircle} title="No conversations yet" body="Message a vendor from any shop or listing page." />
         ) : visibleConversations.length === 0 ? (
-          <EmptyState
-            icon={view === "trash" ? Trash2 : view === "spam" ? AlertTriangle : view === "purchases" ? ShoppingBag : Inbox}
-            title={`Nothing in ${viewTitle}`}
-            body={view === "purchases" && !isVendorAccount ? "Purchases tracking is available for shop owners right now." : "Nothing here yet."}
-          />
+          <EmptyState icon={Inbox} title="Nothing here yet" body="Nothing here yet." />
         ) : (
           visibleConversations.map((c) => (
             <div
@@ -10916,20 +10975,10 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
                 <Avatar emoji={c.otherUserAvatar} name={c.otherUserName} />
               </button>
               <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm text-stone-800 truncate flex items-center gap-1.5">
-                  <span className="truncate">{c.otherUserName}</span>
-                  {(c.labelIds || []).slice(0, 2).map((lid) => {
-                    const l = messageLabels.find((x) => x.id === lid);
-                    return l ? (
-                      <span key={lid} className="cs-t10 bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold shrink-0">
-                        {l.name}
-                      </span>
-                    ) : null;
-                  })}
-                </p>
+                <p className="font-semibold text-sm text-stone-800 truncate">{c.otherUserName}</p>
                 <p className="text-xs text-stone-400 truncate">
-                  {view === "drafts" && c.draft ? <span className="text-rose-500 font-semibold">Draft: </span> : null}
-                  {view === "drafts" && c.draft ? c.draft : c.lastMessage || "Say hello…"}
+                  {c.draft ? <span className="text-rose-500 font-semibold">Draft: </span> : null}
+                  {c.draft || c.lastMessage || "Say hello…"}
                 </p>
               </div>
               <span className="cs-t10 text-stone-400 shrink-0">{timeAgo(c.lastAt)}</span>
@@ -11012,14 +11061,6 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
                 placeholder="Type a message…"
                 className="flex-1 bg-stone-100 rounded-2xl px-4 py-2.5 text-sm outline-none resize-none leading-6"
               />
-              <button
-                onClick={() => setScheduleSendOpen(true)}
-                disabled={!text.trim()}
-                className="text-stone-400 hover:text-stone-700 disabled:opacity-30 rounded-full w-9 h-9 flex items-center justify-center shrink-0 mb-0.5"
-                aria-label="Schedule send"
-              >
-                <Clock size={17} />
-              </button>
               <button onClick={handleSend} className="bg-emerald-800 text-white rounded-full w-10 h-10 flex items-center justify-center shrink-0 mb-0.5" aria-label="Send"><Send size={16} /></button>
             </div>
           )}
@@ -11038,55 +11079,13 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
         onDelete={() => confirmDeleteMessage(actionTarget)}
         onStar={() => { toggleMessageStar(actionTarget.id); setActionTarget(null); }}
         onImportant={() => { toggleMessageImportant(actionTarget.id); setActionTarget(null); }}
-        onLabels={() => { openMessageLabelPicker(actionTarget.id); setActionTarget(null); }}
-      />
-
-      <LabelPickerModal
-        open={!!msgLabelPickerFor}
-        labels={messageLabels}
-        count={1}
-        checkedIds={msgLabelCheckedIds}
-        onClose={() => setMsgLabelPickerFor(null)}
-        onToggle={runToggleMessageLabel}
-        onCreateAndApply={runCreateAndApplyMessageLabel}
       />
 
       <ConversationActionSheet
         conversation={rowMenuFor}
-        view={view}
         onClose={() => setRowMenuFor(null)}
         onStar={() => { toggleConversationStar(rowMenuFor.id); setRowMenuFor(null); }}
-        onImportant={() => { toggleConversationImportant(rowMenuFor.id); setRowMenuFor(null); }}
-        onLabels={() => { openLabelPicker([rowMenuFor.id]); setRowMenuFor(null); }}
-        onSpam={() => { runSpam([rowMenuFor.id]); setRowMenuFor(null); }}
-        onNotSpam={() => { runNotSpam([rowMenuFor.id]); setRowMenuFor(null); }}
         onTrash={() => { runTrash([rowMenuFor.id]); setRowMenuFor(null); }}
-        onRestore={() => { runRestore([rowMenuFor.id]); setRowMenuFor(null); }}
-        onDeleteForever={() => {
-          setConfirmPermDelete({ cids: [rowMenuFor.id], title: `Delete conversation with ${rowMenuFor.otherUserName} forever?`, body: "This can't be undone." });
-          setRowMenuFor(null);
-        }}
-      />
-
-      <LabelPickerModal
-        open={!!labelPickerFor}
-        labels={messageLabels}
-        count={labelPickerFor?.length || 0}
-        checkedIds={labelCheckedIds}
-        onClose={() => setLabelPickerFor(null)}
-        onToggle={runToggleLabel}
-        onCreateAndApply={runCreateAndApplyLabel}
-      />
-
-      <ManageLabelsModal
-        open={manageLabelsOpen}
-        labels={messageLabels}
-        onClose={() => setManageLabelsOpen(false)}
-        onRename={renameMessageLabel}
-        onDelete={(id) => {
-          if (view === id) setView("inbox");
-          deleteMessageLabel(id);
-        }}
       />
 
       <MessagesOverflowMenu
@@ -11096,51 +11095,25 @@ function MessagesView({ initialWithUserId, initialWithUserName, initialWithUserA
           setSelectMode(true);
           setOverflowOpen(false);
         }}
-        onManageLabels={() => {
-          setManageLabelsOpen(true);
-          setOverflowOpen(false);
-        }}
         onDeleteAll={() => {
           setOverflowOpen(false);
-          if (view === "trash") setConfirmEmptyTrash(true);
-          else setConfirmDeleteAllOpen(true);
+          setConfirmDeleteAllOpen(true);
         }}
         onBulkMessage={() => {
           setOverflowOpen(false);
           navigate({ screen: "bulkMessaging" });
         }}
         premium={isPremiumPlan(me)}
-        inTrash={view === "trash"}
-      />
-
-      <ConfirmModal
-        open={!!confirmPermDelete}
-        title={confirmPermDelete?.title}
-        body={confirmPermDelete?.body}
-        confirmLabel="Delete forever"
-        onClose={() => setConfirmPermDelete(null)}
-        onConfirm={runPermDelete}
-      />
-
-      <ConfirmModal
-        open={confirmEmptyTrash}
-        title="Empty trash?"
-        body="Every conversation in Trash will be deleted forever. This can't be undone."
-        confirmLabel="Empty trash"
-        onClose={() => setConfirmEmptyTrash(false)}
-        onConfirm={runEmptyTrash}
       />
 
       <ConfirmModal
         open={confirmDeleteAllOpen}
         title="Delete all conversations?"
-        body="Every conversation will be moved to Trash, where it's deleted forever after 30 days. The people you talked with keep their side of it."
+        body="Every conversation will be deleted. The people you talked with keep their side of it."
         confirmLabel="Delete all"
         onClose={() => setConfirmDeleteAllOpen(false)}
         onConfirm={runDeleteAllInbox}
       />
-
-      <ScheduleSendModal open={scheduleSendOpen} onClose={() => setScheduleSendOpen(false)} onSchedule={handleScheduleSend} />
     </div>
   );
 }
@@ -14196,6 +14169,20 @@ function useCampaigns(ownerId) {
     },
     [persistList]
   );
+  // Swaps a label with its neighbor in display order — same up/down reorder
+  // as message groups, so "moving folders around" works the same way
+  // everywhere Bulk Messaging lets you organize something.
+  const moveLabel = useCallback(
+    (id, direction) => {
+      const idx = labels.findIndex((l) => l.id === id);
+      const swapWith = idx + direction;
+      if (idx < 0 || swapWith < 0 || swapWith >= labels.length) return;
+      const next = labels.slice();
+      [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+      persistLabels(next);
+    },
+    [labels, persistLabels]
+  );
 
   return {
     campaigns: list,
@@ -14206,6 +14193,7 @@ function useCampaigns(ownerId) {
     renameLabel,
     deleteLabel,
     toggleLabel,
+    moveLabel,
     addLabelToCampaigns,
     createDraft,
     updateCampaign,
@@ -14451,6 +14439,7 @@ function BulkMessagingCampaignManager({ navigate }) {
   const [labelPickerFor, setLabelPickerFor] = useState(null);
   const [labelCheckedIds, setLabelCheckedIds] = useState(() => new Set());
   const [manageLabelsOpen, setManageLabelsOpen] = useState(false);
+  const [manageGroupsOpen, setManageGroupsOpen] = useState(false);
   const [purchaseCustomerIds, setPurchaseCustomerIds] = useState(null);
 
   // Same cross-reference as Messages' own Purchases tab: our own shop's
@@ -14665,6 +14654,31 @@ function BulkMessagingCampaignManager({ navigate }) {
             <Folder size={15} className="shrink-0" /> Manage labels
           </button>
         </div>
+        <div className="px-4 pt-2 pb-1">
+          <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Groups</span>
+        </div>
+        <div className="flex flex-col gap-0.5 px-2 pb-3">
+          {groupsApi.groups.map((g) => (
+            <div key={g.id} className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-600">
+              <Users size={15} className="text-amber-600 shrink-0" /> <span className="truncate flex-1">{g.name}</span>
+              <span className="cs-t10 text-stone-400 font-normal shrink-0">{(g.contactIds || []).length}</span>
+            </div>
+          ))}
+          <button
+            onClick={() => { setManageGroupsOpen(true); setSidebarOpen(false); }}
+            className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
+          >
+            <Plus size={15} className="shrink-0" /> Add group
+          </button>
+          {groupsApi.groups.length > 0 && (
+            <button
+              onClick={() => { setManageGroupsOpen(true); setSidebarOpen(false); }}
+              className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
+            >
+              <Users size={15} className="shrink-0" /> Manage groups
+            </button>
+          )}
+        </div>
       </div>
 
       {sidebarOpen && <div className="fixed inset-0 bg-black/30 z-10 md:hidden" onClick={() => setSidebarOpen(false)} />}
@@ -14784,11 +14798,24 @@ function BulkMessagingCampaignManager({ navigate }) {
         labels={campaignsApi.labels}
         onClose={() => setManageLabelsOpen(false)}
         onRename={campaignsApi.renameLabel}
+        onMove={campaignsApi.moveLabel}
         onDelete={(id) => {
           if (view === id) setView("inbox");
           campaignsApi.deleteLabel(id);
         }}
         noun="campaign"
+      />
+
+      <ManageGroupsModal
+        open={manageGroupsOpen}
+        onClose={() => setManageGroupsOpen(false)}
+        groups={groupsApi.groups}
+        mailing={mailing}
+        onCreate={(name) => groupsApi.createGroup(name)}
+        onRename={groupsApi.renameGroup}
+        onDelete={groupsApi.deleteGroup}
+        onMove={groupsApi.moveGroup}
+        onSetContacts={groupsApi.setGroupContacts}
       />
     </div>
   );
@@ -20538,37 +20565,63 @@ function Onboarding({ onCreate, reason, onCancel }) {
   const [fullName, setFullName] = useState("");
   const [zipcode, setZipcode] = useState("");
   const [phone, setPhone] = useState("");
-  const [phoneVerified, setPhoneVerified] = useState(false);
-  const [codeStage, setCodeStage] = useState(false);
-  const [code, setCode] = useState("");
-  const [codeBusy, setCodeBusy] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // The account's own sign-up email — already real and already verified (it
+  // went through AuthGate's own 6-digit code flow to get this far). Rather
+  // than faking a text message we can't afford to actually send, we reuse
+  // that same address here and send a second real code to it via Supabase's
+  // email OTP, so finishing account setup still proves the person at the
+  // keyboard controls that inbox right now.
+  const [email, setEmail] = useState("");
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [emailCodeStage, setEmailCodeStage] = useState(false);
+  const [emailCode, setEmailCode] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailChecking, setEmailChecking] = useState(false);
+  const [emailError, setEmailError] = useState("");
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      const e = data?.session?.user?.email;
+      if (e) setEmail(e);
+    });
+  }, []);
 
   const nameValid = fullName.trim().length >= 2;
   const zipValid = isValidZip(zipcode);
   const phoneValid = digitsOnly(phone).length === 10;
-  const formReady = nameValid && zipValid && phoneValid && phoneVerified;
+  const formReady = nameValid && zipValid && phoneValid && emailVerified;
 
-  const handlePhoneChange = (v) => {
-    setPhone(v);
-    setPhoneVerified(false);
-    setCodeStage(false);
-    setCode("");
+  const sendEmailCode = async () => {
+    if (!email || emailSending) return;
+    setEmailError("");
+    setEmailSending(true);
+    try {
+      const { error: err } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+      if (err) throw err;
+      setEmailCodeStage(true);
+    } catch (err) {
+      setEmailError(err?.message || "Couldn't send a code — try again shortly.");
+    } finally {
+      setEmailSending(false);
+    }
   };
 
-  const sendCode = () => {
-    if (!phoneValid) return;
-    setCodeStage(true);
-  };
-
-  const verifyCode = () => {
-    if (!/^\d{6}$/.test(code.trim())) return;
-    setCodeBusy(true);
-    setTimeout(() => {
-      setPhoneVerified(true);
-      setCodeStage(false);
-      setCodeBusy(false);
-    }, 350);
+  const verifyEmailCode = async () => {
+    if (!/^\d{6}$/.test(emailCode.trim())) return;
+    setEmailError("");
+    setEmailChecking(true);
+    try {
+      const { error: err } = await supabase.auth.verifyOtp({ email, token: emailCode.trim(), type: "email" });
+      if (err) throw err;
+      setEmailVerified(true);
+      setEmailCodeStage(false);
+    } catch (err) {
+      setEmailError(err?.message || "That code didn't work. Double-check it and try again.");
+    } finally {
+      setEmailChecking(false);
+    }
   };
 
   return (
@@ -20580,17 +20633,17 @@ function Onboarding({ onCreate, reason, onCancel }) {
           <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-7 w-auto" />
         </div>
         {reason ? (
-          <p className="text-center text-stone-500 mb-4 text-sm">One more step to {reason}.</p>
+          <p className="text-center text-stone-600 mb-4 text-sm">One more step to {reason}.</p>
         ) : (
-          <p className="text-center text-stone-500 mb-4 text-sm">A hyper-local, nationwide hub connecting growers and buyers.</p>
+          <p className="text-center text-stone-600 mb-4 text-sm">A hyper-local, nationwide hub connecting growers and buyers.</p>
         )}
         {onCancel && (
-          <button type="button" onClick={onCancel} className="text-xs font-semibold text-stone-400 hover:text-stone-600 mb-3 block mx-auto">
+          <button type="button" onClick={onCancel} className="text-xs font-semibold text-stone-500 hover:text-stone-700 mb-3 block mx-auto">
             Not now — keep browsing
           </button>
         )}
         <div className="bg-white border border-stone-200 rounded-3xl p-5 shadow-sm">
-          <p className="text-xs font-bold text-stone-400 uppercase mb-2">Display name</p>
+          <p className="text-xs font-bold text-stone-600 uppercase mb-2">Display name</p>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -20598,7 +20651,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
             className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700"
           />
 
-          <p className="text-xs font-bold text-stone-400 uppercase mb-2">Full legal name</p>
+          <p className="text-xs font-bold text-stone-600 uppercase mb-2">Full legal name</p>
           <input
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
@@ -20606,7 +20659,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
             className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700"
           />
 
-          <p className="text-xs font-bold text-stone-400 uppercase mb-2">Zip code</p>
+          <p className="text-xs font-bold text-stone-600 uppercase mb-2">Zip code</p>
           <input
             value={zipcode}
             onChange={(e) => setZipcode(e.target.value)}
@@ -20617,54 +20670,66 @@ function Onboarding({ onCreate, reason, onCancel }) {
           {zipcode && !zipValid && <p className="cs-t11 text-rose-600 mb-3">Enter a valid 5-digit zip code</p>}
           {(!zipcode || zipValid) && <div className="mb-3" />}
 
-          <p className="text-xs font-bold text-stone-400 uppercase mb-2">Phone number</p>
+          <p className="text-xs font-bold text-stone-600 uppercase mb-2">Phone number</p>
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="(208) 555-0100"
+            inputMode="tel"
+            className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-1 outline-none focus:border-emerald-700"
+          />
+          <p className="cs-t11 text-stone-500 mb-4">We'll only use this if a buyer needs to reach you directly — no texts, no calls otherwise.</p>
+
+          <p className="text-xs font-bold text-stone-600 uppercase mb-2">Email</p>
           <div className="flex gap-2 mb-1.5">
             <input
-              value={phone}
-              onChange={(e) => handlePhoneChange(e.target.value)}
-              placeholder="(208) 555-0100"
-              inputMode="tel"
-              className="flex-1 border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700"
+              value={email}
+              readOnly
+              className="flex-1 border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none bg-stone-50 text-stone-600"
             />
-            {!phoneVerified && (
+            {!emailVerified && (
               <button
                 type="button"
-                onClick={sendCode}
-                disabled={!phoneValid}
+                onClick={sendEmailCode}
+                disabled={!email || emailSending}
                 className="shrink-0 px-3.5 rounded-xl text-xs font-semibold border border-stone-200 text-stone-700 disabled:opacity-40 hover:bg-stone-50"
               >
-                {codeStage ? "Resend" : "Send code"}
+                {emailSending ? "Sending…" : emailCodeStage ? "Resend" : "Send code"}
               </button>
             )}
           </div>
 
-          {phoneVerified ? (
+          {emailVerified ? (
             <p className="cs-t11 text-emerald-700 font-semibold flex items-center gap-1 mb-4">
-              <BadgeCheck size={13} /> Phone verified (test mode)
+              <BadgeCheck size={13} /> Email verified
             </p>
-          ) : codeStage ? (
+          ) : emailCodeStage ? (
             <div className="mb-4 bg-stone-50 rounded-xl p-3 border border-stone-200">
-              <p className="cs-t11 text-stone-500 mb-2">TEST MODE — no text was actually sent. Enter any 6 digits.</p>
+              <p className="cs-t11 text-stone-600 mb-2">We sent a 6-digit code to {email}.</p>
               <div className="flex gap-2">
                 <input
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  value={emailCode}
+                  onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                   placeholder="123456"
                   inputMode="numeric"
                   className="flex-1 border border-stone-200 rounded-lg px-3 py-2 text-sm tracking-widest outline-none focus:border-emerald-700"
                 />
                 <button
                   type="button"
-                  onClick={verifyCode}
-                  disabled={codeBusy || code.length !== 6}
+                  onClick={verifyEmailCode}
+                  disabled={emailChecking || emailCode.length !== 6}
                   className="shrink-0 px-3.5 rounded-lg text-xs font-semibold bg-emerald-800 text-white disabled:opacity-40"
                 >
-                  {codeBusy ? "Checking…" : "Verify"}
+                  {emailChecking ? "Checking…" : "Verify"}
                 </button>
               </div>
+              {emailError && <p className="cs-t11 text-rose-600 mt-2">{emailError}</p>}
             </div>
           ) : (
-            <p className="cs-t11 text-stone-400 mb-4">We'll text a code to confirm this number.</p>
+            <>
+              <p className="cs-t11 text-stone-500 mb-4">We'll send a code to confirm this email.</p>
+              {emailError && <p className="cs-t11 text-rose-600 -mt-3 mb-4">{emailError}</p>}
+            </>
           )}
 
           <button
@@ -20674,12 +20739,12 @@ function Onboarding({ onCreate, reason, onCancel }) {
               setBusy(false);
             }}
             disabled={busy || !formReady}
-            className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition"
+            className="w-full bg-[#2cd827] hover:bg-[#25bd21] text-stone-900 font-bold py-3 rounded-xl disabled:opacity-50 transition"
           >
             {busy ? "Setting up…" : "Create free account"}
           </button>
         </div>
-        <p className="text-center cs-t11 text-stone-400 mt-4">Your display name and avatar are what other growers and buyers see. Everything else stays private — you can change any of it later in your account.</p>
+        <p className="text-center cs-t11 text-stone-500 mt-4">Your display name and avatar are what other growers and buyers see. Everything else stays private — you can change any of it later in your account.</p>
       </div>
     </div>
   );
