@@ -12739,7 +12739,7 @@ function PlacesScreen({ navigate }) {
 // "users:{id}" record itself so it's never stuck showing a stale avatar
 // even when the caller only had an old emoji/name to hand it.
 function ProfileCardModal({ target, onClose }) {
-  const { me, navigate } = useApp();
+  const { me, navigate, closeProduct } = useApp();
   const [user, setUser] = useState(undefined);
 
   useEffect(() => {
@@ -12777,6 +12777,11 @@ function ProfileCardModal({ target, onClose }) {
           <button
             onClick={() => {
               onClose();
+              // If this popup was opened from on top of the product card
+              // (e.g. tapping a review's author), close that card too —
+              // otherwise it's left stacked behind the profile screen we're
+              // navigating to, so "View profile" appears to do nothing.
+              closeProduct();
               navigate({ screen: "profile", userId: target.id });
             }}
             className="w-full flex items-center justify-center gap-1.5 bg-emerald-800 text-white rounded-xl px-4 py-2.5 font-semibold text-sm"
@@ -21987,6 +21992,11 @@ function RootShell() {
       setOpenProductFocusReviews(true);
       setOpenProductId(id);
     },
+    // Lets an overlay stacked on top of the product modal (e.g. the small
+    // profile-card popup opened from a review's author) dismiss the product
+    // card underneath it too — used when "View profile" should leave just
+    // the profile behind, not the item card plus the profile navigated to.
+    closeProduct: () => setOpenProductId(null),
     showToast,
     conversations: convo.conversations,
     ensureConversation: convo.ensureConversation,
@@ -22011,14 +22021,27 @@ function RootShell() {
     cancelScheduledMessage: convo.cancelScheduledMessage,
   };
 
-  if (meLoading) return <LoadingScreen />;
-  if (market.loading) return <LoadingScreen />;
+  // While a password reset is in progress (`recovering`), never let a
+  // loading gate unmount AuthGate — verifying the emailed code creates a
+  // real session, which makes useCurrentUser() refetch the profile and
+  // briefly flip meLoading back to true. If that were allowed to return
+  // LoadingScreen here (before the recovering-aware block below gets a
+  // chance to render AuthGate), AuthGate would unmount and then remount
+  // from scratch on the next render, resetting its internal `mode` state
+  // back to initialMode and losing the "choose a new password" step —
+  // this is what caused the reset flow to dump back to plain sign-in.
+  if (meLoading && !recovering) return <LoadingScreen />;
+  if (market.loading && !recovering) return <LoadingScreen />;
 
   // An account can end up owning more than one shop — see removeShop's
   // comment for how. Give them the picker right after signing in, once per
   // session, rather than silently deciding for them via me.shopId.
   const myShops = me ? market.shops.filter((s) => s.ownerId === me.id) : [];
-  if (me && myShops.length > 1 && !shopGateResolved) {
+  // `&& !recovering` for the same reason as the loading gates above — an
+  // existing multi-shop account's `me` can resolve while a password reset
+  // is still in progress, and this gate must not cut in front of AuthGate's
+  // "choose a new password" step either.
+  if (me && myShops.length > 1 && !shopGateResolved && !recovering) {
     return (
       <ChooseShopGate
         shops={myShops}
