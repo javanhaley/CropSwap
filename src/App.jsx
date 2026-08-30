@@ -5812,18 +5812,28 @@ function SaveSproutBurst({ onDone }) {
   );
 }
 
-function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, onGoHome, onOpenFilters, onSubmitSearch, filterCount }) {
-  const { me, userLoc, openLocationPicker, unreadCount, favProducts, favShops, globalSearch, setGlobalSearch } = useApp();
+function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, onGoHome, onOpenFilters, onSubmitSearch, filterCount, previewUnreadCount }) {
+  const { me, userLoc, openLocationPicker, unreadCount: realUnreadCount, favProducts, favShops, globalSearch, setGlobalSearch } = useApp();
+  // Guests have no real notifications yet, but the bell should still look
+  // "real" — it shows the same sample unread count as NotificationsPreviewModal
+  // (kept in sync via RootShell) instead of sitting permanently at zero.
+  const unreadCount = me ? realUnreadCount : previewUnreadCount || 0;
   const totalFav = Object.keys(favProducts).length + Object.keys(favShops).length;
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-stone-200">
-      <div className="px-3 py-3 flex items-center gap-1 max-w-6xl mx-auto">
-        {/* The old icon+stacked-text "home" control lived here before the
-           real wordmark logo existed anywhere in the app. Now that the
-           Sidebar carries the actual logo (and doubles as the home button
-           there), duplicating a second, smaller home button here was just
-           redundant — removed rather than re-skinned. */}
+      <div className="px-3 py-3 flex items-center gap-2 max-w-6xl mx-auto">
+        {/* Logo lives in the Sidebar too, but that's hidden behind a drawer
+           on mobile — this is the one thing every screen, phone included,
+           shows without the visitor doing anything first. */}
+        <button
+          onClick={onGoHome}
+          className="shrink-0 hover:opacity-75 active:opacity-60 transition"
+          aria-label="CropSwap home"
+          title="Home"
+        >
+          <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-7 w-auto" />
+        </button>
 
         {/* 30% shorter: the pill takes 70% of the space it used to fill. */}
         {/* Fills the row and never shrinks below the width of its own placeholder. */}
@@ -6109,6 +6119,7 @@ const SITE_MAP_ITEMS = [
   { id: "explore", label: "Explore", icon: Home, screen: "explore" },
   { id: "map", label: "Map", icon: MapPin, screen: "explore", isMap: true },
   { id: "store", label: "My Store / Start Selling", icon: Store, screen: "store" },
+  { id: "storeEditor", label: "Edit Storefront", icon: Pencil, screen: "storeEditor" },
   { id: "messages", label: "Messages", icon: MessageCircle, screen: "messages" },
   { id: "favorites", label: "Favorites", icon: Heart, screen: "favorites" },
   { id: "dashboard", label: "Dashboard (live demo)", icon: TrendingUp, screen: "dashboard" },
@@ -13017,6 +13028,8 @@ function AccountModal({ open, onClose }) {
     { id: "notifications", label: "Alerts", icon: Bell },
     { id: "dashboard", label: "Dashboard", icon: TrendingUp, link: true },
     { id: "favorites", label: "Favorites", icon: Heart, link: true },
+    { id: "messages", label: "Messages", icon: MessageCircle, link: true },
+    { id: "bulkMessaging", label: "Bulk Messages", icon: Megaphone, link: true },
     { id: "acct-orders", label: "Orders", icon: ClipboardList, link: true, linkScreen: "orders", linkTab: "orders" },
     { id: "acct-calendar", label: "Calendar", icon: Calendar, link: true, linkScreen: "orders", linkTab: "calendar" },
     { id: "acct-inventory", label: "Inventory", icon: Boxes, link: true, linkScreen: "orders", linkTab: "inventory" },
@@ -13281,6 +13294,101 @@ function NotificationsModal({ open, onClose, navigate, onOpenProduct }) {
   );
 }
 
+
+// Guest preview of the notifications bell — sample notifications (including
+// two real, publicly-browsable sample shops), fully interactive: mark all
+// read, delete one, clear all with a confirmation step, and clicking
+// through navigates wherever that notification points, exactly like the
+// real inbox. Messages/Start Selling already show their own guest preview
+// once you land there, and the shop links go to real, already-public shop
+// profiles — same as browsing Explore — so nothing here crosses into real
+// backend state. State lives in RootShell (see `guestNotifs` below) so the
+// bell's badge count and this list always agree, and resets on a fresh
+// visit since it's just component state.
+function buildPreviewNotifications() {
+  const now = Date.now();
+  return [
+    { id: "pn-1", type: "message", title: "Buzzy Bee Farm replied to you", body: "Your order of 2 dozen eggs is ready for pickup Saturday morning.", createdAt: now - 12 * 60000, read: false, route: { screen: "messages" } },
+    { id: "pn-2", type: "favorite", title: "Your shop was favourited", body: "3 people saved your storefront this week.", createdAt: now - 90 * 60000, read: false, route: { screen: "store" } },
+    { id: "pn-3", type: "review", title: "New 5-star review", body: "Best heirloom tomatoes I've had all summer.", createdAt: now - 260 * 60000, read: false, route: { screen: "shop", shopId: "seed-localroots" } },
+    { id: "pn-4", type: "favorite", title: "Golden Valley Orchards listed something new", body: "Blood Orange (2lb bag) is in season.", createdAt: now - 1400 * 60000, read: true, route: { screen: "shop", shopId: "seed-goldenvalley" } },
+    { id: "pn-5", type: "review", title: "Sunroot Collective replied to your review", body: "Thanks for the note about the shiitake logs.", createdAt: now - 2200 * 60000, read: true, route: { screen: "shop", shopId: "seed-sunroot" } },
+  ];
+}
+function NotificationsPreviewModal({ open, onClose, navigate, notifications, setNotifications }) {
+  const [confirmClear, setConfirmClear] = useState(false);
+  const unreadCount = notifications.filter((n) => !n.read).length;
+  const markAllRead = () => setNotifications((list) => list.map((n) => ({ ...n, read: true })));
+  const removeNotification = (id) => setNotifications((list) => list.filter((n) => n.id !== id));
+  const clearNotifications = () => setNotifications([]);
+  const handleClick = (n) => {
+    markAllRead();
+    onClose();
+    if (n.route) navigate(n.route);
+  };
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="notif-preview-title">
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-1">
+          <h2 id="notif-preview-title" className="text-lg font-bold text-stone-900" style={displayFont}>Notifications</h2>
+          <div className="flex items-center gap-3">
+            {unreadCount > 0 && <button onClick={markAllRead} className="text-xs font-semibold text-emerald-800">Mark all read</button>}
+            {notifications.length > 0 && (
+              <button onClick={() => setConfirmClear(true)} className="text-xs font-semibold text-stone-400 hover:text-rose-600">Clear all</button>
+            )}
+            <button onClick={onClose} aria-label="Close"><X size={20} className="text-stone-400" /></button>
+          </div>
+        </div>
+        <p className="text-xs text-stone-500 mb-3">Sample notifications — create a free account to get real ones.</p>
+        {confirmClear && (
+          <div className="border border-rose-200 bg-rose-50 rounded-xl p-3 mb-3">
+            <p className="text-xs text-rose-800 mb-2.5">Delete all notifications? This can't be undone.</p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmClear(false)} className="flex-1 text-sm font-semibold text-stone-600 py-1.5">Keep them</button>
+              <button
+                onClick={() => { clearNotifications(); setConfirmClear(false); }}
+                className="flex-1 bg-rose-600 text-white text-sm font-semibold rounded-lg py-1.5"
+              >
+                Delete all
+              </button>
+            </div>
+          </div>
+        )}
+        {notifications.length === 0 ? (
+          <EmptyState icon={Bell} title="You're all caught up" />
+        ) : (
+          <div className="flex flex-col gap-1 max-h-96 overflow-y-auto">
+            {notifications.map((n) => {
+              const Icon = NOTIF_ICON[n.type] || Bell;
+              return (
+                <div key={n.id} className={`flex items-start gap-2 rounded-xl transition ${!n.read ? "bg-emerald-50" : "hover:bg-stone-50"}`}>
+                  <button onClick={() => handleClick(n)} className="flex items-start gap-3 p-3 text-left flex-1 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center shrink-0 relative">
+                      <Icon size={14} className={n.read ? "text-stone-400" : "text-emerald-700"} />
+                      {!n.read && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-600 border border-white" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm truncate ${n.read ? "font-medium text-stone-600" : "font-semibold text-stone-900"}`}>{n.title}</p>
+                      {n.body && <p className="text-xs text-stone-500 truncate">{n.body}</p>}
+                      <p className="cs-t10 text-stone-400 mt-0.5">{timeAgo(n.createdAt)}</p>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => removeNotification(n.id)}
+                    className="shrink-0 self-center p-2 mr-1 text-stone-300 hover:text-rose-600 transition"
+                    aria-label={`Delete notification: ${n.title}`}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -14496,6 +14604,8 @@ function BulkMessagingCampaignManager({ navigate }) {
     return rows.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   }, [campaignsApi.campaigns, view]);
 
+  const scheduledCount = useMemo(() => campaignsApi.campaigns.filter((c) => c.status === "scheduled").length, [campaignsApi.campaigns]);
+
   const activeLabel = campaignsApi.labels.find((l) => l.id === view) || null;
   const viewTitle =
     view === "inbox" ? "Campaigns" :
@@ -14688,6 +14798,14 @@ function BulkMessagingCampaignManager({ navigate }) {
           <button onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="md:hidden text-stone-500 p-1 -ml-1"><Menu size={18} /></button>
           <Megaphone size={18} className="text-amber-600 shrink-0" />
           <h1 className="text-xl font-bold text-stone-900 flex-1" style={displayFont}>{viewTitle}</h1>
+          <button
+            onClick={() => goToView("scheduled")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition shrink-0 ${
+              view === "scheduled" ? "bg-amber-100 border-amber-300 text-amber-800" : "border-stone-200 text-stone-600 hover:bg-stone-50"
+            }`}
+          >
+            <Clock size={13} /> Scheduled{scheduledCount > 0 ? ` (${scheduledCount})` : ""}
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto">
           {campaignsApi.campaigns.length === 0 ? (
@@ -14821,69 +14939,527 @@ function BulkMessagingCampaignManager({ navigate }) {
   );
 }
 
-// Non-Premium preview of the campaign manager — same shell, a few sample
-// campaigns across different folders, but every control is locked behind
-// ToolLock: this is the one part of Bulk Messaging the user explicitly
-// wants gated ("should not be accessible unless you have premium... put a
-// crown on it and lead them to sign up"), unlike the Orders/Calendar
-// previews which stay fully interactive sandboxes.
+// Non-Premium preview of the campaign manager — shown to guests AND to any
+// signed-in vendor who isn't on Premium yet. Per the owner's direction that
+// every mock page should "mimic the real deal" and stay fully clickable
+// with nothing crossing the mock bounds, this reuses the exact same shell
+// and the same prop-driven modals as the real BulkMessagingCampaignManager
+// (CampaignComposerModal, CampaignActionSheet, LabelPickerModal,
+// ManageLabelsModal, ManageGroupsModal) against purely local, in-memory
+// sample contacts/groups/labels/campaigns — composing, saving drafts,
+// scheduling, starring, labeling, creating/reordering/renaming groups and
+// labels, trashing, all fully work here. The one action that would
+// genuinely reach a real inbox — actually sending — is real bulk sending,
+// a Premium feature, so it always routes to the upgrade/sign-up path
+// instead of delivering anything. Local state is rebuilt fresh (via the
+// factory functions below) every time a visitor mounts this screen.
+function buildPreviewMailingList() {
+  return [
+    { userId: "prev-c1", name: "Casey Lindgren", avatar: "🧑" },
+    { userId: "prev-c2", name: "Maria Ortiz", avatar: "👩" },
+    { userId: "prev-c3", name: "The Bennett Family", avatar: "👨‍👩‍👧" },
+    { userId: "prev-c4", name: "Tom Whitfield", avatar: "🧔" },
+    { userId: "prev-c5", name: "Priya Shah", avatar: "👩‍🦱" },
+  ];
+}
+function buildPreviewGroups() {
+  return [
+    { id: "prev-g1", name: "Regulars", contactIds: ["prev-c1", "prev-c2", "prev-c4"], createdAt: Date.now() },
+    { id: "prev-g2", name: "Market Day Only", contactIds: ["prev-c3", "prev-c5"], createdAt: Date.now() },
+  ];
+}
+function buildPreviewLabels() {
+  return [{ id: "prev-l1", name: "VIP", createdAt: Date.now() }];
+}
+function buildPreviewCampaigns() {
+  const now = Date.now();
+  return [
+    {
+      id: "prev-camp1",
+      subject: "Fresh peaches just picked!",
+      body: "Stop by this weekend — limited boxes available.",
+      audience: { type: "all", groupId: null },
+      status: "sent",
+      starred: true,
+      important: false,
+      labelIds: [],
+      sendAt: null,
+      sentAt: now - 86400000 * 2,
+      recipientCount: 5,
+      createdAt: now - 86400000 * 2,
+      updatedAt: now - 86400000 * 2,
+    },
+    {
+      id: "prev-camp2",
+      subject: "Loyalty thank-you",
+      body: "10% off your next pickup, just for our regulars.",
+      audience: { type: "group", groupId: "prev-g1" },
+      status: "scheduled",
+      starred: false,
+      important: true,
+      labelIds: ["prev-l1"],
+      sendAt: now + 86400000,
+      sentAt: null,
+      recipientCount: 0,
+      createdAt: now - 3600000,
+      updatedAt: now - 3600000,
+    },
+    {
+      id: "prev-camp3",
+      subject: "New winter squash varieties",
+      body: "",
+      audience: { type: "all", groupId: null },
+      status: "draft",
+      starred: false,
+      important: false,
+      labelIds: [],
+      sendAt: null,
+      sentAt: null,
+      recipientCount: 0,
+      createdAt: now - 7200000,
+      updatedAt: now - 7200000,
+    },
+  ];
+}
 function BulkMessagingCampaignPreview({ navigate }) {
-  const SAMPLE = useMemo(
-    () => [
-      { id: "prev-1", subject: "Fresh peaches just picked!", body: "Stop by this weekend — limited boxes available.", audienceLabel: "All contacts", status: "sent", sentAt: Date.now() - 86400000 * 2, recipientCount: 48 },
-      { id: "prev-2", subject: "Loyalty thank-you", body: "10% off your next pickup, just for our regulars.", audienceLabel: "Purchasers", status: "scheduled", sendAt: Date.now() + 86400000 },
-      { id: "prev-3", subject: "New winter squash varieties", body: "", audienceLabel: "Regular customers", status: "draft" },
-    ],
-    []
+  const { me, requireAuth, showToast } = useApp();
+  const [mailingList] = useState(buildPreviewMailingList);
+  const [groups, setGroups] = useState(buildPreviewGroups);
+  const [labels, setLabels] = useState(buildPreviewLabels);
+  const [campaigns, setCampaigns] = useState(buildPreviewCampaigns);
+  const purchaserIds = useMemo(() => new Set(["prev-c2", "prev-c4"]), []);
+
+  const mailing = useMemo(() => ({ list: mailingList }), [mailingList]);
+  const groupsApi = useMemo(
+    () => ({
+      groups,
+      createGroup: (name) => {
+        const trimmed = (name || "").trim();
+        if (!trimmed) return null;
+        const group = { id: uid("prevgrp"), name: trimmed, contactIds: [], createdAt: Date.now() };
+        setGroups((g) => [...g, group]);
+        return group;
+      },
+      renameGroup: (id, name) => setGroups((g) => g.map((x) => (x.id === id ? { ...x, name: (name || "").trim() || x.name } : x))),
+      deleteGroup: (id) => setGroups((g) => g.filter((x) => x.id !== id)),
+      setGroupContacts: (id, contactIds) => setGroups((g) => g.map((x) => (x.id === id ? { ...x, contactIds } : x))),
+      moveGroup: (id, direction) => {
+        setGroups((g) => {
+          const idx = g.findIndex((x) => x.id === id);
+          const swapWith = idx + direction;
+          if (idx < 0 || swapWith < 0 || swapWith >= g.length) return g;
+          const next = g.slice();
+          [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+          return next;
+        });
+      },
+    }),
+    [groups]
   );
+
+  const [view, setView] = useState("inbox");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [editingCampaign, setEditingCampaign] = useState(null);
+  const [actionTarget, setActionTarget] = useState(null);
+  const [labelPickerFor, setLabelPickerFor] = useState(null);
+  const [labelCheckedIds, setLabelCheckedIds] = useState(() => new Set());
+  const [manageLabelsOpen, setManageLabelsOpen] = useState(false);
+  const [manageGroupsOpen, setManageGroupsOpen] = useState(false);
+  const hasPurchasers = true;
+
+  const patch = (ids, p) => {
+    const set = new Set(ids);
+    setCampaigns((list) => list.map((c) => (set.has(c.id) ? { ...c, ...p, updatedAt: Date.now() } : c)));
+  };
+
+  const visibleCampaigns = useMemo(() => {
+    const active = (c) => c.status !== "trash" && c.status !== "spam";
+    let rows;
+    if (view === "inbox") rows = campaigns.filter(active);
+    else if (view === "starred") rows = campaigns.filter((c) => c.starred && active(c));
+    else if (view === "important") rows = campaigns.filter((c) => c.important && active(c));
+    else if (view === "sent") rows = campaigns.filter((c) => c.status === "sent");
+    else if (view === "scheduled") rows = campaigns.filter((c) => c.status === "scheduled");
+    else if (view === "drafts") rows = campaigns.filter((c) => c.status === "draft");
+    else if (view === "spam") rows = campaigns.filter((c) => c.status === "spam");
+    else if (view === "trash") rows = campaigns.filter((c) => c.status === "trash");
+    else if (view === "purchases") rows = campaigns.filter((c) => c.audience?.type === "purchasers" && active(c));
+    else rows = campaigns.filter((c) => (c.labelIds || []).includes(view) && active(c));
+    return rows.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  }, [campaigns, view]);
+
+  const scheduledCount = useMemo(() => campaigns.filter((c) => c.status === "scheduled").length, [campaigns]);
+
+  const activeLabel = labels.find((l) => l.id === view) || null;
+  const viewTitle =
+    view === "inbox" ? "Campaigns" :
+    view === "starred" ? "Starred" :
+    view === "important" ? "Important" :
+    view === "sent" ? "Sent" :
+    view === "scheduled" ? "Scheduled" :
+    view === "drafts" ? "Drafts" :
+    view === "spam" ? "Spam" :
+    view === "trash" ? "Trash" :
+    view === "purchases" ? "Purchases" :
+    activeLabel ? activeLabel.name : "Campaigns";
+
+  const goToView = (v) => {
+    setView(v);
+    setSidebarOpen(false);
+  };
+
+  const openLabelPicker = (id) => {
+    const c = campaigns.find((x) => x.id === id);
+    setLabelCheckedIds(new Set(c?.labelIds || []));
+    setLabelPickerFor(id);
+  };
+  const runToggleLabel = (labelId) => {
+    const cur = campaigns.find((c) => c.id === labelPickerFor);
+    const has = (cur?.labelIds || []).includes(labelId);
+    const nextIds = has ? (cur.labelIds || []).filter((x) => x !== labelId) : [...(cur?.labelIds || []), labelId];
+    patch([labelPickerFor], { labelIds: nextIds });
+    setLabelCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(labelId)) next.delete(labelId);
+      else next.add(labelId);
+      return next;
+    });
+  };
+  const runCreateAndApplyLabel = (name) => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return;
+    const label = { id: uid("prevlabel"), name: trimmed, createdAt: Date.now() };
+    setLabels((l) => [...l, label]);
+    runToggleLabel(label.id);
+  };
+
+  const openComposer = (campaign) => {
+    setEditingCampaign(campaign || null);
+    setComposerOpen(true);
+  };
+  const closeComposer = () => {
+    setComposerOpen(false);
+    setEditingCampaign(null);
+  };
+
+  // Bulk sending is a Premium feature — this always leads to the upgrade
+  // path (sign-up first, for a guest) rather than delivering anything.
+  const gateSend = () => {
+    if (!me) {
+      requireAuth("send a real campaign");
+      return;
+    }
+    showToast("Upgrade to Premium to send real campaigns");
+    navigate({ screen: "plans" });
+  };
+
+  const handleSaveDraft = (data) => {
+    if (editingCampaign) {
+      patch([editingCampaign.id], data);
+    } else {
+      const campaign = {
+        id: uid("prevcamp"),
+        subject: data.subject,
+        body: data.body,
+        audience: data.audience,
+        status: "draft",
+        starred: false,
+        important: false,
+        labelIds: [],
+        sendAt: null,
+        sentAt: null,
+        recipientCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      setCampaigns((list) => [campaign, ...list]);
+    }
+    showToast("Draft saved");
+    closeComposer();
+  };
+  const handleSchedule = (data, sendAt) => {
+    if (editingCampaign) {
+      patch([editingCampaign.id], { ...data, status: "scheduled", sendAt });
+    } else {
+      const campaign = {
+        id: uid("prevcamp"),
+        subject: data.subject,
+        body: data.body,
+        audience: data.audience,
+        status: "scheduled",
+        starred: false,
+        important: false,
+        labelIds: [],
+        sendAt,
+        sentAt: null,
+        recipientCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      setCampaigns((list) => [campaign, ...list]);
+    }
+    showToast(`Scheduled for ${new Date(sendAt).toLocaleString()}`);
+    closeComposer();
+  };
+  const handleSend = () => gateSend();
+
   return (
     <div className="flex-1 flex overflow-hidden relative">
-      <ToolLock locked navigate={navigate} label="Upgrade to Premium" dimClass="opacity-95" large>
-        <div className="flex-1 flex overflow-hidden">
-          <div className="w-60 shrink-0 border-r border-stone-200 overflow-y-auto bg-white hidden md:flex md:flex-col">
-            <div className="mx-3 mt-3 mb-1 px-4 py-2.5 rounded-2xl bg-emerald-800 text-white text-sm font-semibold flex items-center gap-2">
-              <Pencil size={15} /> Compose
-            </div>
-            <div className="flex flex-col gap-0.5 px-2 py-2">
-              {MESSAGE_NAV_ITEMS.map((item, i) => (
-                <div key={item.id} className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold ${i === 0 ? "bg-emerald-100 text-emerald-900" : "text-stone-600"}`}>
-                  <item.icon size={16} className="shrink-0" /> {item.label}
-                </div>
-              ))}
-              <div className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-600">
-                <ShoppingBag size={16} className="shrink-0" /> Purchases
-              </div>
-            </div>
-            <div className="px-4 pt-2 pb-1">
-              <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Labels</span>
-            </div>
-          </div>
-          <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex items-center gap-2 px-4 pt-4 pb-2 border-b border-stone-200">
-              <Megaphone size={18} className="text-amber-600 shrink-0" />
-              <h1 className="text-xl font-bold text-stone-900 flex-1" style={displayFont}>Campaigns</h1>
-              <CrownPill />
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              {SAMPLE.map((c) => (
-                <div key={c.id} className="flex items-center gap-3 px-4 py-3 border-b border-stone-100">
-                  <Star size={15} className="text-stone-300 shrink-0" />
-                  <span className="w-9 h-9 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-                    <Megaphone size={16} />
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm text-stone-800 truncate">{c.subject}</p>
-                    <p className="text-xs text-stone-400 truncate">{c.audienceLabel} · {c.body || "No message yet"}</p>
-                    {c.status === "scheduled" && <p className="cs-t10 text-amber-700 font-semibold mt-0.5">Sends {new Date(c.sendAt).toLocaleString()}</p>}
-                  </div>
-                  <span className="cs-t10 text-stone-400 shrink-0">{c.status === "sent" ? timeAgo(c.sentAt) : c.status === "draft" ? "Draft" : ""}</span>
-                  <MoreVertical size={16} className="shrink-0 text-stone-300" />
-                </div>
-              ))}
-            </div>
-          </div>
+      <div
+        className={`${sidebarOpen ? "flex absolute inset-y-0 left-0 z-20 shadow-xl" : "hidden"} md:flex md:relative md:shadow-none w-60 shrink-0 flex-col border-r border-stone-200 overflow-y-auto bg-white`}
+      >
+        <div className="flex items-center justify-between px-4 pt-4 pb-2 md:hidden">
+          <span className="font-bold text-sm text-stone-700">Menu</span>
+          <button onClick={() => setSidebarOpen(false)} aria-label="Close menu" className="text-stone-400 p-1"><X size={16} /></button>
         </div>
-      </ToolLock>
+        <button
+          onClick={() => { openComposer(null); setSidebarOpen(false); }}
+          className="mx-3 mt-3 mb-1 px-4 py-2.5 rounded-2xl bg-emerald-800 text-white text-sm font-semibold flex items-center gap-2 shadow-sm hover:bg-emerald-700"
+        >
+          <Pencil size={15} /> Compose
+        </button>
+        <div className="flex flex-col gap-0.5 px-2 py-2">
+          {MESSAGE_NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => goToView(item.id)}
+              className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
+                view === item.id ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <item.icon size={16} className="shrink-0" /> {item.label}
+            </button>
+          ))}
+          <button
+            onClick={() => goToView("purchases")}
+            className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
+              view === "purchases" ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
+            }`}
+          >
+            <ShoppingBag size={16} className="shrink-0" /> Purchases
+          </button>
+        </div>
+        <div className="px-4 pt-2 pb-1">
+          <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Labels</span>
+        </div>
+        <div className="flex flex-col gap-0.5 px-2 pb-3">
+          {labels.map((l) => (
+            <button
+              key={l.id}
+              onClick={() => goToView(l.id)}
+              className={`flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold transition text-left ${
+                view === l.id ? "bg-emerald-100 text-emerald-900" : "text-stone-600 hover:bg-stone-100"
+              }`}
+            >
+              <Tag size={15} className="text-amber-600 shrink-0" /> <span className="truncate">{l.name}</span>
+            </button>
+          ))}
+          <button
+            onClick={() => {
+              const name = window.prompt("New label name");
+              if (name && name.trim()) {
+                const label = { id: uid("prevlabel"), name: name.trim(), createdAt: Date.now() };
+                setLabels((ls) => [...ls, label]);
+                goToView(label.id);
+              }
+            }}
+            className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
+          >
+            <Plus size={15} className="shrink-0" /> Create new label
+          </button>
+          <button
+            onClick={() => { setManageLabelsOpen(true); setSidebarOpen(false); }}
+            className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
+          >
+            <Folder size={15} className="shrink-0" /> Manage labels
+          </button>
+        </div>
+        <div className="px-4 pt-2 pb-1">
+          <span className="cs-t10 font-bold text-stone-400 uppercase tracking-wide">Groups</span>
+        </div>
+        <div className="flex flex-col gap-0.5 px-2 pb-3">
+          {groups.map((g) => (
+            <div key={g.id} className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-600">
+              <Users size={15} className="text-amber-600 shrink-0" /> <span className="truncate flex-1">{g.name}</span>
+              <span className="cs-t10 text-stone-400 font-normal shrink-0">{(g.contactIds || []).length}</span>
+            </div>
+          ))}
+          <button
+            onClick={() => { setManageGroupsOpen(true); setSidebarOpen(false); }}
+            className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
+          >
+            <Plus size={15} className="shrink-0" /> Add group
+          </button>
+          {groups.length > 0 && (
+            <button
+              onClick={() => { setManageGroupsOpen(true); setSidebarOpen(false); }}
+              className="flex items-center gap-3 px-3 py-2 rounded-full text-sm font-semibold text-stone-500 hover:bg-stone-100 text-left"
+            >
+              <Users size={15} className="shrink-0" /> Manage groups
+            </button>
+          )}
+        </div>
+      </div>
+
+      {sidebarOpen && <div className="fixed inset-0 bg-black/30 z-10 md:hidden" onClick={() => setSidebarOpen(false)} />}
+
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex items-center gap-2 px-4 pt-4 pb-2 border-b border-stone-200">
+          <button onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="md:hidden text-stone-500 p-1 -ml-1"><Menu size={18} /></button>
+          <Megaphone size={18} className="text-amber-600 shrink-0" />
+          <h1 className="text-xl font-bold text-stone-900 flex-1" style={displayFont}>{viewTitle}</h1>
+          <button
+            onClick={() => goToView("scheduled")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition shrink-0 ${
+              view === "scheduled" ? "bg-amber-100 border-amber-300 text-amber-800" : "border-stone-200 text-stone-600 hover:bg-stone-50"
+            }`}
+          >
+            <Clock size={13} /> Scheduled{scheduledCount > 0 ? ` (${scheduledCount})` : ""}
+          </button>
+          <CrownPill />
+        </div>
+        <div className="px-4 pt-2">
+          <p className="text-xs bg-amber-50 text-amber-800 border border-amber-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
+            <Sparkles size={13} className="shrink-0" /> Try it out — everything here is fully clickable with sample contacts. Sending for real needs Premium.
+          </p>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {visibleCampaigns.length === 0 ? (
+            <EmptyState
+              icon={view === "trash" ? Trash2 : view === "spam" ? AlertTriangle : view === "purchases" ? ShoppingBag : Inbox}
+              title={`Nothing in ${viewTitle}`}
+              body="Nothing here yet."
+            />
+          ) : (
+            visibleCampaigns.map((c) => (
+              <div
+                key={c.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => openComposer(c)}
+                onKeyDown={(e) => { if (e.key === "Enter") openComposer(c); }}
+                className="flex items-center gap-3 px-4 py-3 text-left hover:bg-stone-50 transition cursor-pointer border-b border-stone-100"
+              >
+                <button
+                  onClick={(e) => { e.stopPropagation(); patch([c.id], { starred: !c.starred }); }}
+                  aria-label={c.starred ? "Unstar" : "Star"}
+                  className="shrink-0 text-stone-300 hover:text-amber-400"
+                >
+                  <Star size={15} className={c.starred ? "fill-amber-400 text-amber-400" : ""} />
+                </button>
+                <span className="w-9 h-9 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                  <Megaphone size={16} />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-stone-800 truncate flex items-center gap-1.5">
+                    <span className="truncate">{c.subject || "(no subject)"}</span>
+                    {(c.labelIds || []).slice(0, 2).map((lid) => {
+                      const l = labels.find((x) => x.id === lid);
+                      return l ? (
+                        <span key={lid} className="cs-t10 bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold shrink-0">
+                          {l.name}
+                        </span>
+                      ) : null;
+                    })}
+                  </p>
+                  <p className="text-xs text-stone-400 truncate">
+                    {campaignAudienceLabel(c.audience, groupsApi)} · {c.body || "No message yet"}
+                  </p>
+                  {c.status === "scheduled" && (
+                    <p className="cs-t10 text-amber-700 font-semibold mt-0.5">Sends {c.sendAt ? new Date(c.sendAt).toLocaleString() : "—"}</p>
+                  )}
+                </div>
+                <span className="cs-t10 text-stone-400 shrink-0">
+                  {c.status === "sent" ? timeAgo(c.sentAt) : c.status === "draft" ? "Draft" : timeAgo(c.updatedAt)}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setActionTarget(c); }}
+                  aria-label="Campaign options"
+                  className="shrink-0 text-stone-300 hover:text-stone-600 p-1 -mr-1"
+                >
+                  <MoreVertical size={16} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <CampaignComposerModal
+        open={composerOpen}
+        onClose={closeComposer}
+        initial={editingCampaign}
+        mailing={mailing}
+        groupsApi={groupsApi}
+        hasPurchasers={hasPurchasers}
+        purchaserIds={purchaserIds}
+        onSaveDraft={handleSaveDraft}
+        onSchedule={handleSchedule}
+        onSend={handleSend}
+      />
+
+      <CampaignActionSheet
+        campaign={actionTarget}
+        view={view}
+        onClose={() => setActionTarget(null)}
+        onEdit={() => { const c = actionTarget; setActionTarget(null); openComposer(c); }}
+        onStar={() => { patch([actionTarget.id], { starred: !actionTarget.starred }); setActionTarget(null); }}
+        onImportant={() => { patch([actionTarget.id], { important: !actionTarget.important }); setActionTarget(null); }}
+        onLabels={() => { openLabelPicker(actionTarget.id); setActionTarget(null); }}
+        onCancelSchedule={() => { patch([actionTarget.id], { status: "draft", sendAt: null }); setActionTarget(null); showToast("Schedule canceled"); }}
+        onSpam={() => { patch([actionTarget.id], { status: "spam" }); setActionTarget(null); showToast("Marked as spam"); }}
+        onNotSpam={() => { patch([actionTarget.id], { status: "draft" }); setActionTarget(null); }}
+        onTrash={() => { patch([actionTarget.id], { status: "trash" }); setActionTarget(null); showToast("Moved to trash"); }}
+        onRestore={() => { patch([actionTarget.id], { status: "draft" }); setActionTarget(null); showToast("Moved to Drafts"); }}
+        onDeleteForever={() => { setCampaigns((list) => list.filter((c) => c.id !== actionTarget.id)); setActionTarget(null); showToast("Deleted forever"); }}
+      />
+
+      <LabelPickerModal
+        open={!!labelPickerFor}
+        labels={labels}
+        count={1}
+        checkedIds={labelCheckedIds}
+        onClose={() => setLabelPickerFor(null)}
+        onToggle={runToggleLabel}
+        onCreateAndApply={runCreateAndApplyLabel}
+        noun="campaign"
+      />
+
+      <ManageLabelsModal
+        open={manageLabelsOpen}
+        labels={labels}
+        onClose={() => setManageLabelsOpen(false)}
+        onRename={(id, name) => setLabels((ls) => ls.map((l) => (l.id === id ? { ...l, name: (name || "").trim() || l.name } : l)))}
+        onMove={(id, direction) => {
+          setLabels((ls) => {
+            const idx = ls.findIndex((l) => l.id === id);
+            const swapWith = idx + direction;
+            if (idx < 0 || swapWith < 0 || swapWith >= ls.length) return ls;
+            const next = ls.slice();
+            [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+            return next;
+          });
+        }}
+        onDelete={(id) => {
+          if (view === id) setView("inbox");
+          setLabels((ls) => ls.filter((l) => l.id !== id));
+          setCampaigns((list) => list.map((c) => ((c.labelIds || []).includes(id) ? { ...c, labelIds: c.labelIds.filter((x) => x !== id) } : c)));
+        }}
+        noun="campaign"
+      />
+
+      <ManageGroupsModal
+        open={manageGroupsOpen}
+        onClose={() => setManageGroupsOpen(false)}
+        groups={groups}
+        mailing={mailing}
+        onCreate={(name) => groupsApi.createGroup(name)}
+        onRename={groupsApi.renameGroup}
+        onDelete={groupsApi.deleteGroup}
+        onMove={groupsApi.moveGroup}
+        onSetContacts={groupsApi.setGroupContacts}
+      />
     </div>
   );
 }
@@ -20222,59 +20798,211 @@ function VendorDashboard({ navigate }) {
 // sample address line; everything else (the locked sample product grid, the
 // upgrade CTA) is identical either way, and the CTA's navigate-to-Plans
 // already handles a guest correctly (opens the sign-up card).
+// Full, fully-clickable mock of what an owner's own ShopProfileView looks
+// like — same banner/avatar/tab layout as the real page, and the same
+// prop-driven ShopUpdatesFeed/ShopFaq/FavoriteHeart/SocialIcon components
+// the real page uses (all pure — driven entirely by the fake shop object
+// built below), so this actually mirrors the premium page instead of a
+// bespoke bare mockup. Tabs, the favorite toggle, and product quick-view
+// all work locally with no bounds crossed; the tools that need a real paid
+// storefront (Edit storefront, Dashboard, Orders, Calendar, Inventory,
+// Sponsored Ads, messaging a "seller", sharing) route to sign-up (guest) or
+// the plans screen (a signed-in Free account), same as everywhere else a
+// premium/paid tool is gated for someone who doesn't have it yet.
 function StartSellingPreviewScreen({ navigate, me }) {
+  const { requireAuth, showToast } = useApp();
+  const [tab, setTab] = useState("products");
+  const [liked, setLiked] = useState(false);
+  const [quickView, setQuickView] = useState(null);
   const homeLoc = splitCityState(me?.homeLocation?.label);
-  const sampleProducts = [
-    { name: "Heirloom Tomatoes", emoji: "🍅", price: "$4.50/lb" },
-    { name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz" },
-    { name: "Raw Honey", emoji: "🍯", price: "$9.00/pint" },
-    { name: "Sweet Corn", emoji: "🌽", price: "$5.00/bushel" },
-  ];
+
+  const sampleProducts = useMemo(
+    () => [
+      { id: "sp1", name: "Heirloom Tomatoes", emoji: "🍅", price: "$4.50/lb", desc: "Vine-ripened Cherokee Purple & Brandywine, picked same-day." },
+      { id: "sp2", name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz", desc: "Free-range, pasture-raised, mixed brown & blue shells." },
+      { id: "sp3", name: "Raw Honey", emoji: "🍯", price: "$9.00/pint", desc: "Unfiltered wildflower honey straight from our own hives." },
+      { id: "sp4", name: "Sweet Corn", emoji: "🌽", price: "$5.00/bushel", desc: "Bi-color sweet corn, picked at first light." },
+    ],
+    []
+  );
+  const fakeShop = useMemo(
+    () => ({
+      faq: [
+        { id: "f1", q: "Do you offer delivery?", a: "Local delivery is available within 10 miles for orders over $25 — just message us to arrange a time." },
+        { id: "f2", q: "What payment methods do you accept?", a: "Cash, Venmo, and CashApp at pickup. We're working on card payments soon!" },
+        { id: "f3", q: "Are your eggs and produce organic?", a: "We follow organic practices but aren't certified yet — ask us about our growing methods any time." },
+      ],
+      updates: [
+        { id: "u1", kind: "fresh", body: "Just harvested our first batch of sweet corn for the season — first come, first served this weekend!", createdAt: Date.now() - 3600000 * 5 },
+        { id: "u2", kind: "market", body: "We'll be at the Saturday farmers market from 8am with a full table of heirloom tomatoes.", createdAt: Date.now() - 86400000 * 2 },
+      ],
+    }),
+    []
+  );
+
+  // Every tool an owner would actually need a paid plan for — sign-up first
+  // for a guest, then straight to the plans screen either way.
+  const gateUpgrade = (reason) => {
+    if (!me) {
+      requireAuth(reason);
+      return;
+    }
+    showToast("Upgrade to a paid plan to unlock this");
+    navigate({ screen: "plans" });
+  };
+
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-      <div className="max-w-2xl mx-auto p-4">
-        <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+      <div className="relative h-40 md:h-52 overflow-hidden">
+        <button onClick={() => navigate({ screen: "explore" })} className="absolute top-3 left-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-stone-700">
           <ArrowLeft size={15} /> Back
         </button>
-        <h1 className="text-2xl font-bold text-stone-900 mb-1" style={displayFont}>My Store</h1>
-        <p className="text-stone-500 text-sm mb-4">A preview of what your storefront could look like — upgrade any time to make it real.</p>
-
-        <div className="relative h-32 rounded-t-2xl overflow-hidden bg-gradient-to-br from-emerald-700 to-teal-600 flex items-center justify-center">
-          <p className="text-white font-bold text-xl" style={displayFont}>Example Farm Stand</p>
+        <button
+          onClick={() => gateUpgrade("build your own storefront")}
+          className="absolute top-3 right-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-emerald-800"
+        >
+          <Pencil size={14} /> Edit storefront
+        </button>
+        <BannerScene scene="orchard" />
+        <div className="absolute inset-0 bg-black/10 flex items-end p-4">
+          <p className="text-white font-bold text-2xl drop-shadow" style={displayFont}>Example Farm Stand</p>
         </div>
-        <div className="border border-t-0 border-stone-200 rounded-b-2xl px-5 pt-4 pb-5 mb-2">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <span className="w-10 h-10 -mt-9 rounded-full bg-white border-4 border-white shadow-md flex items-center justify-center text-lg shrink-0">🧺</span>
+      </div>
+
+      <div className="max-w-3xl mx-auto px-5">
+        <div className="relative z-10 -mt-12 flex items-end justify-between">
+          <span className="w-24 h-24 rounded-full bg-white border-4 border-white shadow-lg flex items-center justify-center text-4xl">🧺</span>
+        </div>
+
+        <div className="mt-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold text-stone-900" style={displayFont}>Example Farm Stand</h1>
+            <BadgeCheck size={20} className="text-emerald-700" />
             <span className="cs-t11 font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Actively selling</span>
           </div>
-          <p className="text-stone-500 font-medium text-sm">@yourfarmname · Your Town, {stateInfo((homeLoc.state || "").toUpperCase().slice(0, 2))?.name || "Your State"}</p>
-
-          <ToolLock locked navigate={navigate} label="Upgrade to build your own storefront">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4">
-              {sampleProducts.map((p) => (
-                <div key={p.name} className="border border-stone-200 rounded-xl p-2.5 text-center">
-                  <div className="text-2xl mb-1">{p.emoji}</div>
-                  <p className="text-xs font-semibold text-stone-800 leading-tight">{p.name}</p>
-                  <p className="cs-t10 text-emerald-700 font-bold mt-0.5">{p.price}</p>
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-1.5 mt-4">
-              {["Products", "Updates", "Tools", "Contact"].map((t) => (
-                <span key={t} className="px-3 py-1.5 rounded-full text-xs font-semibold border border-stone-200 text-stone-500">{t}</span>
-              ))}
-            </div>
-          </ToolLock>
+          <p className="text-stone-500 font-medium">
+            @yourfarmname · Your Town, {stateInfo((homeLoc.state || "").toUpperCase().slice(0, 2))?.name || "Your State"}
+          </p>
+          <p className="text-emerald-800 font-semibold mt-1">Fresh off the vine, straight to your table.</p>
+          <p className="text-stone-700 mt-2 max-w-xl">
+            A sample of what your own storefront looks like — banner, bio, live listings, updates, an FAQ, and reviews, all set up for you the moment you start selling.
+          </p>
         </div>
+
+        <div className="flex items-center gap-2 flex-wrap mt-4">
+          <FavoriteHeart active={liked} count={37 + (liked ? 1 : 0)} onToggle={() => setLiked((v) => !v)} size="lg" />
+          <button
+            onClick={() => showToast("This is a sample — sharing works once you have a real storefront")}
+            className="flex items-center gap-1.5 bg-white border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition"
+          >
+            <Share2 size={15} /> Shares · 12
+          </button>
+          {[
+            { label: "Dashboard", icon: TrendingUp },
+            { label: "Orders", icon: ClipboardList },
+            { label: "Calendar", icon: Calendar },
+            { label: "Inventory", icon: Boxes },
+            { label: "Sponsored Ads", icon: Megaphone },
+          ].map((b) => (
+            <button
+              key={b.label}
+              onClick={() => gateUpgrade(`use ${b.label}`)}
+              className="flex items-center gap-1.5 bg-white border border-stone-200 rounded-full px-4 py-2 font-semibold text-sm text-stone-700 hover:bg-stone-50 transition"
+            >
+              <b.icon size={15} /> {b.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-1.5 mt-5 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+          {[
+            { id: "products", label: "Products" },
+            { id: "updates", label: "Updates" },
+            { id: "tools", label: "Tools" },
+            { id: "contact", label: "Contact" },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border shrink-0 transition ${
+                tab === t.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-500 hover:bg-stone-50"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "products" && (
+          <div className="mt-4">
+            <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-3">Example Farm Stand's listings (4)</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3.5">
+              {sampleProducts.map((p) => (
+                <button key={p.id} onClick={() => setQuickView(p)} className="border border-stone-200 rounded-xl p-2.5 bg-white hover:border-emerald-300 transition text-left">
+                  <div className="text-2xl mb-1 text-center">{p.emoji}</div>
+                  <p className="text-xs font-semibold text-stone-800 leading-tight text-center">{p.name}</p>
+                  <p className="cs-t10 text-emerald-700 font-bold mt-0.5 text-center">{p.price}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tab === "updates" && (
+          <div className="mt-4">
+            <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Latest from Example Farm Stand</p>
+            <ShopUpdatesFeed shop={fakeShop} />
+          </div>
+        )}
+
+        {tab === "tools" && (
+          <div className="mt-4">
+            <ShopFaq shop={fakeShop} />
+          </div>
+        )}
+
+        {tab === "contact" && (
+          <div className="mt-4">
+            <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Contact & socials</p>
+            <div className="rounded-2xl border border-stone-200 bg-stone-50 p-5 flex items-center gap-4">
+              {["email", "instagram", "facebook"].map((platform) => (
+                <button key={platform} onClick={() => showToast("Sample contact card — add your real links once you're set up")}>
+                  <SocialIcon platform={platform} />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <LockedFeatureButton
           label="Create your own storefront"
           sub={`Upgrade to Basic (${formatMoney(PLAN_CATALOG.basic.monthly)}/mo) or Premium to start selling`}
           navigate={navigate}
           icon={Store}
-          className="mt-3"
+          className="mt-6"
         />
       </div>
+
+      {quickView && (
+        <Modal open={!!quickView} onClose={() => setQuickView(null)} labelledBy="quickview-title">
+          <div className="p-6 text-center">
+            <div className="text-4xl mb-2">{quickView.emoji}</div>
+            <h2 id="quickview-title" className="text-lg font-bold text-stone-900 mb-1" style={displayFont}>{quickView.name}</h2>
+            <p className="text-emerald-700 font-bold mb-3">{quickView.price}</p>
+            <p className="text-sm text-stone-600 mb-5">{quickView.desc}</p>
+            <button
+              onClick={() => {
+                setQuickView(null);
+                gateUpgrade("message a real seller");
+              }}
+              className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-xl mb-2"
+            >
+              Message the seller
+            </button>
+            <button onClick={() => setQuickView(null)} className="w-full text-sm font-semibold text-stone-500 py-2">Close</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -20913,6 +21641,12 @@ function RootShell() {
   const [locPickerOpen, setLocPickerOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  // Guest-only mock notifications for the bell — see NotificationsPreviewModal.
+  // Lives here (rather than inside the modal) so the bell's badge count in
+  // TopBar and the list inside the modal always agree.
+  const [guestNotifs, setGuestNotifs] = useState(buildPreviewNotifications);
+  const [notifPreviewOpen, setNotifPreviewOpen] = useState(false);
+  const guestUnreadCount = guestNotifs.filter((n) => !n.read).length;
   const [siteMapOpen, setSiteMapOpen] = useState(false);
   // Clicking the confirmation link in a signup email redirects back here with
   // either a "type=signup" success marker or an "error"/"error_description"
@@ -21331,7 +22065,7 @@ function RootShell() {
       <GlobalStyles />
       <div className={`h-screen w-full flex flex-col overflow-hidden ${TOKENS.bg} ${TOKENS.ink}`} style={{ ...bodyFont, height: isTouch && viewportHeight ? `${viewportHeight}px` : "100dvh" }}>
         <TopBar
-          onGoHome={() => navigate({ screen: "explore" })}
+          onGoHome={() => { setExploreView("grid"); navigate({ screen: "explore" }); }}
           onOpenFilters={() => {
             navigate({ screen: "explore" });
             setFilterOpen(true);
@@ -21347,10 +22081,11 @@ function RootShell() {
             (filters.maxPrice ? 1 : 0)
           }
           onOpenSearch={() => navigate({ screen: "explore" })}
-          onOpenNotifs={() => (requireAuth("view notifications") ? setNotifOpen(true) : null)}
+          onOpenNotifs={() => (me ? setNotifOpen(true) : setNotifPreviewOpen(true))}
           onOpenAccount={() => (requireAuth("view your account") ? setAccountOpen(true) : null)}
           onOpenFavorites={() => navigate({ screen: "favorites" })}
           onSubmitSearch={submitSearch}
+          previewUnreadCount={guestUnreadCount}
         />
         {imageSupport === "blocked" && !photoNoteDismissed && (
           <div className="shrink-0 bg-amber-50 border-b border-amber-200 px-4 py-1.5 flex items-center gap-2">
@@ -21452,6 +22187,13 @@ function RootShell() {
       <LocationPickerModal open={locPickerOpen} onClose={() => setLocPickerOpen(false)} onPick={setUserLoc} />
       <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} />
       <NotificationsModal open={notifOpen} onClose={() => setNotifOpen(false)} navigate={navigate} onOpenProduct={setOpenProductId} />
+      <NotificationsPreviewModal
+        open={notifPreviewOpen}
+        onClose={() => setNotifPreviewOpen(false)}
+        navigate={navigate}
+        notifications={guestNotifs}
+        setNotifications={setGuestNotifs}
+      />
       <ProfileCardModal target={profileCardTarget} onClose={() => setProfileCardTarget(null)} />
 
       {toast && (
