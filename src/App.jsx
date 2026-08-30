@@ -21296,7 +21296,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
   const [busy, setBusy] = useState(false);
 
   // The account's own sign-up email — already real and already verified (it
-  // went through AuthGate's own 6-digit code flow to get this far). Rather
+  // went through AuthGate's own emailed-code flow to get this far). Rather
   // than faking a text message we can't afford to actually send, we reuse
   // that same address here and send a second real code to it via Supabase's
   // email OTP, so finishing account setup still proves the person at the
@@ -21337,7 +21337,10 @@ function Onboarding({ onCreate, reason, onCancel }) {
   };
 
   const verifyEmailCode = async () => {
-    if (!/^\d{6}$/.test(emailCode.trim())) return;
+    // Not hardcoded to 6 digits — the Supabase project's OTP length is a
+    // dashboard setting (this project's happens to be 8), so a fixed
+    // 6-digit check would silently reject every real code.
+    if (!/^\d{4,10}$/.test(emailCode.trim())) return;
     setEmailError("");
     setEmailChecking(true);
     try {
@@ -21433,19 +21436,19 @@ function Onboarding({ onCreate, reason, onCancel }) {
             </p>
           ) : emailCodeStage ? (
             <div className="mb-4 bg-stone-50 rounded-xl p-3 border border-stone-200">
-              <p className="cs-t11 text-stone-600 mb-2">We sent a 6-digit code to {email}.</p>
+              <p className="cs-t11 text-stone-600 mb-2">We sent a code to {email}.</p>
               <div className="flex gap-2">
                 <input
                   value={emailCode}
-                  onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  placeholder="123456"
+                  onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                  placeholder="Enter code"
                   inputMode="numeric"
                   className="flex-1 border border-stone-200 rounded-lg px-3 py-2 text-sm tracking-widest outline-none focus:border-emerald-700"
                 />
                 <button
                   type="button"
                   onClick={verifyEmailCode}
-                  disabled={emailChecking || emailCode.length !== 6}
+                  disabled={emailChecking || emailCode.length < 4}
                   className="shrink-0 px-3.5 rounded-lg text-xs font-semibold bg-emerald-800 text-white disabled:opacity-40"
                 >
                   {emailChecking ? "Checking…" : "Verify"}

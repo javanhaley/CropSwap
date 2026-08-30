@@ -29,8 +29,11 @@ const RESEND_COOLDOWN_SECONDS = 60;
 //
 // `mode` covers two flows: signin/signup (the normal tabs) and a 3-step
 // "forgot password" flow that runs entirely on typed codes rather than
-// clicking a link — request a code, enter the 6-digit code emailed to you,
-// then pick a new password. Verifying that code signs you straight in
+// clicking a link — request a code, enter the code emailed to you, then
+// pick a new password. The code's exact length is whatever the Supabase
+// project's OTP setting produces (it doesn't have to be 6 digits — this
+// project's is 8), so every code field here accepts a range rather than
+// hardcoding one length. Verifying that code signs you straight in
 // (Supabase hands back a real session for it), so by the time someone's
 // picked a new password they're already logged in — no separate sign-in
 // step needed afterward.
@@ -68,7 +71,7 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
     try {
       if (mode === "signup") {
         // No link involved at all — the "Confirm signup" email template is
-        // configured to show {{ .Token }} (a 6-digit code) instead of the
+        // configured to show {{ .Token }} (a numeric code) instead of the
         // default confirmation link, so there's nothing here that could ever
         // point at a stale or wrong URL.
         const { data, error: err } = await supabase.auth.signUp({ email, password });
@@ -77,7 +80,7 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
           onSignedIn?.();
         } else {
           setMode("signup-verify");
-          setNotice(`We sent a 6-digit code to ${email}. Enter it below to finish creating your account.`);
+          setNotice(`We sent a code to ${email}. Enter it below to finish creating your account.`);
           setResendCooldown(RESEND_COOLDOWN_SECONDS);
         }
       } else {
@@ -146,7 +149,7 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
       });
       if (err) throw err;
       setMode("forgot-verify");
-      setNotice(`We sent a 6-digit code to ${email}. Enter it below — it expires shortly, so grab it fresh.`);
+      setNotice(`We sent a code to ${email}. Enter it below — it expires shortly, so grab it fresh.`);
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
       setError(friendlyAuthError(err, "Couldn't send a reset code. Check the email and try again."));
@@ -354,21 +357,24 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
               <ArrowLeft size={13} /> Use a different email
             </button>
             {notice && <p className="text-xs text-emerald-700 mb-3">{notice}</p>}
-            <p className="text-xs font-bold text-stone-400 uppercase mb-2">6-digit code</p>
+            <p className="text-xs font-bold text-stone-400 uppercase mb-2">Verification code</p>
             <input
               type="text"
               inputMode="numeric"
               autoComplete="one-time-code"
               required
               value={signupCode}
-              onChange={(e) => setSignupCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
-              placeholder="123456"
+              // Not hardcoded to 6 — Supabase's OTP length is a project setting
+              // (this project's is 8), so this only strips non-digits and caps
+              // at a generous ceiling rather than truncating a real code.
+              onChange={(e) => setSignupCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 10))}
+              placeholder="Enter code"
               className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700 tracking-[0.3em] text-center font-mono text-lg"
             />
             {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
             <button
               type="submit"
-              disabled={busy || signupCode.length < 6}
+              disabled={busy || signupCode.length < 4}
               className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition flex items-center justify-center gap-2"
             >
               {busy && <Loader2 size={16} className="animate-spin" />}
@@ -433,21 +439,25 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
               <ArrowLeft size={13} /> Use a different email
             </button>
             {notice && <p className="text-xs text-emerald-700 mb-3">{notice}</p>}
-            <p className="text-xs font-bold text-stone-400 uppercase mb-2">6-digit code</p>
+            <p className="text-xs font-bold text-stone-400 uppercase mb-2">Verification code</p>
             <input
               type="text"
               inputMode="numeric"
               autoComplete="one-time-code"
               required
               value={resetCode}
-              onChange={(e) => setResetCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
-              placeholder="123456"
+              // Not hardcoded to 6 — same reasoning as the signup code field
+              // above: this project's Supabase OTPs are 8 digits, and a fixed
+              // 6-char cap silently truncated every real code, making the
+              // password-reset flow impossible to complete.
+              onChange={(e) => setResetCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 10))}
+              placeholder="Enter code"
               className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700 tracking-[0.3em] text-center font-mono text-lg"
             />
             {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
             <button
               type="submit"
-              disabled={busy || resetCode.length < 6}
+              disabled={busy || resetCode.length < 4}
               className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition flex items-center justify-center gap-2"
             >
               {busy && <Loader2 size={16} className="animate-spin" />}
