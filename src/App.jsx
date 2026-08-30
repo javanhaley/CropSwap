@@ -21699,6 +21699,17 @@ function RootShell() {
   // route they were headed to (if any) so a successful sign-up can resume
   // there rather than dumping them back on Explore.
   const [authFlow, setAuthFlow] = useState(null);
+  // True from the moment someone requests a password-reset code until they've
+  // actually set a new password (or backs out). Verifying that code signs
+  // them in (Supabase hands back a real session so they CAN set a new
+  // password), which flips `hasSession` true well before the password is
+  // actually changed — without this flag, the checks below would read that
+  // as "fully signed in" and yank AuthGate away (into Onboarding, or straight
+  // into the app for an existing account) before the "choose a new password"
+  // screen ever had a chance to show, leaving the old password untouched.
+  // AuthGate sets this the moment it requests a reset code and clears it once
+  // the new password is saved (or the flow is abandoned back to sign-in).
+  const [recovering, setRecovering] = useState(false);
   // The small "create a free account to X" card that pops up right next to
   // whatever the guest tapped — set by requireAuth below. It only hands off
   // to the full authFlow screen once its own "Sign up free" button is
@@ -22031,9 +22042,25 @@ function RootShell() {
   // Guests fall straight through to the normal shell below and browse freely.
   // The sign-up flow only takes over the screen once something has actually
   // asked for it (see requireAuth / navigate above) — never up front.
-  if (authFlow && !me) {
-    if (!hasSession) {
-      return <AuthGate reason={authFlow.reason} onCancel={() => setAuthFlow(null)} initialMode={authFlow.mode || "signin"} />;
+  // `|| recovering` on both lines keeps this whole block (and AuthGate
+  // specifically) in control for the entire password-reset journey, even for
+  // an existing account whose profile fetch resolves `me` the instant the
+  // recovery session appears — otherwise that resolution alone would skip
+  // straight past AuthGate's "choose a new password" step into the main app.
+  if ((authFlow && !me) || recovering) {
+    if (!hasSession || recovering) {
+      return (
+        <AuthGate
+          reason={authFlow?.reason}
+          onCancel={() => {
+            setAuthFlow(null);
+            setRecovering(false);
+          }}
+          initialMode={authFlow?.mode || "signin"}
+          onRecoveryStart={() => setRecovering(true)}
+          onRecoveryEnd={() => setRecovering(false)}
+        />
+      );
     }
     return (
       <Onboarding

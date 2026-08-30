@@ -37,7 +37,13 @@ const RESEND_COOLDOWN_SECONDS = 60;
 // (Supabase hands back a real session for it), so by the time someone's
 // picked a new password they're already logged in — no separate sign-in
 // step needed afterward.
-export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "signin" }) {
+// `onRecoveryStart`/`onRecoveryEnd` let the parent know when a password-reset
+// is in progress: verifying the emailed code signs the person in (a real
+// Supabase session), which would otherwise look identical to a normal
+// sign-in to anything watching session state — the parent needs this flag so
+// it keeps showing this component (instead of jumping straight to the main
+// app or Onboarding) until the new password is actually saved.
+export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "signin", onRecoveryStart, onRecoveryEnd }) {
   const [mode, setMode] = useState(initialMode); // signin | signup | signup-verify | forgot-request | forgot-verify | forgot-newpassword
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -149,6 +155,10 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
       });
       if (err) throw err;
       setMode("forgot-verify");
+      // From here on, verifying the code creates a real session before the
+      // password is actually changed — tell the parent so it doesn't mistake
+      // that for a completed sign-in and pull this screen away early.
+      onRecoveryStart?.();
       setNotice(`We sent a code to ${email}. Enter it below — it expires shortly, so grab it fresh.`);
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
@@ -198,8 +208,11 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
       const { error: err } = await supabase.auth.updateUser({ password: newPassword });
       if (err) throw err;
       // verifyOtp already returned a real session above, so this is a
-      // genuine login — no separate sign-in step needed.
+      // genuine login — no separate sign-in step needed. The password is
+      // actually changed now, so the recovery flag can clear and hand
+      // control back to the parent's normal signed-in routing.
       onSignedIn?.();
+      onRecoveryEnd?.();
     } catch (err) {
       setError(err?.message || "Couldn't update your password. Try again.");
     } finally {
@@ -399,6 +412,11 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
                 setError("");
                 setNotice("");
                 setMode("signin");
+                // Covers backing out after a prior code request on this same
+                // visit (forgot-verify → "Use a different email" → here →
+                // "Back to sign in") — without this, a later NORMAL sign-in
+                // would still get stuck behind the leftover recovery flag.
+                onRecoveryEnd?.();
               }}
               className="flex items-center gap-1 text-xs font-semibold text-stone-400 hover:text-stone-600 mb-4"
             >
