@@ -43,7 +43,13 @@ const RESEND_COOLDOWN_SECONDS = 60;
 // sign-in to anything watching session state — the parent needs this flag so
 // it keeps showing this component (instead of jumping straight to the main
 // app or Onboarding) until the new password is actually saved.
-export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "signin", onRecoveryStart, onRecoveryEnd }) {
+// `onRecoveryEnd` fires when a reset is abandoned before that happens (no
+// session was ever created, so there's nothing else to undo). `onRecoveryComplete`
+// fires only once the new password is actually saved — the parent uses it to
+// also drop whatever originally opened this screen, so someone resetting
+// their password lands back in normal browsing, not on a "complete your
+// profile" page they never asked for.
+export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "signin", onRecoveryStart, onRecoveryEnd, onRecoveryComplete }) {
   const [mode, setMode] = useState(initialMode); // signin | signup | signup-verify | forgot-request | forgot-verify | forgot-newpassword
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -209,10 +215,15 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
       if (err) throw err;
       // verifyOtp already returned a real session above, so this is a
       // genuine login — no separate sign-in step needed. The password is
-      // actually changed now, so the recovery flag can clear and hand
-      // control back to the parent's normal signed-in routing.
+      // actually changed now. Use onRecoveryComplete (not onRecoveryEnd)
+      // here specifically: this is the "the whole reset succeeded" exit,
+      // and the parent also drops its pending auth-flow reason so a
+      // profile-less account lands back in normal browsing instead of
+      // being shoved into "complete your profile" the instant a password
+      // reset finishes — that page should only ever show when something
+      // the person actually does requires an account.
       onSignedIn?.();
-      onRecoveryEnd?.();
+      onRecoveryComplete?.();
     } catch (err) {
       setError(err?.message || "Couldn't update your password. Try again.");
     } finally {

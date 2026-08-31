@@ -22082,6 +22082,16 @@ function RootShell() {
           initialMode={authFlow?.mode || "signin"}
           onRecoveryStart={() => setRecovering(true)}
           onRecoveryEnd={() => setRecovering(false)}
+          // The reset actually finished — also clear authFlow (not just
+          // recovering), so someone who didn't have a CropSwap profile yet
+          // lands back in normal browsing instead of being dropped straight
+          // into "complete your profile". They'll still get prompted to set
+          // one up the normal way, the moment they do something that needs
+          // an account.
+          onRecoveryComplete={() => {
+            setRecovering(false);
+            setAuthFlow(null);
+          }}
         />
       );
     }
