@@ -5822,23 +5822,33 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-stone-200">
-      <div className="px-3 py-3 flex items-center gap-2 max-w-6xl mx-auto">
-        {/* Logo lives in the Sidebar too, but that's hidden behind a drawer
-           on mobile — this is the one thing every screen, phone included,
-           shows without the visitor doing anything first. */}
-        {/* md:ml-2 + the taller md:h-9 are desktop-only (mobile keeps the
-           original size flush against the edge) — nudges the logo off the
-           screen edge so it reads as centered in the gap before the search
-           bar, and matches its height to the search pill next to it instead
-           of looking a size smaller. */}
-        <button
-          onClick={onGoHome}
-          className="shrink-0 hover:opacity-75 active:opacity-60 transition md:ml-2"
-          aria-label="CropSwap home"
-          title="Home"
-        >
-          <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-7 md:h-9 w-auto" />
-        </button>
+      <div className="flex items-center">
+        {/* Desktop only: its own column, the same width as the Sidebar
+           directly beneath it, with the logo centered inside — rather than
+           living inside the row below (which centers itself across the
+           *whole* viewport via max-w-6xl mx-auto), which on a wide screen
+           left it sitting much closer to the search bar than to the true
+           edge of the screen. Also taller here (h-9) to match the search
+           pill's height. Mobile has no Sidebar to match up with, so it's
+           hidden here — the second, smaller logo button below handles
+           mobile instead. */}
+        <div className="hidden md:flex md:w-60 md:shrink-0 md:items-center md:justify-center">
+          <button onClick={onGoHome} className="hover:opacity-75 active:opacity-60 transition" aria-label="CropSwap home" title="Home">
+            <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-9 w-auto" />
+          </button>
+        </div>
+        <div className="flex-1 min-w-0 px-3 py-3 flex items-center gap-2 max-w-6xl mx-auto">
+          {/* Mobile-only logo (hidden md:) — Sidebar's own logo lives behind
+             a drawer there, so this is the one thing every screen, phone
+             included, shows without the visitor doing anything first. */}
+          <button
+            onClick={onGoHome}
+            className="md:hidden shrink-0 hover:opacity-75 active:opacity-60 transition"
+            aria-label="CropSwap home"
+            title="Home"
+          >
+            <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-7 w-auto" />
+          </button>
 
         {/* 30% shorter: the pill takes 70% of the space it used to fill. */}
         {/* Fills the row and never shrinks below the width of its own placeholder. */}
@@ -5940,6 +5950,7 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
           )}
           {unreadCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-600 border-2 border-white" />}
         </button>
+        </div>
       </div>
     </header>
   );
