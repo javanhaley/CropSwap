@@ -20677,7 +20677,7 @@ function VendorDashboard({ navigate }) {
           </DashPanel>
         </div>
 
-        <DashPanel title="Conversion funnel" icon={Target} className="mb-4" info="How viewers move down the funnel from viewing, to favoriting, to messaging you — each bar shows what percent of viewers made it that far.">
+        <DashPanel title="Engagement tracker" icon={Target} className="mb-4" info="How viewers move down the funnel from viewing, to favoriting, to messaging you — each bar shows what percent of viewers made it that far.">
           <div className="space-y-2">
             {funnel.map((f, i) => {
               const barColor = [DASH_TINTS.emerald.bar, DASH_TINTS.rose.bar, DASH_TINTS.blue.bar][i] || DASH_TINTS.emerald.bar;
@@ -20696,36 +20696,19 @@ function VendorDashboard({ navigate }) {
           </div>
         </DashPanel>
 
-        <div className="grid md:grid-cols-2 gap-4 mb-4">
-          <DashPanel title="Category benchmarking" icon={Award} info="How your average rating and response time stack up against the platform average from other shops — a quick gut check on where you stand.">
-            <p className="text-sm text-stone-600 mb-1">Your avg rating: <span className="font-bold text-stone-900">{count > 0 ? avgRating.toFixed(2) : "—"}</span></p>
-            <p className="text-sm text-stone-600 mb-1">Platform avg: <span className="font-bold text-stone-900">{platformAvgRating != null ? platformAvgRating.toFixed(2) : "—"}</span></p>
-            {platformAvgRating != null && count > 0 && (
-              <p className={`text-xs font-semibold ${avgRating >= platformAvgRating ? "text-emerald-700" : "text-rose-600"}`}>
-                {avgRating >= platformAvgRating ? "Above" : "Below"} the platform average
-              </p>
-            )}
-            <p className="text-sm text-stone-600 mt-2">
-              Response time:{" "}
-              <span className="font-bold text-stone-900">
-                {respLoading ? "…" : avgResponseMin != null ? (avgResponseMin < 60 ? `${avgResponseMin}m` : `${(avgResponseMin / 60).toFixed(1)}h`) : "No data yet"}
-              </span>
-            </p>
-          </DashPanel>
-          <DashPanel title="Listing leaderboard" icon={Zap} info="Your own listings, ranked by a score of favorites and shares — the top 5 here are your best performers to feature or restock.">
-            <p className="cs-t11 text-stone-400 mb-1">Top performers</p>
-            {leaderboard.top.length === 0 ? (
-              <p className="text-sm text-stone-400 py-2">No listings yet.</p>
-            ) : (
-              leaderboard.top.map((p) => (
-                <div key={p.id} className="flex items-center justify-between text-sm py-0.5">
-                  <span className="truncate flex-1">{p.name}</span>
-                  <span className="cs-t11 font-mono text-emerald-700">♥{p.favoriteCount || 0} · ↗{p.shareCount || 0}</span>
-                </div>
-              ))
-            )}
-          </DashPanel>
-        </div>
+        <DashPanel title="Listing leaderboard" icon={Zap} className="mb-4" info="Your own listings, ranked by a score of favorites and shares — the top 5 here are your best performers to feature or restock.">
+          <p className="cs-t11 text-stone-400 mb-1">Top performers</p>
+          {leaderboard.top.length === 0 ? (
+            <p className="text-sm text-stone-400 py-2">No listings yet.</p>
+          ) : (
+            leaderboard.top.map((p) => (
+              <div key={p.id} className="flex items-center justify-between text-sm py-0.5">
+                <span className="truncate flex-1">{p.name}</span>
+                <span className="cs-t11 font-mono text-emerald-700">♥{p.favoriteCount || 0} · ↗{p.shareCount || 0}</span>
+              </div>
+            ))
+          )}
+        </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
           <DashPanel title="Review sentiment trend" icon={Star} info="Your running average star rating over time, plus the words that show up most often in reviews shoppers have left you.">
