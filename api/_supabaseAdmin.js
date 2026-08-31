@@ -47,11 +47,17 @@ export async function patchProfile(userId, patch) {
   const { data: row, error } = await admin.from("kv").select("value").eq("owner_id", userId).eq("key", "me:profile").maybeSingle();
   if (error) throw error;
   if (!row?.value) return null; // no profile yet — nothing to patch
-  const next = { ...row.value, ...patch };
+  // `value` is a plain TEXT column, not jsonb — the client only ever treats
+  // it as an object via its own getJSON/setJSON wrappers (see SECTION 5 of
+  // src/App.jsx), which JSON.parse on the way out and JSON.stringify on the
+  // way in. Reading/writing this column directly has to do the same thing.
+  const current = JSON.parse(row.value);
+  const next = { ...current, ...patch };
+  const nextText = JSON.stringify(next);
   const nowIso = new Date().toISOString();
-  const { error: kvErr } = await admin.from("kv").upsert({ owner_id: userId, key: "me:profile", value: next, updated_at: nowIso }, { onConflict: "owner_id,key" });
+  const { error: kvErr } = await admin.from("kv").upsert({ owner_id: userId, key: "me:profile", value: nextText, updated_at: nowIso }, { onConflict: "owner_id,key" });
   if (kvErr) throw kvErr;
-  const { error: sharedErr } = await admin.from("shared_kv").upsert({ key: `users:${userId}`, value: next, updated_by: userId, updated_at: nowIso }, { onConflict: "key" });
+  const { error: sharedErr } = await admin.from("shared_kv").upsert({ key: `users:${userId}`, value: nextText, updated_by: userId, updated_at: nowIso }, { onConflict: "key" });
   if (sharedErr) throw sharedErr;
   return next;
 }
@@ -62,11 +68,13 @@ export async function patchProfile(userId, patch) {
 export async function patchShopBillingStatusForUser(userId, isActive) {
   const admin = getSupabaseAdmin();
   const { data: profileRow } = await admin.from("kv").select("value").eq("owner_id", userId).eq("key", "me:profile").maybeSingle();
-  const shopId = profileRow?.value?.shopId;
+  if (!profileRow?.value) return;
+  const profile = JSON.parse(profileRow.value); // see patchProfile — text column, not jsonb
+  const shopId = profile?.shopId;
   if (!shopId) return;
   const { data: marketRow, error } = await admin.from("shared_kv").select("value").eq("key", "market:v7").maybeSingle();
   if (error || !marketRow?.value) return;
-  const marketData = marketRow.value;
+  const marketData = JSON.parse(marketRow.value);
   const shops = Array.isArray(marketData.shops) ? marketData.shops : [];
   const idx = shops.findIndex((s) => s.id === shopId);
   if (idx === -1) return;
@@ -77,6 +85,9 @@ export async function patchShopBillingStatusForUser(userId, isActive) {
   nextShops[idx] = isActive ? { ...current, billingStatus: "active", inactiveSince: null } : { ...current, billingStatus: "inactive", inactiveSince: Date.now() };
   const { error: writeErr } = await admin
     .from("shared_kv")
-    .upsert({ key: "market:v7", value: { ...marketData, shops: nextShops }, updated_by: userId, updated_at: new Date().toISOString() }, { onConflict: "key" });
+    .upsert(
+      { key: "market:v7", value: JSON.stringify({ ...marketData, shops: nextShops }), updated_by: userId, updated_at: new Date().toISOString() },
+      { onConflict: "key" }
+    );
   if (writeErr) throw writeErr;
 }
