@@ -16303,12 +16303,13 @@ function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDel
                 <span className="min-w-0 truncate">
                   {li.qty} {priceUnitLabel(li.unit)} {li.name} <span className="text-stone-400">× {formatMoney(li.price)}</span>
                 </span>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-4 shrink-0">
                   {/* Only sample/preview line items carry a photo — a real order's
                       free-typed item name has nothing reliable to match a photo
-                      to, so this stays a no-op there. */}
+                      to, so this stays a no-op there. Extra gap here (vs. the
+                      row's own gap-2) keeps the photo from crowding the price. */}
                   {li.photo && (
-                    <img src={li.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-8 h-8 rounded-md object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                    <img src={li.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-12 h-12 rounded-lg object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
                   )}
                   <span className="font-semibold text-stone-700">{formatMoney(li.qty * li.price)}</span>
                 </div>
@@ -16746,7 +16747,7 @@ function InventoryTab({ shop, patchShop, products, inventory, orders, onAdd, onE
                         free-typed item name has nothing reliable to match a
                         photo to, so this stays a no-op for real inventory. */}
                     {it.photo && (
-                      <img src={it.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-10 h-10 rounded-lg object-cover shrink-0" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                      <img src={it.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-14 h-14 rounded-lg object-cover shrink-0" onError={(e) => { e.currentTarget.style.display = "none"; }} />
                     )}
                     <div className="flex items-center gap-1.5 shrink-0">
                       <IconButton icon={Minus} label="Decrease stock" size={14} onClick={() => inventory.adjustStock(it.id, -1, "manual")} />
