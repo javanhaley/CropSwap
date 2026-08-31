@@ -13866,6 +13866,30 @@ function bucketIndexFor(t, bucketCount, granularity, nowMs) {
   const stepsFromEnd = Math.floor((bucketAnchorEnd(nowMs) - 1 - t) / stepMs);
   return clamp(bucketCount - 1 - stepsFromEnd, 0, bucketCount - 1);
 }
+// The newest bucket a trailing window produces is always anchored to
+// bucketAnchorEnd(nowMs) — the end of TODAY, local time — which sits at or
+// after the real current instant unless "now" happens to land exactly on a
+// period boundary. That means the very last bucket almost always represents
+// a period that hasn't finished yet (today, this week, this month...), so
+// it only ever holds a partial slice of what a full period would show.
+// Plotting that partial slice as a normal data point makes every trend line
+// take an artificial dive right at the end — not because activity actually
+// dropped, it just hasn't happened yet. Once there's more than one bucket,
+// drop that still-in-progress trailing bucket from the chart entirely.
+// KPI totals shown elsewhere on the dashboard (revenue, order counts, view
+// counts, etc.) are unaffected — those are computed straight from the
+// underlying events/orders, not from this bucketed series, so today's real
+// activity still counts there.
+//
+// A bucket that ends at or before the true current instant (e.g. the last
+// day of a PAST calendar month picked from the month dropdown) is already
+// complete and is left alone — only a bucket whose end is still in the
+// future relative to right now gets trimmed.
+function trimInProgressBucket(buckets, nowMs) {
+  if (buckets.length <= 1) return buckets;
+  if (bucketAnchorEnd(nowMs) > Date.now()) return buckets.slice(0, -1);
+  return buckets;
+}
 function bucketSeries(events, granularity, sinceMs, nowMs) {
   const bucketCount = bucketCountFor(granularity, sinceMs, nowMs);
   const buckets = Array.from({ length: bucketCount }, (_, i) => {
@@ -13877,7 +13901,7 @@ function bucketSeries(events, granularity, sinceMs, nowMs) {
     const idx = bucketIndexFor(t, bucketCount, granularity, nowMs);
     buckets[idx].count += 1;
   });
-  return buckets;
+  return trimInProgressBucket(buckets, nowMs);
 }
 // Same even-slice bucketing as bucketSeries, but sums a numeric value per
 // item (e.g. order revenue) instead of just counting — used for the sales
@@ -13895,7 +13919,7 @@ function bucketValueSeries(items, granularity, sinceMs, nowMs, getTime, getValue
     const idx = bucketIndexFor(t, bucketCount, granularity, nowMs);
     buckets[idx].value += getValue(it) || 0;
   });
-  return buckets;
+  return trimInProgressBucket(buckets, nowMs);
 }
 // Dollar total for one order — sum of each line item's price × qty.
 function orderRevenue(order) {
