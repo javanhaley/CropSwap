@@ -16986,6 +16986,23 @@ function googleCalendarUrl(ev) {
   const params = new URLSearchParams({ action: "TEMPLATE", text: ev.title, dates: `${fmt(startDate)}/${fmt(endDate)}`, details: ev.notes || "" });
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
+// Outlook.com's own one-click "quick add" deeplink — the Microsoft equivalent
+// of Google's `calendar/render` URL above. Works for personal Outlook.com /
+// Hotmail accounts without any OAuth or app install.
+function outlookCalendarUrl(ev) {
+  const startDate = new Date(`${ev.date}T${ev.time || "09:00"}:00`);
+  const endDate = new Date(startDate.getTime() + 60 * 60000);
+  const fmt = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:00`;
+  const params = new URLSearchParams({
+    path: "/calendar/action/compose",
+    rru: "addevent",
+    startdt: fmt(startDate),
+    enddt: fmt(endDate),
+    subject: ev.title,
+    body: ev.notes || "",
+  });
+  return `https://outlook.live.com/calendar/0/deeplink/compose?${params.toString()}`;
+}
 
 // Google-style year view: 12 mini months at a glance. Clicking a day jumps
 // straight into that day, same as clicking a date in Google Calendar's year view.
@@ -17250,7 +17267,12 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
       return;
     }
     downloadIcs("cropswap-calendar.ics", buildIcsForEvents(calendar.events));
-    showToast(val === "google" ? "Downloaded — open Google Calendar's Settings → Import & export to add it." : "Calendar file downloaded — open it, or import it into your calendar app.");
+    const msgByVal = {
+      google: "Downloaded — open Google Calendar's Settings → Import & export to add it.",
+      outlook: "Downloaded — open Outlook's Settings → View all Outlook settings → Calendar → Import to add it.",
+      apple: "Downloaded — open the file (or drag it into Calendar) to add it to Apple Calendar.",
+    };
+    showToast(msgByVal[val] || "Calendar file downloaded — open it, or import it into your calendar app.");
   };
 
   return (
@@ -17269,6 +17291,8 @@ function CalendarTab({ calendar, orders, onAddNote, onOpenEvent, onOpenDay, now 
             <option value="">Choose an option…</option>
             <option value="ics">Download .ics (Google, Outlook, Apple)</option>
             <option value="google">Import into Google Calendar</option>
+            <option value="outlook">Import into Outlook Calendar</option>
+            <option value="apple">Import into Apple Calendar</option>
           </select>
         </div>
       </div>
@@ -17608,7 +17632,7 @@ function EventDetailModal({ open, onClose, event, order, onManageOrder, onEditNo
           </button>
         </div>
         {event.date && (
-          <div className="flex items-center justify-center gap-4 mt-3">
+          <div className="flex items-center justify-center gap-4 mt-3 flex-wrap">
             <button
               onClick={() => downloadIcs(`${(isOrder ? order.customerName : event.title).replace(/[^a-z0-9]+/gi, "-")}.ics`, buildIcsForEvents([event]))}
               className="cs-t11 font-semibold text-stone-500 hover:text-emerald-700 flex items-center gap-1"
@@ -17618,6 +17642,20 @@ function EventDetailModal({ open, onClose, event, order, onManageOrder, onEditNo
             <a href={googleCalendarUrl(event)} target="_blank" rel="noreferrer" className="cs-t11 font-semibold text-stone-500 hover:text-emerald-700 flex items-center gap-1">
               <Calendar size={12} /> Add to Google Calendar
             </a>
+            <a href={outlookCalendarUrl(event)} target="_blank" rel="noreferrer" className="cs-t11 font-semibold text-stone-500 hover:text-emerald-700 flex items-center gap-1">
+              <Calendar size={12} /> Add to Outlook Calendar
+            </a>
+            {/* Apple/iOS Calendar has no one-click web deeplink like Google or
+                Outlook — an .ics download is the standard, correct way to get
+                an event into it (tapping the file opens Calendar's own "Add
+                Event" sheet), so this reuses the same download, just labeled
+                for the person looking for the Apple-specific option. */}
+            <button
+              onClick={() => downloadIcs(`${(isOrder ? order.customerName : event.title).replace(/[^a-z0-9]+/gi, "-")}.ics`, buildIcsForEvents([event]))}
+              className="cs-t11 font-semibold text-stone-500 hover:text-emerald-700 flex items-center gap-1"
+            >
+              <Calendar size={12} /> Add to Apple Calendar
+            </button>
           </div>
         )}
       </div>
@@ -19755,17 +19793,6 @@ function VendorDashboard({ navigate }) {
       return { key: r.id, label: new Date(r.createdAt).toLocaleDateString([], { month: "short", day: "numeric" }), rolling: +(runningSum / (i + 1)).toFixed(2) };
     });
   }, [publishedReviews]);
-  const reviewWordCloud = useMemo(() => {
-    const counts = new Map();
-    publishedReviews.forEach((r) => {
-      (r.body || "").toLowerCase().match(/[a-z']+/g)?.forEach((w) => {
-        if (w.length < 4 || DASH_STOPWORDS.has(w)) return;
-        counts.set(w, (counts.get(w) || 0) + 1);
-      });
-    });
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
-  }, [publishedReviews]);
-
   const topCities = useMemo(() => {
     const counts = new Map();
     [...viewEvents, ...favoriteEvents].forEach((e) => {
@@ -20719,45 +20746,18 @@ function VendorDashboard({ navigate }) {
           )}
         </DashPanel>
 
-        <div className="grid md:grid-cols-2 gap-4 mb-4">
-          <DashPanel title="Review sentiment trend" icon={Star} info="Your running average star rating over time, plus the words that show up most often in reviews shoppers have left you.">
-            {sentimentSeries.length < 2 ? (
-              <p className="text-sm text-stone-400 py-4 text-center">Need a couple more reviews for a trend line.</p>
-            ) : (
-              <div style={{ width: "100%", height: 130 }}>
-                <ResponsiveContainer>
-                  <LineChart data={sentimentSeries}>
-                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                    <YAxis domain={[1, 5]} tick={{ fontSize: 10 }} stroke="#a8a29e" width={24} />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="rolling" stroke="#b45309" strokeWidth={2} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
+        <DashPanel title="Where your engagement comes from" icon={MapPin} className="mb-4" info="The cities generating the most views and favorites for you this range — useful for knowing where your customer base is actually coming from.">
+          {topCities.length === 0 ? (
+            <p className="text-sm text-stone-400 py-4 text-center">Not enough location data yet.</p>
+          ) : (
+            topCities.map((c) => (
+              <div key={c.place} className="flex items-center justify-between text-sm py-0.5">
+                <span className="truncate flex-1">{c.place}</span>
+                <span className="cs-t11 font-mono text-stone-500">{c.n}</span>
               </div>
-            )}
-            {reviewWordCloud.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-2">
-                {reviewWordCloud.map(([w, n]) => (
-                  <span key={w} className="text-[11px] font-semibold bg-stone-100 text-stone-600 rounded-full px-2 py-0.5">
-                    {w} · {n}
-                  </span>
-                ))}
-              </div>
-            )}
-          </DashPanel>
-          <DashPanel title="Where your engagement comes from" icon={MapPin} info="The cities generating the most views and favorites for you this range — useful for knowing where your customer base is actually coming from.">
-            {topCities.length === 0 ? (
-              <p className="text-sm text-stone-400 py-4 text-center">Not enough location data yet.</p>
-            ) : (
-              topCities.map((c) => (
-                <div key={c.place} className="flex items-center justify-between text-sm py-0.5">
-                  <span className="truncate flex-1">{c.place}</span>
-                  <span className="cs-t11 font-mono text-stone-500">{c.n}</span>
-                </div>
-              ))
-            )}
-          </DashPanel>
-        </div>
+            ))
+          )}
+        </DashPanel>
 
         <DashPanel title="Mailing list & mass messages" icon={Megaphone} className="mb-4" info="Everyone who has ever messaged you first joins your mailing list automatically. Send them all one message at once — delivered as an in-app message + notification.">
           <p className="cs-t11 text-stone-400 mb-3">
