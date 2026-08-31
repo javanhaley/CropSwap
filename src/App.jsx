@@ -12430,6 +12430,86 @@ function AdminDashboardScreen() {
     load();
   }, [load]);
 
+  // Platform-wide growth/activity charts — moved here from every vendor's own
+  // Dashboard (they were never actually about that one vendor: new-signup
+  // and new-storefront counts came from ALL of CropSwap regardless of whose
+  // dashboard you were looking at, and showing that to every vendor exposed
+  // more platform-level detail than a vendor needs). The peak-activity
+  // heatmap used to be scoped to one shop's own view events; here it's every
+  // shop's, giving the admin a single "when is CropSwap busiest" picture.
+  const [growthRangeId, setGrowthRangeId] = useState("days");
+  const growthRange = DASHBOARD_RANGES.find((r) => r.id === growthRangeId) || DASHBOARD_RANGES[1];
+  const [platformEvents, setPlatformEvents] = useState({ signups: [], views: [] });
+  const [platformEventsLoading, setPlatformEventsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPlatformEventsLoading(true);
+    const sinceMs = Date.now() - growthRange.ms;
+    Promise.all([
+      fetchAnalyticsEvents({ types: ["signup"], sinceMs }),
+      fetchAnalyticsEvents({ types: ["view_shop", "view_product"], sinceMs }),
+    ]).then(([signups, views]) => {
+      if (!cancelled) {
+        setPlatformEvents({ signups, views });
+        setPlatformEventsLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [growthRangeId]);
+
+  const growthSinceMs = Date.now() - growthRange.ms;
+  const usersByState = useMemo(() => {
+    const counts = new Map();
+    platformEvents.signups.forEach((e) => {
+      const s = e.state || "Unknown";
+      counts.set(s, (counts.get(s) || 0) + 1);
+    });
+    return [...counts.entries()].map(([state, n]) => ({ state, n })).sort((a, b) => b.n - a.n).slice(0, 10);
+  }, [platformEvents.signups]);
+
+  const newShopsByState = useMemo(() => {
+    const counts = new Map();
+    (shops || []).forEach((s) => {
+      if ((s.createdAt || 0) >= growthSinceMs) counts.set(s.state || "Unknown", (counts.get(s.state || "Unknown") || 0) + 1);
+    });
+    return [...counts.entries()].map(([state, n]) => ({ state, n })).sort((a, b) => b.n - a.n).slice(0, 10);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shops, growthRangeId]);
+
+  const heatmap = useMemo(() => {
+    const grid = Array.from({ length: 7 }, () => Array(24).fill(0));
+    platformEvents.views.forEach((e) => {
+      const d = new Date(e.created_at);
+      grid[d.getDay()][d.getHours()] += 1;
+    });
+    return grid;
+  }, [platformEvents.views]);
+
+  const heatmapInsights = useMemo(() => {
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const formatHour = (h) => (h === 0 ? "12am" : h < 12 ? `${h}am` : h === 12 ? "12pm" : `${h - 12}pm`);
+    const cells = [];
+    heatmap.forEach((row, d) => row.forEach((v, h) => cells.push({ d, h, v })));
+    const total = cells.reduce((s, c) => s + c.v, 0);
+    const nonZero = cells.filter((c) => c.v > 0).sort((a, b) => a.v - b.v);
+    const rankOf = new Map();
+    nonZero.forEach((c, i) => rankOf.set(`${c.d}-${c.h}`, nonZero.length > 1 ? i / (nonZero.length - 1) : 1));
+    const percentile = (d, h) => rankOf.get(`${d}-${h}`) ?? 0;
+    const peak = nonZero.length ? nonZero[nonZero.length - 1] : null;
+    const eveningTotal = cells.filter((c) => c.h >= 17 && c.h <= 21).reduce((s, c) => s + c.v, 0);
+    const eveningShare = total > 0 ? Math.round((eveningTotal / total) * 100) : 0;
+    return {
+      percentile,
+      peakCell: peak,
+      peakLabel: peak ? `${dayNames[peak.d]} ${formatHour(peak.h)}` : null,
+      peakMultiple: peak && total > 0 ? peak.v / (total / cells.length) : null,
+      eveningShare,
+    };
+  }, [heatmap]);
+
   const openReports = reports.filter((r) => r.status !== "resolved");
   const activeSponsorships = sponsorships.filter((s) => s.status === "active");
   const totalRevenue = sponsorships.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
@@ -12528,6 +12608,131 @@ function AdminDashboardScreen() {
             <p className="text-xs text-stone-400">Currently active</p>
           </div>
         </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <h2 className="font-bold text-stone-900">Growth &amp; activity</h2>
+          <div className="flex items-center gap-1">
+            {DASHBOARD_RANGES.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => setGrowthRangeId(r.id)}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition ${
+                  growthRangeId === r.id ? "bg-stone-800 text-white" : "bg-stone-100 text-stone-500 hover:bg-stone-200"
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <DashPanel title="New users by state" icon={UserPlus} info="Where brand-new CropSwap shoppers signed up from during this range — a sense of where the platform is growing.">
+            {platformEventsLoading ? (
+              <div className="flex items-center justify-center py-8 text-stone-400">
+                <Loader2 size={18} className="animate-spin" />
+              </div>
+            ) : usersByState.length === 0 ? (
+              <p className="text-sm text-stone-400 py-4 text-center">No signups in this range.</p>
+            ) : (
+              <div style={{ width: "100%", height: 160 }}>
+                <ResponsiveContainer>
+                  <BarChart data={usersByState.map((x) => ({ name: x.state, n: x.n }))}>
+                    <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
+                    <Tooltip />
+                    <Bar dataKey="n" fill="#0d9488" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </DashPanel>
+          <DashPanel title="New storefronts by state" icon={Store} info="Where vendors are opening new storefronts across the whole platform during this range.">
+            {newShopsByState.length === 0 ? (
+              <p className="text-sm text-stone-400 py-4 text-center">No new storefronts in this range.</p>
+            ) : (
+              <div style={{ width: "100%", height: 160 }}>
+                <ResponsiveContainer>
+                  <BarChart data={newShopsByState.map((x) => ({ name: x.state, n: x.n }))}>
+                    <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
+                    <Tooltip />
+                    <Bar dataKey="n" fill="#7c3aed" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </DashPanel>
+        </div>
+
+        <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4" info="A live traffic map of exactly when shoppers show up across the whole platform, broken out by day of week and hour of day — cool blue is quiet, hot red is the busiest windows.">
+          {platformEventsLoading ? (
+            <div className="flex items-center justify-center py-8 text-stone-400">
+              <Loader2 size={18} className="animate-spin" />
+            </div>
+          ) : (
+            <>
+              {heatmapInsights.peakLabel ? (
+                <div className="flex items-start gap-2.5 bg-gradient-to-r from-orange-50 to-red-100 border border-red-200 rounded-xl px-3.5 py-3 mb-4">
+                  <Zap size={16} className="text-red-800 shrink-0 mt-0.5" />
+                  <p className="text-sm text-stone-700 leading-snug">
+                    <span className="font-bold text-stone-900">{heatmapInsights.peakLabel}</span> is the single busiest hour platform-wide
+                    {heatmapInsights.peakMultiple ? (
+                      <>
+                        {" "}— <span className="font-bold text-red-800">{heatmapInsights.peakMultiple.toFixed(1)}x</span> a typical hour
+                      </>
+                    ) : null}
+                    {heatmapInsights.eveningShare >= 30 ? (
+                      <>
+                        . Evenings (5–9pm) alone bring in <span className="font-bold text-stone-900">{heatmapInsights.eveningShare}%</span> of all views in this range
+                      </>
+                    ) : null}
+                    .
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-stone-400 py-4 text-center">Not enough activity yet to spot a pattern — check back after a few visits.</p>
+              )}
+
+              <div className="overflow-x-auto pb-1">
+                <div className="inline-grid gap-[3px] items-center" style={{ gridTemplateColumns: "30px repeat(24, 20px)" }}>
+                  <div />
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <div key={`hh-${h}`} className="text-center text-stone-400 leading-none" style={{ fontSize: 8 }}>
+                      {h % 3 === 0 ? formatHourShort(h) : ""}
+                    </div>
+                  ))}
+                  {heatmap.map((row, d) => (
+                    <React.Fragment key={d}>
+                      <div className="text-right pr-1.5 text-stone-500 font-semibold leading-none" style={{ fontSize: 10 }}>
+                        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}
+                      </div>
+                      {row.map((v, h) => {
+                        const isPeak = heatmapInsights.peakCell && heatmapInsights.peakCell.d === d && heatmapInsights.peakCell.h === h;
+                        return (
+                          <div
+                            key={`${d}-${h}`}
+                            title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
+                            className={`rounded-[4px] ${isPeak ? "cs-heat-peak ring-2 ring-red-800" : ""}`}
+                            style={{ width: 20, height: 20, backgroundColor: v === 0 ? "#f0efec" : dashHeatColor(heatmapInsights.percentile(d, h)) }}
+                          />
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 mt-3">
+                <span className="cs-t10 text-stone-400 font-semibold">Quiet</span>
+                <div className="flex-1 h-2 rounded-full" style={{ background: `linear-gradient(to right, ${HEAT_STOPS.map((c) => `rgb(${c.join(",")})`).join(", ")})` }} />
+                <span className="cs-t10 text-stone-400 font-semibold">Peak</span>
+              </div>
+            </>
+          )}
+        </DashPanel>
       </div>
 
       <div className="bg-white border border-stone-200 rounded-2xl p-5">
@@ -19249,18 +19454,16 @@ function VendorDashboard({ navigate }) {
   const range = DASHBOARD_RANGES.find((r) => r.id === rangeId) || DASHBOARD_RANGES[1];
   const [lookupTerm, setLookupTerm] = useState("");
 
-  const [rangeEvents, setRangeEvents] = useState({ shop: [], signups: [], searches: [] });
+  const [rangeEvents, setRangeEvents] = useState({ shop: [], searches: [] });
   const [digestEvents, setDigestEvents] = useState([]);
   const [respLoading, setRespLoading] = useState(true);
   const [avgResponseMin, setAvgResponseMin] = useState(null);
 
-  // Per-panel period tabs (Peak activity, Views over time, Sales over time) —
-  // independent of the global range selector above. "current" reuses data
-  // already fetched for the global range; any other id fetches its own
-  // bounded window on demand (sales doesn't need a fetch — orders are
-  // already loaded all-time via useOrders).
-  const [heatmapPeriod, setHeatmapPeriod] = useState("current");
-  const [heatmapCustomEvents, setHeatmapCustomEvents] = useState([]);
+  // Per-panel period tabs (Views over time, Sales over time) — independent
+  // of the global range selector above. "current" reuses data already
+  // fetched for the global range; any other id fetches its own bounded
+  // window on demand (sales doesn't need a fetch — orders are already
+  // loaded all-time via useOrders).
   const [viewsPeriod, setViewsPeriod] = useState("current");
   const [viewsCustomEvents, setViewsCustomEvents] = useState([]);
   const [favoritesPeriod, setFavoritesPeriod] = useState("current");
@@ -19285,10 +19488,9 @@ function VendorDashboard({ navigate }) {
       isDemo
         ? Promise.resolve(filterDemoEvents(demo.events, ["view_shop", "view_product", "favorite", "share", "message"], sinceMs, nowMs))
         : fetchAnalyticsEvents({ types: ["view_shop", "view_product", "favorite", "share", "message"], shopId: shop.id, sinceMs }),
-      fetchAnalyticsEvents({ types: ["signup"], sinceMs }),
       fetchAnalyticsEvents({ types: ["search"], sinceMs }),
-    ]).then(([shopEv, su, sr]) => {
-      if (!cancelled) setRangeEvents({ shop: shopEv, signups: su, searches: sr });
+    ]).then(([shopEv, sr]) => {
+      if (!cancelled) setRangeEvents({ shop: shopEv, searches: sr });
     });
     return () => {
       cancelled = true;
@@ -19312,27 +19514,6 @@ function VendorDashboard({ navigate }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shop?.id, isDemo]);
-
-  // Fetches the heatmap's own view events whenever its period tab is set to
-  // something other than "current" — the globally-fetched rangeEvents above
-  // only cover the top range selector's window, so a "Last month" tap here
-  // needs its own request.
-  useEffect(() => {
-    if (!shop || heatmapPeriod === "current") return;
-    const win = panelPeriodWindow(heatmapPeriod, nowMs, shop?.createdAt);
-    if (!win) return;
-    let cancelled = false;
-    const reqHeat = isDemo
-      ? Promise.resolve(filterDemoEvents(demo.events, ["view_shop", "view_product"], win.sinceMs, win.untilMs))
-      : fetchAnalyticsEvents({ types: ["view_shop", "view_product"], shopId: shop.id, sinceMs: win.sinceMs, untilMs: win.untilMs });
-    reqHeat.then((ev) => {
-      if (!cancelled) setHeatmapCustomEvents(ev);
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shop?.id, heatmapPeriod, isDemo]);
 
   // Same idea for the "Views over time" chart's own period tab.
   useEffect(() => {
@@ -19493,23 +19674,6 @@ function VendorDashboard({ navigate }) {
     return rangeEvents.searches.filter((e) => e.entity_id === term).length;
   }, [lookupTerm, rangeEvents.searches]);
 
-  const usersByState = useMemo(() => {
-    const counts = new Map();
-    rangeEvents.signups.forEach((e) => {
-      const s = e.state || "Unknown";
-      counts.set(s, (counts.get(s) || 0) + 1);
-    });
-    return [...counts.entries()].map(([state, n]) => ({ state, n })).sort((a, b) => b.n - a.n).slice(0, 10);
-  }, [rangeEvents.signups]);
-
-  const newShopsByState = useMemo(() => {
-    const counts = new Map();
-    (shops || []).forEach((s) => {
-      if ((s.createdAt || 0) >= sinceMs) counts.set(s.state || "Unknown", (counts.get(s.state || "Unknown") || 0) + 1);
-    });
-    return [...counts.entries()].map(([state, n]) => ({ state, n })).sort((a, b) => b.n - a.n).slice(0, 10);
-  }, [shops, sinceMs]);
-
   const funnel = useMemo(() => {
     const v = viewEvents.length;
     const f = favoriteEvents.length;
@@ -19552,47 +19716,6 @@ function VendorDashboard({ navigate }) {
   );
   const messageSeries = useMemo(() => bucketSeries(messageEvents, range.granularity, sinceMs, nowMs), [messageEvents, range, sinceMs, nowMs]);
   const shareSeries = useMemo(() => bucketSeries(shareEvents, range.granularity, sinceMs, nowMs), [shareEvents, range, sinceMs, nowMs]);
-
-  // Peak-activity heatmap's own source events — either the global-range view
-  // events above ("current") or its own fetched period window.
-  const heatmapEventsSource = heatmapPeriod === "current" ? viewEvents : heatmapCustomEvents;
-  const heatmap = useMemo(() => {
-    const grid = Array.from({ length: 7 }, () => Array(24).fill(0));
-    heatmapEventsSource.forEach((e) => {
-      const d = new Date(e.created_at);
-      grid[d.getDay()][d.getHours()] += 1;
-    });
-    return grid;
-  }, [heatmapEventsSource]);
-  // Turns the raw 7x24 grid into the actual story: a percentile rank per
-  // cell — computed among the NONZERO cells only, so a true dead hour still
-  // reads as flat gray while every cell that saw any activity gets spread
-  // across the full cold-to-hot color range, however lopsided the week
-  // actually is — plus the single busiest/quietest hours in plain language
-  // and a headline stat, so this panel answers "why does this matter" and
-  // "what do I do about it" instead of just showing a colored grid.
-  const heatmapInsights = useMemo(() => {
-    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const formatHour = (h) => (h === 0 ? "12am" : h < 12 ? `${h}am` : h === 12 ? "12pm" : `${h - 12}pm`);
-    const cells = [];
-    heatmap.forEach((row, d) => row.forEach((v, h) => cells.push({ d, h, v })));
-    const total = cells.reduce((s, c) => s + c.v, 0);
-    const mean = total / cells.length;
-    const nonZero = cells.filter((c) => c.v > 0).sort((a, b) => a.v - b.v);
-    const rankOf = new Map();
-    nonZero.forEach((c, i) => rankOf.set(`${c.d}-${c.h}`, nonZero.length > 1 ? i / (nonZero.length - 1) : 1));
-    const percentile = (d, h) => rankOf.get(`${d}-${h}`) ?? 0;
-    const peak = nonZero.length ? nonZero[nonZero.length - 1] : null;
-    const eveningTotal = cells.filter((c) => c.h >= 17 && c.h <= 21).reduce((s, c) => s + c.v, 0);
-    const eveningShare = total > 0 ? Math.round((eveningTotal / total) * 100) : 0;
-    return {
-      percentile,
-      peakCell: peak,
-      peakLabel: peak ? `${dayNames[peak.d]} ${formatHour(peak.h)}` : null,
-      peakMultiple: peak && mean > 0 ? peak.v / mean : null,
-      eveningShare,
-    };
-  }, [heatmap]);
 
   const platformAvgRating = useMemo(() => {
     const rated = (shops || []).filter((s) => s.id !== shop?.id && s.reviewCount > 0);
@@ -20554,41 +20677,6 @@ function VendorDashboard({ navigate }) {
           </DashPanel>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-4 mb-4">
-          <DashPanel title="New users by state" icon={UserPlus} info="Where brand-new CropSwap shoppers signed up from during this range — a sense of where the platform is growing.">
-            {usersByState.length === 0 ? (
-              <p className="text-sm text-stone-400 py-4 text-center">No signups in this range.</p>
-            ) : (
-              <div style={{ width: "100%", height: 160 }}>
-                <ResponsiveContainer>
-                  <BarChart data={usersByState.map((x) => ({ name: x.state, n: x.n }))}>
-                    <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
-                    <Tooltip />
-                    <Bar dataKey="n" fill="#0d9488" radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </DashPanel>
-          <DashPanel title="New storefronts by state" icon={Store} info="Where other vendors are opening new storefronts — handy for spotting which states are becoming more competitive.">
-            {newShopsByState.length === 0 ? (
-              <p className="text-sm text-stone-400 py-4 text-center">No new storefronts in this range.</p>
-            ) : (
-              <div style={{ width: "100%", height: 160 }}>
-                <ResponsiveContainer>
-                  <BarChart data={newShopsByState.map((x) => ({ name: x.state, n: x.n }))}>
-                    <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
-                    <Tooltip />
-                    <Bar dataKey="n" fill="#7c3aed" radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </DashPanel>
-        </div>
-
         <DashPanel title="Conversion funnel" icon={Target} className="mb-4" info="How viewers move down the funnel from viewing, to favoriting, to messaging you — each bar shows what percent of viewers made it that far.">
           <div className="space-y-2">
             {funnel.map((f, i) => {
@@ -20606,67 +20694,6 @@ function VendorDashboard({ navigate }) {
               );
             })}
           </div>
-        </DashPanel>
-
-        <DashPanel title="Peak activity — day × hour" icon={Clock} className="mb-4" info="A live traffic map of exactly when shoppers show up, broken out by day of week and hour of day — cool blue is quiet, hot red is your busiest windows. Use it to time new listings and replies for when people are actually looking. Use the tabs below to jump to a specific past month/quarter/year instead.">
-          {heatmapInsights.peakLabel ? (
-            <div className="flex items-start gap-2.5 bg-gradient-to-r from-orange-50 to-red-100 border border-red-200 rounded-xl px-3.5 py-3 mb-4">
-              <Zap size={16} className="text-red-800 shrink-0 mt-0.5" />
-              <p className="text-sm text-stone-700 leading-snug">
-                <span className="font-bold text-stone-900">{heatmapInsights.peakLabel}</span> is your single busiest hour
-                {heatmapInsights.peakMultiple ? (
-                  <>
-                    {" "}— <span className="font-bold text-red-800">{heatmapInsights.peakMultiple.toFixed(1)}x</span> a typical hour
-                  </>
-                ) : null}
-                {heatmapInsights.eveningShare >= 30 ? (
-                  <>
-                    . Evenings (5–9pm) alone bring in <span className="font-bold text-stone-900">{heatmapInsights.eveningShare}%</span> of all views in this range
-                  </>
-                ) : null}
-                . <span className="font-semibold">New listings and replies land hardest right before that window</span> — post and reply then, not into the quiet hours.
-              </p>
-            </div>
-          ) : (
-            <p className="text-sm text-stone-400 py-4 text-center">Not enough activity yet to spot a pattern — check back after a few visits.</p>
-          )}
-
-          <div className="overflow-x-auto pb-1">
-            <div className="inline-grid gap-[3px] items-center" style={{ gridTemplateColumns: "30px repeat(24, 20px)" }}>
-              <div />
-              {Array.from({ length: 24 }, (_, h) => (
-                <div key={`hh-${h}`} className="text-center text-stone-400 leading-none" style={{ fontSize: 8 }}>
-                  {h % 3 === 0 ? formatHourShort(h) : ""}
-                </div>
-              ))}
-              {heatmap.map((row, d) => (
-                <React.Fragment key={d}>
-                  <div className="text-right pr-1.5 text-stone-500 font-semibold leading-none" style={{ fontSize: 10 }}>
-                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]}
-                  </div>
-                  {row.map((v, h) => {
-                    const isPeak = heatmapInsights.peakCell && heatmapInsights.peakCell.d === d && heatmapInsights.peakCell.h === h;
-                    return (
-                      <div
-                        key={`${d}-${h}`}
-                        title={`${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d]} ${h}:00 — ${v}`}
-                        className={`rounded-[4px] ${isPeak ? "cs-heat-peak ring-2 ring-red-800" : ""}`}
-                        style={{ width: 20, height: 20, backgroundColor: v === 0 ? "#f0efec" : dashHeatColor(heatmapInsights.percentile(d, h)) }}
-                      />
-                    );
-                  })}
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 mt-3">
-            <span className="cs-t10 text-stone-400 font-semibold">Quiet</span>
-            <div className="flex-1 h-2 rounded-full" style={{ background: `linear-gradient(to right, ${HEAT_STOPS.map((c) => `rgb(${c.join(",")})`).join(", ")})` }} />
-            <span className="cs-t10 text-stone-400 font-semibold">Peak</span>
-          </div>
-
-          <PanelPeriodTabs value={heatmapPeriod} onChange={setHeatmapPeriod} monthOptions={monthOptions} />
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
