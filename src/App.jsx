@@ -20944,12 +20944,15 @@ function StartSellingPreviewScreen({ navigate, me }) {
   const [quickView, setQuickView] = useState(null);
   const homeLoc = splitCityState(me?.homeLocation?.label);
 
+  // Real photos (same Unsplash library the real product catalog uses)
+  // instead of emoji, each picked to actually match what the listing
+  // describes rather than a generic "produce" stand-in.
   const sampleProducts = useMemo(
     () => [
-      { id: "sp1", name: "Heirloom Tomatoes", emoji: "🍅", price: "$4.50/lb", desc: "Vine-ripened Cherokee Purple & Brandywine, picked same-day." },
-      { id: "sp2", name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz", desc: "Free-range, pasture-raised, mixed brown & blue shells." },
-      { id: "sp3", name: "Raw Honey", emoji: "🍯", price: "$9.00/pint", desc: "Unfiltered wildflower honey straight from our own hives." },
-      { id: "sp4", name: "Sweet Corn", emoji: "🌽", price: "$5.00/bushel", desc: "Bi-color sweet corn, picked at first light." },
+      { id: "sp1", name: "Heirloom Tomatoes", photo: PHOTO("photo-1592924357228-91a4daadcfea"), price: "$4.50/lb", desc: "Vine-ripened Cherokee Purple & Brandywine, picked same-day." },
+      { id: "sp2", name: "Farm Fresh Eggs", photo: PHOTO("photo-1506976785307-8732e854ad03"), price: "$6.00/doz", desc: "Free-range, pasture-raised, mixed brown & blue shells." },
+      { id: "sp3", name: "Raw Honey", photo: PHOTO("photo-1558642452-9d2a7deb7f62"), price: "$9.00/pint", desc: "Unfiltered wildflower honey straight from our own hives." },
+      { id: "sp4", name: "Sweet Corn", photo: PHOTO("photo-1551754655-cd27e38d2076"), price: "$5.00/bushel", desc: "Bi-color sweet corn, picked at first light." },
     ],
     []
   );
@@ -21066,10 +21069,14 @@ function StartSellingPreviewScreen({ navigate, me }) {
             <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-3">Example Farm Stand's listings (4)</p>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3.5">
               {sampleProducts.map((p) => (
-                <button key={p.id} onClick={() => setQuickView(p)} className="border border-stone-200 rounded-xl p-2.5 bg-white hover:border-emerald-300 transition text-left">
-                  <div className="text-2xl mb-1 text-center">{p.emoji}</div>
-                  <p className="text-xs font-semibold text-stone-800 leading-tight text-center">{p.name}</p>
-                  <p className="cs-t10 text-emerald-700 font-bold mt-0.5 text-center">{p.price}</p>
+                <button key={p.id} onClick={() => setQuickView(p)} className="border border-stone-200 rounded-xl overflow-hidden bg-white hover:border-emerald-300 transition text-left">
+                  <div className="relative aspect-square bg-stone-100 overflow-hidden">
+                    <img src={p.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                  </div>
+                  <div className="p-2.5">
+                    <p className="text-xs font-semibold text-stone-800 leading-tight text-center">{p.name}</p>
+                    <p className="cs-t10 text-emerald-700 font-bold mt-0.5 text-center">{p.price}</p>
+                  </div>
                 </button>
               ))}
             </div>
@@ -21113,8 +21120,11 @@ function StartSellingPreviewScreen({ navigate, me }) {
 
       {quickView && (
         <Modal open={!!quickView} onClose={() => setQuickView(null)} labelledBy="quickview-title">
-          <div className="p-6 text-center">
-            <div className="text-4xl mb-2">{quickView.emoji}</div>
+          <div className="text-center">
+            <div className="relative aspect-[16/9] bg-stone-100 rounded-t-3xl overflow-hidden">
+              <img src={quickView.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+            </div>
+            <div className="p-6 pt-4">
             <h2 id="quickview-title" className="text-lg font-bold text-stone-900 mb-1" style={displayFont}>{quickView.name}</h2>
             <p className="text-emerald-700 font-bold mb-3">{quickView.price}</p>
             <p className="text-sm text-stone-600 mb-5">{quickView.desc}</p>
@@ -21128,6 +21138,7 @@ function StartSellingPreviewScreen({ navigate, me }) {
               Message the seller
             </button>
             <button onClick={() => setQuickView(null)} className="w-full text-sm font-semibold text-stone-500 py-2">Close</button>
+            </div>
           </div>
         </Modal>
       )}
