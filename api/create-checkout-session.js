@@ -84,6 +84,12 @@ export async function POST(request) {
       cancel_url: `${origin}/?checkout=cancel`,
       subscription_data: { metadata },
       metadata,
+      // Managed Payments is a Stripe feature for platforms that route money
+      // between buyers and connected sellers (Connect-style marketplaces).
+      // CropSwap only ever collects its own subscription fees, so this is
+      // switched off — leaving it on would require every product to carry a
+      // tax code it has no other use for.
+      managed_payments: { enabled: false },
       allow_promotion_codes: true,
     });
     return Response.json({ url: session.url });
