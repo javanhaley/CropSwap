@@ -21369,80 +21369,31 @@ function Onboarding({ onCreate, reason, onCancel }) {
   const [phone, setPhone] = useState(draft?.phone || "");
   const [busy, setBusy] = useState(false);
 
-  // The account's own sign-up email — already real and already verified (it
-  // went through AuthGate's own emailed-code flow to get this far). Rather
-  // than faking a text message we can't afford to actually send, we reuse
-  // that same address here and send a second real code to it via Supabase's
-  // email OTP, so finishing account setup still proves the person at the
-  // keyboard controls that inbox right now.
+  // The account's own sign-up email — already real and already verified:
+  // getting a session at all (AuthGate's emailed-code signup, a magic-link
+  // code, or a password sign-in to an already-confirmed account) already
+  // proved the person controls this inbox. There's nothing left to prove,
+  // so — unlike an earlier version of this screen — there's no second
+  // "send a code, enter the code" step here for email.
   const [email, setEmail] = useState(draft?.email || "");
-  const [emailVerified, setEmailVerified] = useState(!!draft?.emailVerified);
-  const [emailCodeStage, setEmailCodeStage] = useState(!!draft?.emailCodeStage);
-  const [emailCode, setEmailCode] = useState("");
-  const [emailSending, setEmailSending] = useState(false);
-  const [emailChecking, setEmailChecking] = useState(false);
-  const [emailError, setEmailError] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       const e = data?.session?.user?.email;
-      if (!e) return;
-      setEmail(e);
-      // Only trust a restored draft's verification progress if it was left
-      // behind by this same signed-in email — otherwise (no draft, or a
-      // different account than last time) start that part fresh.
-      if (draft?.email !== e) {
-        setEmailVerified(false);
-        setEmailCodeStage(false);
-      }
+      if (e) setEmail(e);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Keep the draft in sync so a discarded/reloaded tab can pick back up
-  // right where the person left off, code-entry box and all.
+  // right where the person left off.
   useEffect(() => {
-    saveOnboardingDraft({ name, fullName, zipcode, phone, email, emailVerified, emailCodeStage });
-  }, [name, fullName, zipcode, phone, email, emailVerified, emailCodeStage]);
+    saveOnboardingDraft({ name, fullName, zipcode, phone, email });
+  }, [name, fullName, zipcode, phone, email]);
 
   const nameValid = fullName.trim().length >= 2;
   const zipValid = isValidZip(zipcode);
   const phoneValid = digitsOnly(phone).length === 10;
-  const formReady = nameValid && zipValid && phoneValid && emailVerified;
-
-  const sendEmailCode = async () => {
-    if (!email || emailSending) return;
-    setEmailError("");
-    setEmailSending(true);
-    try {
-      const { error: err } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-      if (err) throw err;
-      setEmailCodeStage(true);
-    } catch (err) {
-      setEmailError(err?.message || "Couldn't send a code — try again shortly.");
-    } finally {
-      setEmailSending(false);
-    }
-  };
-
-  const verifyEmailCode = async () => {
-    // Not hardcoded to 6 digits — the Supabase project's OTP length is a
-    // dashboard setting (this project's happens to be 8), so a fixed
-    // 6-digit check would silently reject every real code.
-    if (!/^\d{4,10}$/.test(emailCode.trim())) return;
-    setEmailError("");
-    setEmailChecking(true);
-    try {
-      const { error: err } = await supabase.auth.verifyOtp({ email, token: emailCode.trim(), type: "email" });
-      if (err) throw err;
-      setEmailVerified(true);
-      setEmailCodeStage(false);
-    } catch (err) {
-      setEmailError(err?.message || "That code didn't work. Double-check it and try again.");
-    } finally {
-      setEmailChecking(false);
-    }
-  };
+  const formReady = nameValid && zipValid && phoneValid;
 
   return (
     <div className="h-screen w-full flex items-start justify-center bg-stone-50 p-6 pt-8 overflow-y-auto" style={{ ...bodyFont, height: "100dvh" }}>
@@ -21508,56 +21459,14 @@ function Onboarding({ onCreate, reason, onCancel }) {
           <p className="cs-t11 text-stone-500 mb-4">We'll only use this if a buyer needs to reach you directly — no texts, no calls otherwise.</p>
 
           <p className="text-xs font-bold text-stone-600 uppercase mb-2">Email</p>
-          <div className="flex gap-2 mb-1.5">
-            <input
-              value={email}
-              readOnly
-              className="flex-1 border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none bg-stone-50 text-stone-600"
-            />
-            {!emailVerified && (
-              <button
-                type="button"
-                onClick={sendEmailCode}
-                disabled={!email || emailSending}
-                className="shrink-0 px-3.5 rounded-xl text-xs font-semibold border border-stone-200 text-stone-700 disabled:opacity-40 hover:bg-stone-50"
-              >
-                {emailSending ? "Sending…" : emailCodeStage ? "Resend" : "Send code"}
-              </button>
-            )}
-          </div>
-
-          {emailVerified ? (
-            <p className="cs-t11 text-emerald-700 font-semibold flex items-center gap-1 mb-4">
-              <BadgeCheck size={13} /> Email verified
-            </p>
-          ) : emailCodeStage ? (
-            <div className="mb-4 bg-stone-50 rounded-xl p-3 border border-stone-200">
-              <p className="cs-t11 text-stone-600 mb-2">We sent a code to {email}.</p>
-              <div className="flex gap-2">
-                <input
-                  value={emailCode}
-                  onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                  placeholder="Enter code"
-                  inputMode="numeric"
-                  className="flex-1 border border-stone-200 rounded-lg px-3 py-2 text-sm tracking-widest outline-none focus:border-emerald-700"
-                />
-                <button
-                  type="button"
-                  onClick={verifyEmailCode}
-                  disabled={emailChecking || emailCode.length < 4}
-                  className="shrink-0 px-3.5 rounded-lg text-xs font-semibold bg-emerald-800 text-white disabled:opacity-40"
-                >
-                  {emailChecking ? "Checking…" : "Verify"}
-                </button>
-              </div>
-              {emailError && <p className="cs-t11 text-rose-600 mt-2">{emailError}</p>}
-            </div>
-          ) : (
-            <>
-              <p className="cs-t11 text-stone-500 mb-4">We'll send a code to confirm this email.</p>
-              {emailError && <p className="cs-t11 text-rose-600 -mt-3 mb-4">{emailError}</p>}
-            </>
-          )}
+          <input
+            value={email}
+            readOnly
+            className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-1.5 outline-none bg-stone-50 text-stone-600"
+          />
+          <p className="cs-t11 text-emerald-700 font-semibold flex items-center gap-1 mb-4">
+            <BadgeCheck size={13} /> Email verified
+          </p>
 
           <button
             onClick={async () => {
