@@ -9721,15 +9721,19 @@ function FavoritesPreviewScreen({ navigate }) {
   const { requireAuth } = useApp();
   const [tab, setTab] = useState("shops");
   const [search, setSearch] = useState("");
+  // Real Unsplash photos (same library BannerPhoto/PHOTO already use for the
+  // seeded demo shops) instead of emoji — this preview is a guest's first
+  // impression of the app, so it should look like real listings, not a
+  // placeholder toy.
   const [favProducts, setFavProducts] = useState([
-    { id: "prev-fp1", name: "Heirloom Tomatoes", emoji: "🍅", price: "$4.50/lb", shopName: "Buzzy Bee Farm" },
-    { id: "prev-fp2", name: "Raw Honey", emoji: "🍯", price: "$9.00/pint", shopName: "Sunny Acres" },
-    { id: "prev-fp3", name: "Farm Fresh Eggs", emoji: "🥚", price: "$6.00/doz", shopName: "Humble Hen Farm" },
+    { id: "prev-fp1", name: "Heirloom Tomatoes", photo: PHOTO("photo-1592924357228-91a4daadcfea"), price: "$4.50/lb", shopName: "Buzzy Bee Farm" },
+    { id: "prev-fp2", name: "Raw Honey", photo: PHOTO("photo-1558642452-9d2a7deb7f62"), price: "$9.00/pint", shopName: "Sunny Acres" },
+    { id: "prev-fp3", name: "Farm Fresh Eggs", photo: PHOTO("photo-1506976785307-8732e854ad03"), price: "$6.00/doz", shopName: "Humble Hen Farm" },
   ]);
   const [favShops, setFavShops] = useState([
-    { id: "prev-fs1", name: "Buzzy Bee Farm", emoji: "🐝", category: "Produce", rating: "5.0" },
-    { id: "prev-fs2", name: "Sunny Acres", emoji: "🌻", category: "Honey & Preserves", rating: "4.8" },
-    { id: "prev-fs3", name: "Humble Hen Farm", emoji: "🐔", category: "Eggs & Dairy", rating: "4.9" },
+    { id: "prev-fs1", name: "Buzzy Bee Farm", photo: BANNER_PHOTO("photo-1589923188900-85dae523342b"), category: "Produce", rating: "5.0" },
+    { id: "prev-fs2", name: "Sunny Acres", photo: BANNER_PHOTO("photo-1597848212624-a19eb35e2651"), category: "Honey & Preserves", rating: "4.8" },
+    { id: "prev-fs3", name: "Humble Hen Farm", photo: BANNER_PHOTO("photo-1518977676601-b53f82aba655"), category: "Eggs & Dairy", rating: "4.9" },
   ]);
   const q = search.trim().toLowerCase();
   const visibleProducts = q ? favProducts.filter((p) => p.name.toLowerCase().includes(q) || p.shopName.toLowerCase().includes(q)) : favProducts;
@@ -9774,8 +9778,8 @@ function FavoritesPreviewScreen({ navigate }) {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
               {visibleProducts.map((p) => (
                 <div key={p.id} className="bg-white rounded-xl border border-stone-200/70 overflow-hidden flex flex-col">
-                  <div className="relative aspect-square bg-stone-50 flex items-center justify-center text-5xl">
-                    {p.emoji}
+                  <div className="relative aspect-square bg-stone-100">
+                    <img src={p.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
                     <div className="absolute top-2 right-2">
                       <FavoriteHeart active count={0} onToggle={() => setFavProducts((prev) => prev.filter((x) => x.id !== p.id))} />
                     </div>
@@ -9797,8 +9801,8 @@ function FavoritesPreviewScreen({ navigate }) {
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3.5">
               {visibleShops.map((s) => (
                 <div key={s.id} className="bg-white rounded-xl border border-stone-200/70 overflow-hidden">
-                  <div className="h-16 bg-gradient-to-br from-emerald-600 to-teal-500 flex items-center justify-center text-3xl relative">
-                    {s.emoji}
+                  <div className="h-16 relative bg-stone-100">
+                    <img src={s.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
                     <div className="absolute top-2 right-2">
                       <FavoriteHeart active count={0} onToggle={() => setFavShops((prev) => prev.filter((x) => x.id !== s.id))} />
                     </div>
