@@ -16266,6 +16266,12 @@ function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDel
   const total = orderTotal(order);
   const urgency = orderUrgency(order, now);
   const urgencyBorder = urgency === "overdue" ? "border-l-4 border-l-red-500" : urgency === "soon" ? "border-l-4 border-l-orange-400" : "";
+  // Only sample/preview orders carry a photo on their line items — a real
+  // order's free-typed item name has nothing reliable to match a photo to,
+  // so this stays a no-op there. One representative photo per card (not one
+  // per line item), run the full height of the card as its own right-hand
+  // column rather than crowding the line-item text.
+  const orderPhoto = order.items.find((li) => li.photo)?.photo;
   return (
     <div className={`rounded-2xl border p-4 ${order.completed ? "border-stone-100 bg-stone-50" : "border-stone-200 bg-white"} ${urgencyBorder}`}>
       <div className="flex items-start gap-3">
@@ -16303,16 +16309,7 @@ function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDel
                 <span className="min-w-0 truncate">
                   {li.qty} {priceUnitLabel(li.unit)} {li.name} <span className="text-stone-400">× {formatMoney(li.price)}</span>
                 </span>
-                <div className="flex items-center gap-4 shrink-0">
-                  {/* Only sample/preview line items carry a photo — a real order's
-                      free-typed item name has nothing reliable to match a photo
-                      to, so this stays a no-op there. Extra gap here (vs. the
-                      row's own gap-2) keeps the photo from crowding the price. */}
-                  {li.photo && (
-                    <img src={li.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-12 h-12 rounded-lg object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
-                  )}
-                  <span className="font-semibold text-stone-700">{formatMoney(li.qty * li.price)}</span>
-                </div>
+                <span className="font-semibold text-stone-700 shrink-0">{formatMoney(li.qty * li.price)}</span>
               </div>
             ))}
           </div>
@@ -16336,6 +16333,17 @@ function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDel
             </div>
           </div>
         </div>
+        {orderPhoto && (
+          <img
+            src={orderPhoto}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+            className="w-20 sm:w-24 rounded-xl object-cover self-stretch shrink-0"
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
+          />
+        )}
       </div>
     </div>
   );
