@@ -5826,13 +5826,18 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
         {/* Logo lives in the Sidebar too, but that's hidden behind a drawer
            on mobile — this is the one thing every screen, phone included,
            shows without the visitor doing anything first. */}
+        {/* md:ml-2 + the taller md:h-9 are desktop-only (mobile keeps the
+           original size flush against the edge) — nudges the logo off the
+           screen edge so it reads as centered in the gap before the search
+           bar, and matches its height to the search pill next to it instead
+           of looking a size smaller. */}
         <button
           onClick={onGoHome}
-          className="shrink-0 hover:opacity-75 active:opacity-60 transition"
+          className="shrink-0 hover:opacity-75 active:opacity-60 transition md:ml-2"
           aria-label="CropSwap home"
           title="Home"
         >
-          <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-7 w-auto" />
+          <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-7 md:h-9 w-auto" />
         </button>
 
         {/* 30% shorter: the pill takes 70% of the space it used to fill. */}
@@ -6016,28 +6021,31 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
   };
   const content = (
     <>
-      {/* Bottom margin matches the sidebar's own top padding (p-5 = 20px,
-         i.e. mb-5) so the logo sits with the same breathing room above and
-         below it, instead of the old oversized gap pushing the nav down. */}
-      <div className={`flex items-center ${isDrawer ? "justify-between" : ""} mb-5 px-2`}>
-        <button
-          onClick={() => {
-            setExploreView("grid");
-            navigate({ screen: "explore" });
-            onClose?.();
-          }}
-          className="flex items-center hover:opacity-75 active:opacity-60 transition"
-          aria-label="CropSwap home"
-          title="Home"
-        >
-          <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-9 w-auto" />
-        </button>
-        {isDrawer && (
+      {/* The desktop (inline) sidebar drops this logo entirely — TopBar's own
+         logo already covers that on every screen, and the mobile drawer
+         keeps it since it needs something in that row alongside the close
+         button. Bottom margin matches the sidebar's own top padding (p-5 =
+         20px, i.e. mb-5) so the logo sits with the same breathing room above
+         and below it when it is shown. */}
+      {isDrawer && (
+        <div className="flex items-center justify-between mb-5 px-2">
+          <button
+            onClick={() => {
+              setExploreView("grid");
+              navigate({ screen: "explore" });
+              onClose?.();
+            }}
+            className="flex items-center hover:opacity-75 active:opacity-60 transition"
+            aria-label="CropSwap home"
+            title="Home"
+          >
+            <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-9 w-auto" />
+          </button>
           <button onClick={onClose} className="text-stone-400 hover:text-stone-600 p-1" aria-label="Hide sidebar" title="Hide sidebar">
             <X size={18} />
           </button>
-        )}
-      </div>
+        </div>
+      )}
       <nav className="flex-1 flex flex-col gap-1">
         {items.map((it) => {
           const isActive = isItemActive(it);
