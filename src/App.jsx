@@ -21293,11 +21293,42 @@ function ChooseShopGate({ shops, activeShopId, onPick, onDelete, onSkip }) {
   );
 }
 
+// Finishing this form is exactly the kind of task that sends someone away
+// from the tab — they have to go check their email for the code. If Chrome
+// decides to reclaim that backgrounded tab's memory in the meantime (its
+// "Memory Saver" feature), coming back to it looks like nothing happened
+// but is actually a full reload, which wipes every bit of in-memory React
+// state: everything they'd typed, plus whether a code had even been sent.
+// sessionStorage survives that same-tab reload (and is gone once the tab
+// is actually closed), so stash progress there and restore it on mount.
+const ONBOARDING_DRAFT_KEY = "cropswap:onboardingDraft";
+function loadOnboardingDraft() {
+  try {
+    const raw = sessionStorage.getItem(ONBOARDING_DRAFT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+function saveOnboardingDraft(draft) {
+  try {
+    sessionStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify(draft));
+  } catch (e) {
+    /* private browsing, storage full, etc. — worst case, back to no persistence */
+  }
+}
+function clearOnboardingDraft() {
+  try {
+    sessionStorage.removeItem(ONBOARDING_DRAFT_KEY);
+  } catch (e) {}
+}
+
 function Onboarding({ onCreate, reason, onCancel }) {
-  const [name, setName] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [zipcode, setZipcode] = useState("");
-  const [phone, setPhone] = useState("");
+  const draft = useMemo(() => loadOnboardingDraft(), []);
+  const [name, setName] = useState(draft?.name || "");
+  const [fullName, setFullName] = useState(draft?.fullName || "");
+  const [zipcode, setZipcode] = useState(draft?.zipcode || "");
+  const [phone, setPhone] = useState(draft?.phone || "");
   const [busy, setBusy] = useState(false);
 
   // The account's own sign-up email — already real and already verified (it
@@ -21306,9 +21337,9 @@ function Onboarding({ onCreate, reason, onCancel }) {
   // that same address here and send a second real code to it via Supabase's
   // email OTP, so finishing account setup still proves the person at the
   // keyboard controls that inbox right now.
-  const [email, setEmail] = useState("");
-  const [emailVerified, setEmailVerified] = useState(false);
-  const [emailCodeStage, setEmailCodeStage] = useState(false);
+  const [email, setEmail] = useState(draft?.email || "");
+  const [emailVerified, setEmailVerified] = useState(!!draft?.emailVerified);
+  const [emailCodeStage, setEmailCodeStage] = useState(!!draft?.emailCodeStage);
   const [emailCode, setEmailCode] = useState("");
   const [emailSending, setEmailSending] = useState(false);
   const [emailChecking, setEmailChecking] = useState(false);
@@ -21317,9 +21348,24 @@ function Onboarding({ onCreate, reason, onCancel }) {
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       const e = data?.session?.user?.email;
-      if (e) setEmail(e);
+      if (!e) return;
+      setEmail(e);
+      // Only trust a restored draft's verification progress if it was left
+      // behind by this same signed-in email — otherwise (no draft, or a
+      // different account than last time) start that part fresh.
+      if (draft?.email !== e) {
+        setEmailVerified(false);
+        setEmailCodeStage(false);
+      }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep the draft in sync so a discarded/reloaded tab can pick back up
+  // right where the person left off, code-entry box and all.
+  useEffect(() => {
+    saveOnboardingDraft({ name, fullName, zipcode, phone, email, emailVerified, emailCodeStage });
+  }, [name, fullName, zipcode, phone, email, emailVerified, emailCodeStage]);
 
   const nameValid = fullName.trim().length >= 2;
   const zipValid = isValidZip(zipcode);
@@ -21374,7 +21420,14 @@ function Onboarding({ onCreate, reason, onCancel }) {
           <p className="text-center text-stone-600 mb-4 text-sm">A hyper-local, nationwide hub connecting growers and buyers.</p>
         )}
         {onCancel && (
-          <button type="button" onClick={onCancel} className="text-xs font-semibold text-stone-500 hover:text-stone-700 mb-3 block mx-auto">
+          <button
+            type="button"
+            onClick={() => {
+              clearOnboardingDraft();
+              onCancel();
+            }}
+            className="text-xs font-semibold text-stone-500 hover:text-stone-700 mb-3 block mx-auto"
+          >
             Not now — keep browsing
           </button>
         )}
@@ -21471,6 +21524,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
           <button
             onClick={async () => {
               setBusy(true);
+              clearOnboardingDraft();
               await onCreate({ name: name.trim() || "Guest", avatar: "", fullName: fullName.trim(), zipcode: zipcode.trim(), phone: digitsOnly(phone) });
               setBusy(false);
             }}
