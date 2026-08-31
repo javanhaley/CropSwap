@@ -9189,7 +9189,7 @@ const SHOP_BANNER_PRESETS = [
   { label: "Now taking orders", bg: "#b45309", color: "#ffffff" },
   { label: "Closed for the season", bg: "#44403c", color: "#ffffff" },
   { label: "New stock this week", bg: "#7c3aed", color: "#ffffff" },
-  { label: "Farmers market Saturday", bg: "#be123c", color: "#ffffff" },
+  { label: "Farmers market Sunday", bg: "#be123c", color: "#ffffff" },
   { label: "Pickup only", bg: "#0f766e", color: "#ffffff" },
 ];
 
