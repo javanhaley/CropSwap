@@ -16340,7 +16340,12 @@ function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDel
             loading="lazy"
             decoding="async"
             referrerPolicy="no-referrer"
-            className="w-20 sm:w-24 rounded-xl object-cover self-stretch shrink-0"
+            // Same fixed size as the Inventory tab's thumbnails (w-14 h-14) —
+            // an explicit height here (not just width) matters: without one,
+            // a photo with align-self:stretch doesn't actually stretch,
+            // since a replaced element with an intrinsic aspect ratio sizes
+            // itself off that ratio instead of filling the cross axis.
+            className="w-14 h-14 rounded-lg object-cover self-center shrink-0"
             onError={(e) => { e.currentTarget.style.display = "none"; }}
           />
         )}
