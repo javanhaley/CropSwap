@@ -7999,7 +7999,11 @@ function ShopProfileView({ shopId, navigate }) {
           />
         )}
         {(shop.banners || []).length > 0 && (
-          <div className="absolute inset-0 p-4 flex flex-col items-start gap-2 pointer-events-none">
+          // pt-14 (not p-4): drops the whole stack below the Back / Edit
+          // storefront buttons instead of starting underneath them, so a
+          // banner never gets hidden behind either button no matter which
+          // corner it would otherwise land in.
+          <div className="absolute inset-0 pt-14 px-4 pb-4 flex flex-col items-start gap-2 pointer-events-none">
             {(shop.banners || []).map((b) => (
               <ShopBannerRibbon key={b.id} banner={b} />
             ))}
@@ -19471,8 +19475,12 @@ function VendorDashboard({ navigate }) {
   const [salesPeriod, setSalesPeriod] = useState("current");
   const [weekdayPeriod, setWeekdayPeriod] = useState("current");
   // Granularity toggle + fetched click events for the "Sponsored ads:
-  // clicks & spend" panel — see the sponsoredClicks memos below.
-  const [adPeriod, setAdPeriod] = useState("current");
+  // clicks & spend" panel — see the sponsoredClicks memos below. Defaults to
+  // "all" (not "current") so this chart opens showing full sponsored
+  // history, same as it always has — "current"/"This week" is a real
+  // trailing 7 days now (see adWindow below), so it can't double as the
+  // "show everything" default the way it briefly did.
+  const [adPeriod, setAdPeriod] = useState("all");
   const [sponsoredClickEvents, setSponsoredClickEvents] = useState([]);
 
   const nowMs = Date.now();
@@ -20085,19 +20093,20 @@ function VendorDashboard({ navigate }) {
   }, [sponsoredClickEvents, sponsoredWindows]);
   // Same This week/1M/6M/1Y/All (+ pick-a-month) window control as every
   // other chart on this dashboard, instead of a one-off Daily/Weekly/
-  // Monthly/Yearly toggle. "current" spans this shop's whole sponsored
-  // history (from its earliest campaign to now) at an auto-picked
-  // granularity; every other tab reuses the shared panelPeriodWindow logic.
-  // Both click events and the campaign list are already fully loaded
-  // up-front (not range-scoped like the other panels' data), so no extra
-  // fetch is needed when the tab changes — just a different slice of what's
-  // already in memory.
+  // Monthly/Yearly toggle. "current"/"This week" is a genuine trailing
+  // 7 days now — it used to silently mean "this shop's whole sponsored
+  // history," which made the "This week" label showing years of data
+  // confusing. The panel still opens on "All" by default (see adPeriod's
+  // initial state above) so first load looks exactly as it did before;
+  // every other tab reuses the shared panelPeriodWindow logic. Both click
+  // events and the campaign list are already fully loaded up-front (not
+  // range-scoped like the other panels' data), so no extra fetch is needed
+  // when the tab changes — just a different slice of what's already in
+  // memory.
   const adWindow = useMemo(() => {
     if (earliestCampaignStart == null) return null;
     if (adPeriod === "current") {
-      const spanDays = (nowMs - earliestCampaignStart) / 86400000;
-      const granularity = spanDays <= 45 ? "day" : spanDays <= 210 ? "week" : "month";
-      return { sinceMs: earliestCampaignStart, untilMs: nowMs, granularity };
+      return { sinceMs: nowMs - 7 * 86400000, untilMs: nowMs, granularity: "day" };
     }
     return panelPeriodWindow(adPeriod, nowMs, earliestCampaignStart);
   }, [adPeriod, earliestCampaignStart, nowMs]);
