@@ -6863,6 +6863,29 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
     [center.lat, center.lng, zoom, size.width, size.height]
   );
 
+  // The base map tiles come from OpenStreetMap and label everything in each
+  // place's own local language (so Japan renders as "日本", not "Japan") —
+  // that's baked into the tile images themselves, not something this app
+  // controls. This overlays a plain-English label on top, at whatever we
+  // actually have English names + coordinates for in our own data: countries
+  // while zoomed out to a world/continent view, and US states once zoomed in
+  // further. Cities and non-US provinces aren't in a label here since they
+  // come from whatever a shop owner typed in, with no English/native pairing
+  // for this app to draw from.
+  const placeLabels = useMemo(() => {
+    const source = zoom <= 5 ? COUNTRIES.map((c) => ({ code: c.code, name: c.name, lat: c.lat, lng: c.lng })) : zoom <= 8 ? US_STATES : [];
+    const kind = zoom <= 5 ? "country" : "state";
+    return source
+      .map((p) => ({
+        key: `${kind}:${p.code}`,
+        text: p.name,
+        kind,
+        left: lngToWorldX(p.lng, zoom) - originX,
+        top: latToWorldY(p.lat, zoom) - originY,
+      }))
+      .filter((l) => l.left > -80 && l.top > -40 && l.left < size.width + 80 && l.top < size.height + 40);
+  }, [zoom, originX, originY, size.width, size.height]);
+
   const pins = useMemo(
     () =>
       shops.map((shop) => ({
@@ -7053,6 +7076,21 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
             />
           ))}
         </div>
+        {placeLabels.map((l) => (
+          <div
+            key={l.key}
+            className="absolute pointer-events-none font-bold text-stone-800 whitespace-nowrap"
+            style={{
+              left: l.left,
+              top: l.top,
+              transform: "translate(-50%, -100%)",
+              fontSize: l.kind === "country" ? 12 : 10,
+              textShadow: "0 1px 0 #fff, 0 -1px 0 #fff, 1px 0 0 #fff, -1px 0 0 #fff, 0 0 4px #fff",
+            }}
+          >
+            {l.text}
+          </div>
+        ))}
         {mePin && (
           <div
             className="absolute -translate-x-1/2 -translate-y-1/2 pointer-events-none"
