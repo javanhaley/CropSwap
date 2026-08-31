@@ -5632,6 +5632,12 @@ function ShopCard({ shop }) {
         <span className="absolute inset-0">
           <BannerScene scene={shop.bannerScene || defaultScene(shop.id)} />
         </span>
+        {/* A vendor's own uploaded cover photo (coverPhotoId) takes priority
+            over the legacy `banner` field, which only ever holds a stock
+            photo URL on the original hardcoded demo shops — same layering
+            the real storefront header (ShopProfileView) uses, so a shop's
+            card here matches what its own page shows. */}
+        <ShopCoverPhoto shop={shop} />
         {shop.banner && (
           <img src={shop.banner} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
         )}
