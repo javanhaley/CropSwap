@@ -16303,7 +16303,15 @@ function OrderCard({ order, readOnly, onToggleComplete, onEdit, onArchive, onDel
                 <span className="min-w-0 truncate">
                   {li.qty} {priceUnitLabel(li.unit)} {li.name} <span className="text-stone-400">× {formatMoney(li.price)}</span>
                 </span>
-                <span className="font-semibold text-stone-700 shrink-0">{formatMoney(li.qty * li.price)}</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Only sample/preview line items carry a photo — a real order's
+                      free-typed item name has nothing reliable to match a photo
+                      to, so this stays a no-op there. */}
+                  {li.photo && (
+                    <img src={li.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-8 h-8 rounded-md object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                  )}
+                  <span className="font-semibold text-stone-700">{formatMoney(li.qty * li.price)}</span>
+                </div>
               </div>
             ))}
           </div>
@@ -16734,6 +16742,12 @@ function InventoryTab({ shop, patchShop, products, inventory, orders, onAdd, onE
                         </div>
                       )}
                     </div>
+                    {/* Only sample/preview items carry a photo — a real vendor's
+                        free-typed item name has nothing reliable to match a
+                        photo to, so this stays a no-op for real inventory. */}
+                    {it.photo && (
+                      <img src={it.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="w-10 h-10 rounded-lg object-cover shrink-0" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                    )}
                     <div className="flex items-center gap-1.5 shrink-0">
                       <IconButton icon={Minus} label="Decrease stock" size={14} onClick={() => inventory.adjustStock(it.id, -1, "manual")} />
                       <span className="w-10 text-center text-sm font-bold text-stone-800">{it.qty}</span>
@@ -17987,18 +18001,23 @@ function buildOrdersPreviewDemoData() {
     d.setDate(d.getDate() + offset);
     return d.toISOString().slice(0, 10);
   };
+  // Each item (and each order line pulled from it) carries a real photo —
+  // matched to what it actually is, not a generic stand-in — so this preview
+  // looks like a working farm's inventory instead of a placeholder mockup.
+  // Real inventory/order rows never have this field, so InventoryTab/OrderCard
+  // only show a thumbnail when one is explicitly provided, like here.
   const items = [
-    { id: "prev-item-1", name: "Heirloom Tomatoes", category: "Produce", unit: "lb", qty: 42, lowStockThreshold: 10, price: 3.5, notes: "", linkedProductId: null, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-2", name: "Farm Eggs (dozen)", category: "Dairy & Eggs", unit: "dozen", qty: 6, lowStockThreshold: 8, price: 6, notes: "Low — order more from the coop", linkedProductId: null, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-3", name: "Raw Wildflower Honey", category: "Pantry", unit: "jar", qty: 18, lowStockThreshold: 5, price: 9, notes: "", linkedProductId: null, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-4", name: "Sourdough Loaves", category: "Bakery", unit: "loaf", qty: 0, lowStockThreshold: 4, price: 7.5, notes: "Sold out — bake day is Thursday", linkedProductId: null, createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-5", name: "Mixed Salad Greens", category: "Produce", unit: "bag", qty: 27, lowStockThreshold: 10, price: 4.25, notes: "", linkedProductId: null, createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-1", name: "Heirloom Tomatoes", category: "Produce", unit: "lb", qty: 42, lowStockThreshold: 10, price: 3.5, notes: "", linkedProductId: null, photo: PHOTO("photo-1592924357228-91a4daadcfea"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-2", name: "Farm Eggs (dozen)", category: "Dairy & Eggs", unit: "dozen", qty: 6, lowStockThreshold: 8, price: 6, notes: "Low — order more from the coop", linkedProductId: null, photo: PHOTO("photo-1506976785307-8732e854ad03"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-3", name: "Raw Wildflower Honey", category: "Pantry", unit: "jar", qty: 18, lowStockThreshold: 5, price: 9, notes: "", linkedProductId: null, photo: PHOTO("photo-1558642452-9d2a7deb7f62"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-4", name: "Sourdough Loaves", category: "Bakery", unit: "loaf", qty: 0, lowStockThreshold: 4, price: 7.5, notes: "Sold out — bake day is Thursday", linkedProductId: null, photo: PHOTO("photo-1566698629409-787a68fc5724"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-5", name: "Mixed Salad Greens", category: "Produce", unit: "bag", qty: 27, lowStockThreshold: 10, price: 4.25, notes: "", linkedProductId: null, photo: PHOTO("photo-1524179091875-bf99a9a6af57"), createdAt: Date.now(), updatedAt: Date.now() },
   ];
   const orders = [
-    { id: "prev-order-1", customerName: "Maria Alvarez", customerUserId: null, items: [{ id: "oi1", inventoryItemId: "prev-item-1", productId: null, name: "Heirloom Tomatoes", qty: 3, unit: "lb", price: 3.5 }], pickupDate: iso(0), pickupTime: "16:30", pickupLocation: "Farm stand", notes: "Regular — leave by the cooler if we're out front", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 86400000 },
-    { id: "prev-order-2", customerName: "Dwight Combs", customerUserId: null, items: [{ id: "oi2", inventoryItemId: "prev-item-3", productId: null, name: "Raw Wildflower Honey", qty: 2, unit: "jar", price: 9 }], pickupDate: iso(1), pickupTime: "10:00", pickupLocation: "Farmers market booth", notes: "", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 3600000 },
-    { id: "prev-order-3", customerName: "Priya Nair", customerUserId: null, items: [{ id: "oi3", inventoryItemId: "prev-item-5", productId: null, name: "Mixed Salad Greens", qty: 4, unit: "bag", price: 4.25 }], pickupDate: iso(-1), pickupTime: "14:00", pickupLocation: "Farm stand", notes: "", completed: true, completedAt: Date.now() - 90000000, archived: false, calendarEventId: null, createdAt: Date.now() - 172800000 },
-    { id: "prev-order-4", customerName: "Tom Riley", customerUserId: null, items: [{ id: "oi4", inventoryItemId: "prev-item-4", productId: null, name: "Sourdough Loaves", qty: 2, unit: "loaf", price: 7.5 }], pickupDate: iso(-2), pickupTime: "09:00", pickupLocation: "Farm stand", notes: "Missed pickup window", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 259200000 },
+    { id: "prev-order-1", customerName: "Maria Alvarez", customerUserId: null, items: [{ id: "oi1", inventoryItemId: "prev-item-1", productId: null, name: "Heirloom Tomatoes", qty: 3, unit: "lb", price: 3.5, photo: PHOTO("photo-1592924357228-91a4daadcfea") }], pickupDate: iso(0), pickupTime: "16:30", pickupLocation: "Farm stand", notes: "Regular — leave by the cooler if we're out front", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 86400000 },
+    { id: "prev-order-2", customerName: "Dwight Combs", customerUserId: null, items: [{ id: "oi2", inventoryItemId: "prev-item-3", productId: null, name: "Raw Wildflower Honey", qty: 2, unit: "jar", price: 9, photo: PHOTO("photo-1558642452-9d2a7deb7f62") }], pickupDate: iso(1), pickupTime: "10:00", pickupLocation: "Farmers market booth", notes: "", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 3600000 },
+    { id: "prev-order-3", customerName: "Priya Nair", customerUserId: null, items: [{ id: "oi3", inventoryItemId: "prev-item-5", productId: null, name: "Mixed Salad Greens", qty: 4, unit: "bag", price: 4.25, photo: PHOTO("photo-1524179091875-bf99a9a6af57") }], pickupDate: iso(-1), pickupTime: "14:00", pickupLocation: "Farm stand", notes: "", completed: true, completedAt: Date.now() - 90000000, archived: false, calendarEventId: null, createdAt: Date.now() - 172800000 },
+    { id: "prev-order-4", customerName: "Tom Riley", customerUserId: null, items: [{ id: "oi4", inventoryItemId: "prev-item-4", productId: null, name: "Sourdough Loaves", qty: 2, unit: "loaf", price: 7.5, photo: PHOTO("photo-1566698629409-787a68fc5724") }], pickupDate: iso(-2), pickupTime: "09:00", pickupLocation: "Farm stand", notes: "Missed pickup window", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 259200000 },
   ];
   const events = [
     { id: "prev-ev-1", title: "Maria Alvarez pickup", date: iso(0), time: "16:30", notes: "Farm stand", orderId: "prev-order-1", kind: "order", reminderMinutesBefore: 60, reminderAt: null, createdAt: Date.now() },
