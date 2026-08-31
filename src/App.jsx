@@ -2929,13 +2929,26 @@ function useCurrentUser() {
     await setJSON(`users:${next.id}`, next, true);
   }, []);
 
+  // Re-reads this account's profile from the database rather than trusting
+  // local state — needed after something OTHER than this browser tab wrote
+  // to it, namely a Stripe webhook landing after a real checkout/cancel.
+  const refreshMe = useCallback(async () => {
+    if (!sessionRef.current?.user?.id) return null;
+    const fresh = await getJSON("me:profile", false, null);
+    if (fresh) {
+      meRef.current = fresh;
+      setMeState(fresh);
+    }
+    return fresh;
+  }, []);
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut().catch(() => {});
     meRef.current = null;
     setMeState(null);
   }, []);
 
-  return { me, hasSession: !!session, loading: session === undefined || loading, createProfile, updateMe, signOut };
+  return { me, hasSession: !!session, loading: session === undefined || loading, createProfile, updateMe, refreshMe, signOut };
 }
 
 /* All seeded market data lives in ONE key. It used to be spread across
@@ -11360,7 +11373,7 @@ function CancelPlanModal({ tierName, withinWindow, cancelling, onKeep, onConfirm
         </div>
         <p className="text-sm text-stone-600 mb-4">
           {withinWindow
-            ? `You're within the ${REFUND_WINDOW_DAYS}-day window — cancelling now refunds 50% of what you paid (test mode).`
+            ? `You're within the ${REFUND_WINDOW_DAYS}-day window — cancelling now refunds 50% of what you paid to your card.`
             : `It's past day ${REFUND_WINDOW_DAYS} of this term, so no refund applies — access is removed immediately.`}
           {" "}Your storefront stays on the platform, inactive, for {abandonWindowLabel()} in case you come back.
         </p>
@@ -11406,7 +11419,7 @@ function PlansScreen({ navigate }) {
         </button>
         <div className="text-center mb-6">
           <h1 className="text-3xl font-bold text-stone-900 mb-1" style={displayFont}>Choose your plan</h1>
-          <p className="text-stone-500 text-sm">No payment is collected yet — this is a fully working test-mode preview.</p>
+          <p className="text-stone-500 text-sm">Payments are processed securely by Stripe.</p>
         </div>
 
         {isPaid && (
@@ -11442,10 +11455,15 @@ function PlansScreen({ navigate }) {
             onKeep={() => setCancelConfirm(false)}
             onConfirm={async () => {
               setCancelling(true);
-              const { refundPct } = await cancelPlan();
-              setCancelling(false);
-              setCancelConfirm(false);
-              showToast(refundPct > 0 ? `Cancelled — ${refundPct}% refunded (test mode)` : "Cancelled — no refund available");
+              try {
+                const { refundPct } = await cancelPlan();
+                setCancelConfirm(false);
+                showToast(refundPct > 0 ? `Cancelled — ${refundPct}% refunded to your card` : "Cancelled — no refund available");
+              } catch (err) {
+                showToast(err.message || "Couldn't cancel — please try again");
+              } finally {
+                setCancelling(false);
+              }
             }}
           />
         )}
@@ -11540,9 +11558,15 @@ function digitsOnly(s) {
 }
 
 function CheckoutScreen({ navigate, tier, billing }) {
-  const { me, purchasePlan, showToast } = useApp();
+  const { me, startCheckout, showToast } = useApp();
   const [busy, setBusy] = useState(false);
   const plan = PLAN_CATALOG[tier];
+  // An already-paying account changes its existing Stripe subscription in
+  // place (prorated, charged to the card on file) instead of going through
+  // Checkout again — see api/create-checkout-session.js. This only affects
+  // the messaging below; the server independently decides which actually
+  // happens.
+  const hasActiveSub = planTier(me) !== "free" && me?.plan?.status === "active";
 
   const existing = me?.billingProfile || null;
   // Signing up (or an earlier plan purchase) already collected name/zip/phone
@@ -11600,20 +11624,27 @@ function CheckoutScreen({ navigate, tier, billing }) {
   const confirm = async () => {
     if (!formReady) return;
     setBusy(true);
-    await purchasePlan(
-      tier,
-      billing,
-      showDetailsForm
-        ? { fullName: fullName.trim(), zipcode: zipcode.trim(), phone: digitsOnly(phone), phoneVerified: true, email: me?.email || null }
-        : undefined
-    );
-    setBusy(false);
-    showToast(
-      tier === planTier(me)
-        ? `Switched to annual billing — test mode, no charge made`
-        : `Welcome to ${plan.name} — test mode, no charge made`
-    );
-    navigate({ screen: "dashboard" });
+    try {
+      const data = await startCheckout(
+        tier,
+        billing,
+        showDetailsForm
+          ? { fullName: fullName.trim(), zipcode: zipcode.trim(), phone: digitsOnly(phone), phoneVerified: true, email: me?.email || null }
+          : undefined
+      );
+      if (data.url) {
+        // Hand off to Stripe's hosted Checkout page — it redirects back to
+        // /?checkout=success (or =cancel) when the person is done there.
+        window.location.href = data.url;
+        return;
+      }
+      showToast(`Switched to ${plan.name}${billing === "annual" ? " (annual)" : ""} — charged to your card on file`);
+      navigate({ screen: "dashboard" });
+    } catch (err) {
+      showToast(err.message || "Something went wrong starting checkout");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -11623,9 +11654,13 @@ function CheckoutScreen({ navigate, tier, billing }) {
           <ArrowLeft size={15} /> Back to plans
         </button>
 
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 mb-5 flex items-center gap-2">
-          <AlertCircle size={15} className="text-amber-700 shrink-0" />
-          <p className="text-xs font-semibold text-amber-900">TEST MODE — no card, no charge, no real text message. This confirms instantly.</p>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5 mb-5 flex items-center gap-2">
+          <BadgeCheck size={15} className="text-emerald-700 shrink-0" />
+          <p className="text-xs font-semibold text-emerald-900">
+            {hasActiveSub
+              ? "You already have a card on file — this change bills to it automatically, prorated for the switch."
+              : "You'll enter payment details next on Stripe's secure checkout page."}
+          </p>
         </div>
 
         <div className="bg-white border border-stone-200 rounded-2xl p-5 mb-5">
@@ -11641,8 +11676,10 @@ function CheckoutScreen({ navigate, tier, billing }) {
           </div>
           <p className="cs-t11 text-stone-400 mb-3">Billed {billing === "annual" ? "yearly" : "monthly"} · cancel any time</p>
           <div className="border-t border-stone-100 pt-3 flex items-center justify-between">
-            <span className="text-sm font-bold text-stone-900">Due today</span>
-            <span className="text-sm font-bold text-stone-900">$0.00 (test mode)</span>
+            <span className="text-sm font-bold text-stone-900">{hasActiveSub ? "Charged today" : "Due today"}</span>
+            <span className="text-sm font-bold text-stone-900">
+              {hasActiveSub ? "Prorated amount (set by Stripe)" : `${formatMoney(price)}${planPeriodLabel(billing)}`}
+            </span>
           </div>
         </div>
 
@@ -11744,9 +11781,9 @@ function CheckoutScreen({ navigate, tier, billing }) {
         </div>
 
         <button onClick={confirm} disabled={busy || !formReady} className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition">
-          {busy ? "Setting up…" : `Confirm ${plan.name} (Test Mode)`}
+          {busy ? "Setting up…" : hasActiveSub ? `Switch to ${plan.name}` : "Continue to payment"}
         </button>
-        <p className="text-center cs-t10 text-stone-400 mt-3">Real payments aren't collected yet — this is a placeholder so the product can be built and tested end to end. Phone verification is also test mode for now — no real text messages are sent.</p>
+        <p className="text-center cs-t10 text-stone-400 mt-3">Payments are processed securely by Stripe — CropSwap never sees or stores your card details. Phone verification here is still a placeholder for now; no real text messages are sent.</p>
       </div>
     </div>
   );
@@ -21100,14 +21137,13 @@ function StoreScreenEntry({ navigate }) {
 }
 
 function StoreScreen({ navigate }) {
-  const { me, shops, shopsById, createShopForUser, updateMe, purchasePlan, showToast } = useApp();
+  const { me, shops, shopsById, createShopForUser, updateMe } = useApp();
   const [shopName, setShopName] = useState("");
   const homeLoc = splitCityState(me?.homeLocation?.label);
   const [shopCity, setShopCity] = useState(homeLoc.city || "");
   const [shopState, setShopState] = useState((homeLoc.state || "").toUpperCase().slice(0, 2));
   const [shopCountry, setShopCountry] = useState("US");
   const [creating, setCreating] = useState(false);
-  const [reactivating, setReactivating] = useState(false);
   const shop = me.isVendor && me.shopId ? shopsById[me.shopId] : null;
 
   // One storefront per account, enforced here too — not just at signup.
@@ -21138,17 +21174,10 @@ function StoreScreen({ navigate }) {
           <p className="text-stone-500 mb-1">Your plan lapsed, so this storefront is hidden from other shoppers.</p>
           <p className="text-stone-500 mb-5">It's kept for {daysLeft} more day{daysLeft === 1 ? "" : "s"} before it's removed for good — re-up any time before then to bring it back online.</p>
           <button
-            onClick={async () => {
-              setReactivating(true);
-              await purchasePlan("basic", "monthly");
-              setReactivating(false);
-              showToast("Storefront reactivated");
-              navigate({ screen: "shop", shopId: shop.id });
-            }}
-            disabled={reactivating}
-            className="w-full bg-emerald-800 text-white font-semibold py-3 rounded-xl disabled:opacity-40 mb-2"
+            onClick={() => navigate({ screen: "checkout", tier: "basic", billing: "monthly" })}
+            className="w-full bg-emerald-800 text-white font-semibold py-3 rounded-xl mb-2"
           >
-            {reactivating ? "Reactivating…" : "Reactivate with Basic (test mode)"}
+            Reactivate with Basic
           </button>
           <button onClick={() => navigate({ screen: "plans" })} className="text-xs font-semibold text-stone-500">See all plans</button>
         </div>
@@ -21627,7 +21656,7 @@ function AuthPromptPopover({ prompt, onSignUp, onLogIn, onDismiss }) {
    SECTION 27: ROOT SHELL — wires all hooks into context, owns routing
 ============================================================================ */
 function RootShell() {
-  const { me, hasSession, loading: meLoading, createProfile, updateMe, signOut } = useCurrentUser();
+  const { me, hasSession, loading: meLoading, createProfile, updateMe, refreshMe, signOut } = useCurrentUser();
   const market = useMarketData();
 
   // If this account's shop was removed by the ABANDON_DAYS sweep (see
@@ -21723,6 +21752,24 @@ function RootShell() {
     if (authCallback) {
       // Scrub the tokens/error out of the address bar so refreshing the page
       // never re-triggers this card (or, worse, re-reads a spent token).
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Returning from Stripe's real hosted Checkout page — create-checkout-
+  // session.js sets success_url/cancel_url to `/?checkout=success|cancel`.
+  // Read once, same pattern as authCallback above, then scrub it from the
+  // address bar so a refresh never re-shows the toast or re-polls.
+  const [checkoutReturn] = useState(() => {
+    try {
+      const v = new URLSearchParams(window.location.search || "").get("checkout");
+      return v === "success" || v === "cancel" ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (checkoutReturn) {
       window.history.replaceState(null, "", window.location.pathname);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -21904,52 +21951,86 @@ function RootShell() {
 
   const productsById = useMemo(() => Object.fromEntries(market.products.map((p) => [p.id, p])), [market.products]);
 
-  // No real payment processor yet — "purchasing" a plan is an explicit,
-  // clearly-labeled test-mode action (see CheckoutScreen) that just sets the
-  // tier + billing period on the profile, and reactivates a lapsed storefront
-  // if the vendor is re-upping before the abandonment window (ABANDON_DAYS) closes.
-  const purchasePlan = useCallback(
+  // Real Stripe money now (see api/create-checkout-session.js). This saves
+  // whatever billing details CheckoutScreen collected, then asks the server
+  // to either hand back a Stripe Checkout URL to redirect to (brand-new
+  // subscription) or tells us it updated an existing subscription in place
+  // (tier/billing change on an already-paying account, prorated by Stripe).
+  // The actual plan/shop state gets written by the server (either directly
+  // in that same request, or shortly after by the webhook), so this only
+  // ever returns what the caller needs to decide what to show next.
+  const startCheckout = useCallback(
     async (tier, billing, billingDetails) => {
-      if (!me) return;
-      const now = Date.now();
-      const periodEnd = addDays(now, billing === "annual" ? 365 : 30);
-      const patch = { plan: { tier, billing, status: "active", startedAt: now, periodEnd, cancelledAt: null, refundPct: null } };
-      // billingProfile persists across plan changes/cancellations — it's
-      // identity info tied to the account, not to any one subscription term,
-      // so it's kept separate from `plan` and only overwritten when someone
-      // actually resubmits the checkout form (never cleared on cancel).
+      if (!me) throw new Error("Sign in first");
       if (billingDetails) {
-        patch.billingProfile = { ...(me.billingProfile || {}), ...billingDetails, updatedAt: now };
+        await updateMe({ billingProfile: { ...(me.billingProfile || {}), ...billingDetails, updatedAt: Date.now() } });
       }
-      await updateMe(patch);
-      if (me.shopId) {
-        const shop = market.shopsById[me.shopId];
-        if (shop?.billingStatus === "inactive") {
-          await market.updateShop(me.shopId, { billingStatus: "active", inactiveSince: null });
-        }
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const res = await fetch("/api/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token || ""}` },
+        body: JSON.stringify({ tier, billing }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Couldn't start checkout");
+      if (data.updatedInPlace) {
+        await refreshMe();
+        await market.reload();
       }
+      return data; // { url } to redirect to, or { updatedInPlace: true }
     },
-    [me, updateMe, market]
+    [me, updateMe, refreshMe, market]
   );
 
-  // Cancelling locks Premium/Basic features immediately (tier reverts to
-  // free right away, not at period end) and computes the test-mode refund:
-  // 50% inside the first REFUND_WINDOW_DAYS of the current paid term, none
-  // after. Any storefront goes inactive rather than being deleted outright.
+  // Cancels the real Stripe subscription (see api/cancel-subscription.js),
+  // which also computes/applies the 30-day-window 50% refund and writes the
+  // resulting free/cancelled plan + inactive shop server-side — this just
+  // pulls that fresh state back down so the UI reflects it immediately.
   const cancelPlan = useCallback(async () => {
-    if (!me || !me.plan?.startedAt) return { refundPct: 0 };
-    const now = Date.now();
-    const daysIn = daysBetween(me.plan.startedAt, now);
-    const refundPct = daysIn <= REFUND_WINDOW_DAYS ? 50 : 0;
-    await updateMe({ plan: { tier: "free", billing: null, status: "cancelled", startedAt: null, periodEnd: null, cancelledAt: now, refundPct } });
-    if (me.shopId) {
-      const shop = market.shopsById[me.shopId];
-      if (shop?.billingStatus !== "inactive") {
-        await market.updateShop(me.shopId, { billingStatus: "inactive", inactiveSince: now });
+    if (!me) return { refundPct: 0 };
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const res = await fetch("/api/cancel-subscription", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token || ""}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || "Couldn't cancel — please try again");
+    await refreshMe();
+    await market.reload();
+    return data; // { refundPct, refundedAmount }
+  }, [me, refreshMe, market]);
+
+  // A successful real payment happens on Stripe's own page, so the plan/shop
+  // update the webhook writes can land a beat after Stripe redirects back
+  // here — poll briefly rather than showing stale "still on Free" state.
+  useEffect(() => {
+    if (checkoutReturn !== "success") return;
+    let cancelled = false;
+    (async () => {
+      for (let attempt = 0; attempt < 8 && !cancelled; attempt++) {
+        const fresh = await refreshMe();
+        if (fresh?.plan?.status === "active") break;
+        await new Promise((r) => setTimeout(r, 1200));
       }
+      if (cancelled) return;
+      await market.reload();
+      showToast("Payment successful — welcome to your new plan!");
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkoutReturn]);
+  useEffect(() => {
+    if (checkoutReturn === "cancel") {
+      showToast("Checkout cancelled — no changes were made");
     }
-    return { refundPct };
-  }, [me, updateMe, market]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkoutReturn]);
 
   // Thin auth-gated wrappers around the hooks' own toggles — the hooks
   // themselves stay reusable/null-safe on their own, but the *prompt* (as
@@ -21993,7 +22074,7 @@ function RootShell() {
     favShops: fav.favShops,
     toggleFavorite,
     incrementShare,
-    purchasePlan,
+    startCheckout,
     cancelPlan,
     sponsorships: sponsor.list,
     sponsorshipsLoading: sponsor.loading,
