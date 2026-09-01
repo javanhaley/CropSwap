@@ -18415,15 +18415,15 @@ function buildOrdersPreviewDemoData() {
   // Real inventory/order rows never have this field, so InventoryTab/OrderCard
   // only show a thumbnail when one is explicitly provided, like here.
   const items = [
-    { id: "prev-item-1", name: "Heirloom Tomatoes", category: "Produce", unit: "lb", qty: 42, lowStockThreshold: 10, price: 3.5, notes: "", linkedProductId: null, photo: PHOTO("photo-1592924357228-91a4daadcfea"), createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-2", name: "Farm Fresh Eggs", category: "Dairy & Eggs", unit: "doz", qty: 6, lowStockThreshold: 8, price: 6, notes: "Low — order more from the coop", linkedProductId: null, photo: PHOTO("photo-1506976785307-8732e854ad03"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-1", name: "Heirloom Tomatoes", category: "Veggie", unit: "lb", qty: 42, lowStockThreshold: 10, price: 3.5, notes: "", linkedProductId: null, photo: PHOTO("photo-1592924357228-91a4daadcfea"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-2", name: "Farm Fresh Eggs", category: "Dairy", unit: "doz", qty: 6, lowStockThreshold: 8, price: 6, notes: "Low — order more from the coop", linkedProductId: null, photo: PHOTO("photo-1506976785307-8732e854ad03"), createdAt: Date.now(), updatedAt: Date.now() },
     // Sold by the ounce here rather than "jar" or "each" — jar/loaf/bag are
     // real selectable units now (see PRICE_UNITS), but the mock store is
     // meant to showcase the common weight/count units (lb, oz, doz, bunch)
     // a new vendor will actually reach for most often.
-    { id: "prev-item-3", name: "Raw Wildflower Honey", category: "Pantry", unit: "oz", qty: 96, lowStockThreshold: 24, price: 0.75, notes: "", linkedProductId: null, photo: PHOTO("photo-1558642452-9d2a7deb7f62"), createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-4", name: "Sourdough Loaves", category: "Bakery", unit: "each", qty: 0, lowStockThreshold: 4, price: 7.5, notes: "Sold out — bake day is Thursday", linkedProductId: null, photo: PHOTO("photo-1566698629409-787a68fc5724"), createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-5", name: "Mixed Salad Greens", category: "Produce", unit: "bunch", qty: 27, lowStockThreshold: 10, price: 4.25, notes: "", linkedProductId: null, photo: PHOTO("photo-1524179091875-bf99a9a6af57"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-3", name: "Raw Wildflower Honey", category: "Other", unit: "oz", qty: 96, lowStockThreshold: 24, price: 0.75, notes: "", linkedProductId: null, photo: PHOTO("photo-1558642452-9d2a7deb7f62"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-4", name: "Sourdough Loaves", category: "Baked", unit: "each", qty: 0, lowStockThreshold: 4, price: 7.5, notes: "Sold out — bake day is Thursday", linkedProductId: null, photo: PHOTO("photo-1566698629409-787a68fc5724"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-5", name: "Mixed Salad Greens", category: "Veggie", unit: "bunch", qty: 27, lowStockThreshold: 10, price: 4.25, notes: "", linkedProductId: null, photo: PHOTO("photo-1524179091875-bf99a9a6af57"), createdAt: Date.now(), updatedAt: Date.now() },
   ];
   const orders = [
     { id: "prev-order-1", customerName: "Maria Alvarez", customerUserId: null, items: [{ id: "oi1", inventoryItemId: "prev-item-1", productId: null, name: "Heirloom Tomatoes", qty: 3, unit: "lb", price: 3.5, photo: PHOTO("photo-1592924357228-91a4daadcfea") }], pickupDate: iso(0), pickupTime: "16:30", pickupLocation: "Farm stand", notes: "Regular — leave by the cooler if we're out front", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 86400000 },
