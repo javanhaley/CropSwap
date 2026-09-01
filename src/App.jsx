@@ -1802,6 +1802,9 @@ const PRICE_UNITS = [
   { id: "oz", label: "oz" },
   { id: "doz", label: "dozen" },
   { id: "bunch", label: "bunch" },
+  { id: "bag", label: "bag" },
+  { id: "loaf", label: "loaf" },
+  { id: "jar", label: "jar" },
   { id: "pint", label: "pint" },
   { id: "qt", label: "quart" },
   { id: "gal", label: "gallon" },
@@ -2054,8 +2057,19 @@ async function setJSON(key, value, shared, { verify = false, attempts = 3 } = {}
 // The single hardcoded internal admin account (see AuthGate's "Admin" quick
 // sign-in link). Gates the Admin Dashboard screen and its sidebar entry.
 const ADMIN_EMAIL = "cropswapadmin@gmail.com";
+// The address on the live Supabase auth session, kept here so the admin check
+// doesn't read `me.email` — that lives on the profile row the account owner
+// can write, so anyone could once hand themselves the Admin Dashboard by
+// setting their own profile email to this address. The data behind that
+// screen is gated server-side as well now (see api/admin-users.js), which is
+// the part that actually matters; no client-side check can be trusted on its
+// own.
+let authSessionEmail = null;
+function setAuthSessionEmail(email) {
+  authSessionEmail = email || null;
+}
 function isAdminUser(me) {
-  return !!me && me.email === ADMIN_EMAIL;
+  return !!me && !!authSessionEmail && authSessionEmail.toLowerCase() === ADMIN_EMAIL;
 }
 
 // Hand-maintained index of every real account. The kv store only supports
@@ -2066,12 +2080,58 @@ async function appendToAdminUserIndex(profile) {
     const list = await getJSON("admin:userIndex", true, []);
     const next = [
       ...list.filter((u) => u.id !== profile.id),
-      { id: profile.id, name: profile.name, email: profile.email, avatar: profile.avatar, createdAt: profile.createdAt },
+      // No email here any more — this row lives in shared_kv, which every
+      // signed-in account can read. The Admin Dashboard gets addresses from
+      // /api/admin-users instead, which reads them with the service-role key
+      // after checking the caller really is the admin.
+      { id: profile.id, name: profile.name, avatar: profile.avatar, createdAt: profile.createdAt },
     ];
     await setJSON("admin:userIndex", next, true);
   } catch (e) {
     // Best-effort — never block signup over this.
   }
+}
+
+// What the rest of the app is allowed to see about someone else.
+//
+// `users:{id}` lives in shared_kv — readable (and writable) by anyone signed
+// in, which is exactly what makes it work as a directory: your client has to
+// read the RECIPIENT's block list before sending them a message, and a
+// customer has to read a VENDOR's tier before joining their mailing list.
+// The whole private profile used to get mirrored there verbatim, so every
+// account's legal name, phone number, zip code and email address was one
+// `select * from shared_kv where key like 'users:%'` away from any signed-in
+// user. Only the fields other people's clients actually read are published
+// now; billingProfile, email, homeLocation and notificationPrefs stay in the
+// private `me:profile` row.
+function publicProfileProjection(profile) {
+  if (!profile) return null;
+  return {
+    id: profile.id,
+    name: profile.name || "",
+    avatar: profile.avatar || "",
+    avatarPhotoId: profile.avatarPhotoId || null,
+    // Shown on the public profile page, so it has to be published like the
+    // avatar is.
+    profileBackgroundId: profile.profileBackgroundId || null,
+    createdAt: profile.createdAt || null,
+    isVendor: !!profile.isVendor,
+    shopId: profile.shopId || null,
+    // Read by the mailing-list join check; the tier alone, never the billing
+    // dates or refund history that sit alongside it on the private record.
+    plan: { tier: profile.plan?.tier || "free" },
+    // Has to be public: the sender's own client is what checks it before a
+    // message goes out.
+    blockedUserIds: profile.blockedUserIds || [],
+  };
+}
+
+// Lets code that runs outside the React tree (the profile store below, which
+// sits above the toast provider) still tell the user when a write failed,
+// instead of only console.error-ing while the UI shows the change as saved.
+let globalToast = null;
+function setGlobalToast(fn) {
+  globalToast = fn;
 }
 
 /* ============================================================================
@@ -2834,10 +2894,12 @@ function useCurrentUser() {
     supabase.auth.getSession().then(({ data }) => {
       if (cancelled) return;
       sessionRef.current = data.session || null;
+      setAuthSessionEmail(data.session?.user?.email || null);
       setSession(data.session || null);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
       sessionRef.current = sess || null;
+      setAuthSessionEmail(sess?.user?.email || null);
       setSession(sess || null);
     });
     return () => {
@@ -2876,7 +2938,7 @@ function useCurrentUser() {
         meRef.current = patched;
         setMeState(patched);
         // keep the shared public copy fresh in case it drifted
-        setJSON(`users:${patched.id}`, patched, true);
+        setJSON(`users:${patched.id}`, publicProfileProjection(patched), true);
         if (patched !== existing) setJSON("me:profile", patched, false);
       } else {
         meRef.current = null;
@@ -2888,6 +2950,42 @@ function useCurrentUser() {
       cancelled = true;
     };
   }, [session]);
+
+  // The plan stored on the profile is a cache, not the truth. It lives on a
+  // row this very account can write, so a free user could set
+  // plan.tier = "premium" on themselves and keep every paid feature, on every
+  // device, indefinitely. Once the profile is loaded the app asks the server
+  // (which asks Stripe) what the subscription actually is; api/entitlement.js
+  // also repairs the stored copy when the two disagree.
+  //
+  // Anything that goes wrong here — offline, endpoint down, Stripe having a
+  // bad day — leaves the stored plan in place. Failing open is deliberate: a
+  // network blip must never lock a paying vendor out of their own tools.
+  useEffect(() => {
+    const token = sessionRef.current?.access_token;
+    const userId = me?.id;
+    if (!token || !userId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/entitlement", { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !data?.plan) return;
+        const current = meRef.current;
+        if (!current || current.id !== userId) return;
+        if (JSON.stringify(current.plan || null) === JSON.stringify(data.plan)) return;
+        const next = { ...current, plan: data.plan };
+        meRef.current = next;
+        setMeState(next);
+      } catch (e) {
+        /* keep the stored plan */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [me?.id]);
 
   const createProfile = useCallback(async ({ name, avatar, homeLocation }) => {
     const id = sessionRef.current?.user?.id;
@@ -2909,7 +3007,7 @@ function useCurrentUser() {
       blockedUserIds: [],
     };
     await setJSON("me:profile", profile, false);
-    await setJSON(`users:${id}`, profile, true);
+    await setJSON(`users:${id}`, publicProfileProjection(profile), true);
     appendToAdminUserIndex(profile);
     meRef.current = profile;
     setMeState(profile);
@@ -2919,15 +3017,63 @@ function useCurrentUser() {
   }, []);
 
   // Storage writes stay outside the state updater so React can't double-invoke them.
-  const updateMe = useCallback(async (partial) => {
-    const prev = meRef.current;
-    if (!prev) return;
-    const next = { ...prev, ...partial };
+  //
+  // The patch is merged onto a FRESH read of the stored profile rather than
+  // onto this tab's in-memory copy. That copy is loaded once at mount and
+  // never re-read on a token refresh, so a tab left open while the account
+  // changed elsewhere held a stale snapshot — and writing the whole snapshot
+  // back put it into the database. The concrete case: buy Premium in one tab
+  // (the Stripe webhook writes plan.tier = "premium"), toggle a notification
+  // preference in the tab that was already open, and that tab wrote
+  // plan.tier = "free" straight back over the paid plan while Stripe kept
+  // billing.
+  const writeProfilePatch = useCallback(async (userId, partial) => {
+    const stored = await getJSON("me:profile", false, null);
+    const base = stored && stored.id === userId ? stored : meRef.current;
+    if (!base) return false;
+    const next = { ...base, ...partial };
     meRef.current = next;
     setMeState(next);
-    await setJSON("me:profile", next, false);
-    await setJSON(`users:${next.id}`, next, true);
+
+    // verify: true re-reads after writing, so a write that silently didn't
+    // land is reported instead of assumed. This is the one record holding
+    // plan, vendor status and billing details — it must not fail quietly.
+    const ok = await setJSON("me:profile", next, false, { verify: true });
+    if (!ok) {
+      meRef.current = base;
+      setMeState(base);
+      console.error("updateMe: profile write failed, rolled back", Object.keys(partial || {}));
+      globalToast?.("Couldn't save that — check your connection and try again");
+      return false;
+    }
+    await setJSON(`users:${next.id}`, publicProfileProjection(next), true);
+    return true;
   }, []);
+
+  // Those writes run strictly one at a time. Since each re-reads before it
+  // merges, two overlapping calls would both read the pre-first-write copy and
+  // the second would write the first's change straight back out — an avatar
+  // upload finishing at the same moment as a name edit would lose the avatar.
+  const profileWriteQueue = useRef(Promise.resolve());
+
+  const updateMe = useCallback(
+    async (partial) => {
+      const prev = meRef.current;
+      if (!prev) return false;
+      // Optimistic first so the UI doesn't wait on a round trip.
+      const optimistic = { ...prev, ...partial };
+      meRef.current = optimistic;
+      setMeState(optimistic);
+
+      const run = profileWriteQueue.current.then(
+        () => writeProfilePatch(prev.id, partial),
+        () => writeProfilePatch(prev.id, partial)
+      );
+      profileWriteQueue.current = run.catch(() => {});
+      return run;
+    },
+    [writeProfilePatch]
+  );
 
   // Re-reads this account's profile from the database rather than trusting
   // local state — needed after something OTHER than this browser tab wrote
@@ -2994,22 +3140,145 @@ function buildSeededMarket() {
   return { shops, products };
 }
 
+// One side of a market read-modify-write: rebuild a list from what's stored
+// now, replaying this client's pending FIELD-LEVEL patches on top.
+//
+// Patches rather than whole records, because "this client touched this shop"
+// is far too coarse a claim. A shopper tapping a heart calls
+// updateShop(id, { favoriteCount }) — if that made the shopper's entire
+// mount-time copy of the shop authoritative, it would wipe out the name, bio
+// and hours the vendor edited in the meantime. Replaying { favoriteCount }
+// onto whatever the store holds now changes the one field that actually
+// changed and leaves everything else alone.
+function mergeMarketList(storedList, patches, created, deletedSet) {
+  const seen = new Set();
+  const out = [];
+  (storedList || []).forEach((remote) => {
+    if (deletedSet.has(remote.id)) return; // removed here, on purpose
+    seen.add(remote.id);
+    const patch = patches.get(remote.id);
+    out.push(patch ? { ...remote, ...patch } : remote);
+  });
+  created.forEach((entity, id) => {
+    // Made here since the last read. Anything else this client is holding
+    // that the store no longer has was deleted by someone else — respect that
+    // rather than resurrecting it.
+    if (seen.has(id) || deletedSet.has(id)) return;
+    const patch = patches.get(id);
+    out.push(patch ? { ...entity, ...patch } : entity);
+  });
+  return out;
+}
+
 function useMarketData() {
   const [shops, setShops] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Whether the last attempt actually READ the market, as opposed to giving
+  // up after its retries. "Finished loading" and "has the real data" are not
+  // the same thing, and code that reconciles state against what's in the
+  // market has to be able to tell them apart — see the abandoned-shop check
+  // in RootShell, which used to un-vendor a paying vendor on a bad network.
+  const [loadOk, setLoadOk] = useState(false);
 
   const shopsRef = useRef([]);
   const productsRef = useRef([]);
   const writeTimer = useRef(null);
+
+  // Which shops/products THIS session has actually changed, and which it has
+  // deliberately deleted.
+  //
+  // The whole marketplace lives in one row, and a write used to push this
+  // client's entire snapshot of it — a snapshot taken at page load. So any
+  // write at all (a shopper tapping a heart, a view counter ticking over)
+  // republished a stale copy of every shop and listing in the market and
+  // silently erased anything another vendor had created or edited in the
+  // meantime. Writes are now read-modify-write: the stored row is re-read,
+  // and this client only claims back the entities it actually touched.
+  // Deletions have to be tracked explicitly, since "missing from my copy"
+  // otherwise looks identical to "created by someone else after I loaded".
+  // patches: id -> the merged set of fields this client has changed and not
+  //          yet written. created: id -> whole new entities made here.
+  const patchesRef = useRef({ shops: new Map(), products: new Map() });
+  const createdRef = useRef({ shops: new Map(), products: new Map() });
+  const deletedRef = useRef({ shops: new Set(), products: new Set() });
+  // Always a NEW object per queued patch: a later step compares by identity to
+  // tell "this is exactly what I wrote" from "something changed while the
+  // write was in flight", and mutating in place would defeat that.
+  const queuePatch = useCallback((kind, id, partial) => {
+    if (!id) return;
+    const map = patchesRef.current[kind];
+    map.set(id, { ...(map.get(id) || {}), ...partial });
+  }, []);
+  const markCreated = useCallback((kind, entity) => {
+    if (!entity?.id) return;
+    createdRef.current[kind].set(entity.id, entity);
+  }, []);
+  const markDeleted = useCallback((kind, ...ids) => {
+    ids.filter(Boolean).forEach((id) => {
+      deletedRef.current[kind].add(id);
+      patchesRef.current[kind].delete(id);
+      createdRef.current[kind].delete(id);
+    });
+  }, []);
+
+  const writeMarket = useCallback(async () => {
+    const res = await readJSON(MARKET_KEY, true, null);
+    const canMerge = res.ok && res.value && Array.isArray(res.value.shops);
+    // A failed read is no reason to drop the user's change on the floor, so
+    // this falls back to the old whole-snapshot write — no worse than what
+    // every write used to do, and only on a read that already failed.
+    const next = canMerge
+      ? {
+          shops: mergeMarketList(res.value.shops, patchesRef.current.shops, createdRef.current.shops, deletedRef.current.shops),
+          products: mergeMarketList(res.value.products, patchesRef.current.products, createdRef.current.products, deletedRef.current.products),
+        }
+      : { shops: shopsRef.current, products: productsRef.current };
+
+    // Exactly which patch objects this write carries, captured before the
+    // await. Anything queued while it's in flight replaces the entry with a
+    // new object, so the identity check below leaves it pending for the next
+    // write instead of dropping it.
+    const claimed = {
+      shops: new Map(patchesRef.current.shops),
+      products: new Map(patchesRef.current.products),
+      createdShops: new Map(createdRef.current.shops),
+      createdProducts: new Map(createdRef.current.products),
+    };
+    const ok = await setJSON(MARKET_KEY, next, true);
+    if (!ok) return false;
+
+    const clearWritten = (liveMap, writtenMap) => {
+      writtenMap.forEach((value, id) => {
+        if (liveMap.get(id) === value) liveMap.delete(id);
+      });
+    };
+    clearWritten(patchesRef.current.shops, claimed.shops);
+    clearWritten(patchesRef.current.products, claimed.products);
+    clearWritten(createdRef.current.shops, claimed.createdShops);
+    clearWritten(createdRef.current.products, claimed.createdProducts);
+
+    if (canMerge) {
+      // Adopt the merged view so this client picks up everyone else's work
+      // instead of drifting further from the store with every write — but
+      // replay anything still pending (queued while the write was in flight)
+      // on top, so a change made mid-write isn't visibly reverted.
+      applyMarket(
+        mergeMarketList(next.shops, patchesRef.current.shops, createdRef.current.shops, deletedRef.current.shops),
+        mergeMarketList(next.products, patchesRef.current.products, createdRef.current.products, deletedRef.current.products)
+      );
+    }
+    return true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const flushMarket = useCallback(async () => {
     if (writeTimer.current) {
       clearTimeout(writeTimer.current);
       writeTimer.current = null;
     }
-    await setJSON(MARKET_KEY, { shops: shopsRef.current, products: productsRef.current }, true);
-  }, []);
+    await writeMarket();
+  }, [writeMarket]);
 
   // Many small changes (favourite counts, rating updates) arrive together; one
   // save covers them all instead of one save each.
@@ -3017,9 +3286,9 @@ function useMarketData() {
     if (writeTimer.current) clearTimeout(writeTimer.current);
     writeTimer.current = setTimeout(() => {
       writeTimer.current = null;
-      setJSON(MARKET_KEY, { shops: shopsRef.current, products: productsRef.current }, true);
+      writeMarket();
     }, MARKET_WRITE_DELAY);
-  }, []);
+  }, [writeMarket]);
 
   const applyMarket = useCallback((nextShops, nextProducts) => {
     shopsRef.current = nextShops;
@@ -3044,6 +3313,7 @@ function useMarketData() {
       if (retry < 3) {
         setTimeout(() => loadAll(retry + 1), 800 * (retry + 1));
       } else {
+        setLoadOk(false);
         setLoading(false);
       }
       return;
@@ -3074,8 +3344,13 @@ function useMarketData() {
       const rawProducts = Array.isArray(stored.products) ? stored.products : [];
       const keptProducts = droppedShopIds.size ? rawProducts.filter((p) => !droppedShopIds.has(p.shopId)) : rawProducts;
       applyMarket(keptShops, keptProducts);
+      setLoadOk(true);
       setLoading(false);
       if (droppedShopIds.size) {
+        // Recorded as deletions too, so a later merge writing against a
+        // concurrently-stale copy of the row can't resurrect them.
+        markDeleted("shops", ...droppedShopIds);
+        markDeleted("products", ...rawProducts.filter((p) => droppedShopIds.has(p.shopId)).map((p) => p.id));
         setJSON(MARKET_KEY, { shops: keptShops, products: keptProducts }, true);
         // The public profile mirror is writable by anyone signed in, so it
         // can be corrected right here; the owner's own private me:profile
@@ -3085,7 +3360,9 @@ function useMarketData() {
         droppedOwnerIds.forEach(async (ownerId) => {
           const owner = await getJSON(`users:${ownerId}`, true, null);
           if (owner && owner.shopId && droppedShopIds.has(owner.shopId)) {
-            setJSON(`users:${ownerId}`, { ...owner, isVendor: false, shopId: null }, true);
+            // Re-projected on write, which also strips the PII from any
+            // legacy full-profile mirror this row still happens to hold.
+            setJSON(`users:${ownerId}`, publicProfileProjection({ ...owner, isVendor: false, shopId: null }), true);
           }
         });
       }
@@ -3094,6 +3371,7 @@ function useMarketData() {
 
     const seeded = buildSeededMarket();
     applyMarket(seeded.shops, seeded.products);
+    setLoadOk(true);
     setLoading(false);
 
     // First run only: persist the market and the demo owner accounts that
@@ -3108,7 +3386,7 @@ function useMarketData() {
         )
       ),
     ]);
-  }, [applyMarket]);
+  }, [applyMarket, markDeleted]);
 
   useEffect(() => {
     loadAll();
@@ -3124,10 +3402,11 @@ function useMarketData() {
       const current = shopsRef.current.find((s) => s.id === shopId);
       if (current && Object.keys(partial).every((k) => current[k] === partial[k])) return;
       const next = shopsRef.current.map((s) => (s.id === shopId ? { ...s, ...partial } : s));
+      queuePatch("shops", shopId, partial);
       applyMarket(next, productsRef.current);
       scheduleWrite();
     },
-    [applyMarket, scheduleWrite]
+    [applyMarket, scheduleWrite, queuePatch]
   );
 
   const updateProduct = useCallback(
@@ -3135,10 +3414,11 @@ function useMarketData() {
       const current = productsRef.current.find((pr) => pr.id === productId);
       if (current && Object.keys(partial).every((k) => current[k] === partial[k])) return;
       const next = productsRef.current.map((pr) => (pr.id === productId ? { ...pr, ...partial } : pr));
+      queuePatch("products", productId, partial);
       applyMarket(shopsRef.current, next);
       scheduleWrite();
     },
-    [applyMarket, scheduleWrite]
+    [applyMarket, scheduleWrite, queuePatch]
   );
 
   const addProduct = useCallback(
@@ -3154,19 +3434,21 @@ function useMarketData() {
         createdAt: Date.now(),
         ...productDraft,
       };
+      markCreated("products", newProduct);
       applyMarket(shopsRef.current, [...productsRef.current, newProduct]);
       await flushMarket();
       return newProduct;
     },
-    [applyMarket, flushMarket]
+    [applyMarket, flushMarket, markCreated]
   );
 
   const removeProduct = useCallback(
     async (shopId, productId) => {
+      markDeleted("products", productId);
       applyMarket(shopsRef.current, productsRef.current.filter((pr) => pr.id !== productId));
       await flushMarket();
     },
-    [applyMarket, flushMarket]
+    [applyMarket, flushMarket, markDeleted]
   );
 
   // Deletes a whole storefront — every listing under it goes with it. Used
@@ -3176,13 +3458,15 @@ function useMarketData() {
   // old shop up instead of it just sitting there, unreachable, forever.
   const removeShop = useCallback(
     async (shopId) => {
+      markDeleted("shops", shopId);
+      markDeleted("products", ...productsRef.current.filter((p) => p.shopId === shopId).map((p) => p.id));
       applyMarket(
         shopsRef.current.filter((s) => s.id !== shopId),
         productsRef.current.filter((p) => p.shopId !== shopId)
       );
       await flushMarket();
     },
-    [applyMarket, flushMarket]
+    [applyMarket, flushMarket, markDeleted]
   );
 
   const createShopForUser = useCallback(
@@ -3237,14 +3521,15 @@ function useMarketData() {
         responseMinutes: null,
         createdAt: Date.now(),
       };
+      markCreated("shops", newShop);
       applyMarket([...shopsRef.current, newShop], productsRef.current);
       await flushMarket();
       return newShop;
     },
-    [applyMarket, flushMarket]
+    [applyMarket, flushMarket, markCreated]
   );
 
-  return { shops, products, shopsById, loading, updateShop, updateProduct, addProduct, removeProduct, removeShop, createShopForUser, reload: loadAll };
+  return { shops, products, shopsById, loading, loadOk, updateShop, updateProduct, addProduct, removeProduct, removeShop, createShopForUser, reload: loadAll };
 }
 
 function buildDefaultContactCard(seed) {
@@ -9733,7 +10018,9 @@ function FavoritesPreviewScreen({ navigate }) {
   const [favShops, setFavShops] = useState([
     { id: "prev-fs1", name: "Buzzy Bee Farm", photo: BANNER_PHOTO("photo-1589923188900-85dae523342b"), category: "Produce", rating: "5.0" },
     { id: "prev-fs2", name: "Sunny Acres", photo: BANNER_PHOTO("photo-1597848212624-a19eb35e2651"), category: "Honey & Preserves", rating: "4.8" },
-    { id: "prev-fs3", name: "Humble Hen Farm", photo: BANNER_PHOTO("photo-1518977676601-b53f82aba655"), category: "Eggs & Dairy", rating: "4.9" },
+    // Egg photo, not the library's `potato` id this used to point at — an
+    // eggs-and-dairy farm was showing a crate of root vegetables.
+    { id: "prev-fs3", name: "Humble Hen Farm", photo: BANNER_PHOTO("photo-1506976785307-8732e854ad03"), category: "Eggs & Dairy", rating: "4.9" },
   ]);
   const q = search.trim().toLowerCase();
   const visibleProducts = q ? favProducts.filter((p) => p.name.toLowerCase().includes(q) || p.shopName.toLowerCase().includes(q)) : favProducts;
@@ -9779,7 +10066,7 @@ function FavoritesPreviewScreen({ navigate }) {
               {visibleProducts.map((p) => (
                 <div key={p.id} className="bg-white rounded-xl border border-stone-200/70 overflow-hidden flex flex-col">
                   <div className="relative aspect-square bg-stone-100">
-                    <img src={p.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
+                    <img src={p.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
                     <div className="absolute top-2 right-2">
                       <FavoriteHeart active count={0} onToggle={() => setFavProducts((prev) => prev.filter((x) => x.id !== p.id))} />
                     </div>
@@ -9801,8 +10088,12 @@ function FavoritesPreviewScreen({ navigate }) {
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3.5">
               {visibleShops.map((s) => (
                 <div key={s.id} className="bg-white rounded-xl border border-stone-200/70 overflow-hidden">
-                  <div className="h-16 relative bg-stone-100">
-                    <img src={s.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
+                  <div className="h-16 relative bg-gradient-to-br from-emerald-100 to-amber-100">
+                    {/* Same onError fallback every other remote photo in the app
+                        has: hide the broken image and let the gradient behind it
+                        stand in, rather than showing the browser's broken-image
+                        glyph on a guest's very first screen. */}
+                    <img src={s.photo} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />
                     <div className="absolute top-2 right-2">
                       <FavoriteHeart active count={0} onToggle={() => setFavShops((prev) => prev.filter((x) => x.id !== s.id))} />
                     </div>
@@ -11576,7 +11867,10 @@ function CheckoutScreen({ navigate, tier, billing }) {
   // Checkout again — see api/create-checkout-session.js. This only affects
   // the messaging below; the server independently decides which actually
   // happens.
-  const hasActiveSub = planTier(me) !== "free" && me?.plan?.status === "active";
+  // past_due counts: Stripe is still retrying the renewal, the subscription is
+  // still there, and a plan change from here should update it in place rather
+  // than offering a fresh checkout. See api/entitlement.js.
+  const hasActiveSub = planTier(me) !== "free" && (me?.plan?.status === "active" || me?.plan?.status === "past_due");
 
   const existing = me?.billingProfile || null;
   // Signing up (or an earlier plan purchase) already collected name/zip/phone
@@ -12507,12 +12801,33 @@ function AdminDashboardScreen() {
       getJSON("reports:queue", true, []),
       getJSON("sponsorships:list", true, []),
     ]);
-    setUsers(userIndex || []);
     setShops(market?.shops || []);
     setProducts(market?.products || []);
     setReports(reportQueue || []);
     setSponsorships(sponsorList || []);
     setLoading(false);
+
+    // Email addresses come from the server, which verifies this really is the
+    // admin before returning any — they're deliberately no longer kept in the
+    // shared `admin:userIndex` row, where every signed-in account could read
+    // the platform's entire address list. The shared row still supplies names
+    // and avatars; the two are matched up by id.
+    const index = userIndex || [];
+    setUsers(index);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) return;
+      const res = await fetch("/api/admin-users", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const payload = await res.json();
+      const byId = new Map(index.map((u) => [u.id, u]));
+      const merged = (payload.users || []).map((u) => ({ ...(byId.get(u.id) || {}), ...u }));
+      const missing = index.filter((u) => !(payload.users || []).some((s) => s.id === u.id));
+      setUsers([...merged, ...missing].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+    } catch (e) {
+      /* keep the index-only view — names and avatars, no addresses */
+    }
   }, []);
 
   useEffect(() => {
@@ -13844,52 +14159,68 @@ function startOfLocalDay(ts) {
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
-// Exclusive upper edge of the newest bucket: the end of the day `nowMs` falls
-// on, local time. When `nowMs` is already exactly a local midnight it IS an
-// exclusive end (the "Pick a month…" dropdown passes the 1st of the following
-// month), so it's used as-is rather than tacking on a stray extra day.
-function bucketAnchorEnd(nowMs) {
-  const dayStart = startOfLocalDay(nowMs);
-  return dayStart === nowMs ? nowMs : dayStart + 86400000;
+// Top of whatever clock hour `ts` falls in, local time.
+function startOfLocalHour(ts) {
+  const d = new Date(ts);
+  d.setMinutes(0, 0, 0);
+  return d.getTime();
+}
+// Exclusive upper edge of the newest bucket. Every chart plots COMPLETE
+// periods only, so this edge sits at the START of the period currently in
+// progress: the top of this hour for the hourly range, local midnight for
+// every other granularity (whose steps are all whole numbers of days).
+//
+// That's what keeps a trend line from diving at its right edge. Today is
+// only ever partly over, so counting it as a full data point drew a
+// nosedive that no drop in activity had caused — and at the hourly range,
+// anchoring to the END of today drew bars for hours that hadn't happened
+// yet, a guaranteed run of zeros out to midnight.
+//
+// Trimming the finished series instead of moving this edge is what the
+// first attempt at that did, and it was wrong: buckets are trailing slices
+// (a "month" bucket is the last 30 days, not a calendar month), so dropping
+// the newest one threw away 7, 30, or 365 days of real data at the coarser
+// granularities instead of a few unfinished hours.
+//
+// `nowMs` landing exactly on a unit boundary means the caller passed an
+// explicit exclusive window end — the "Pick a month…" dropdown passes the
+// 1st of the following month — so that's honoured as-is. It's still capped
+// at the period in progress, which stops a month-to-date view from plotting
+// the remainder of the month as a long flat zero.
+function bucketAnchorEnd(nowMs, granularity) {
+  const startOfUnit = granularity === "hour" ? startOfLocalHour : startOfLocalDay;
+  const unitStart = startOfUnit(nowMs);
+  return Math.min(unitStart === nowMs ? nowMs : unitStart, startOfUnit(Date.now()));
 }
 function bucketCountFor(granularity, sinceMs, nowMs) {
-  return Math.max(1, Math.ceil((bucketAnchorEnd(nowMs) - sinceMs) / bucketStepMs(granularity)));
+  return Math.max(1, Math.ceil((bucketAnchorEnd(nowMs, granularity) - sinceMs) / bucketStepMs(granularity)));
 }
 function bucketStartFor(i, bucketCount, granularity, sinceMs, nowMs) {
   if (i === 0) return sinceMs; // oldest bucket absorbs any leftover span
-  return bucketAnchorEnd(nowMs) - (bucketCount - i) * bucketStepMs(granularity);
+  return bucketAnchorEnd(nowMs, granularity) - (bucketCount - i) * bucketStepMs(granularity);
 }
 function bucketIndexFor(t, bucketCount, granularity, nowMs) {
   const stepMs = bucketStepMs(granularity);
   // -1 keeps the range half-open: a timestamp sitting exactly on a boundary
   // counts toward the bucket that boundary opens, not the one it closes.
-  const stepsFromEnd = Math.floor((bucketAnchorEnd(nowMs) - 1 - t) / stepMs);
+  const stepsFromEnd = Math.floor((bucketAnchorEnd(nowMs, granularity) - 1 - t) / stepMs);
   return clamp(bucketCount - 1 - stepsFromEnd, 0, bucketCount - 1);
 }
-// The newest bucket a trailing window produces is always anchored to
-// bucketAnchorEnd(nowMs) — the end of TODAY, local time — which sits at or
-// after the real current instant unless "now" happens to land exactly on a
-// period boundary. That means the very last bucket almost always represents
-// a period that hasn't finished yet (today, this week, this month...), so
-// it only ever holds a partial slice of what a full period would show.
-// Plotting that partial slice as a normal data point makes every trend line
-// take an artificial dive right at the end — not because activity actually
-// dropped, it just hasn't happened yet. Once there's more than one bucket,
-// drop that still-in-progress trailing bucket from the chart entirely.
-// KPI totals shown elsewhere on the dashboard (revenue, order counts, view
-// counts, etc.) are unaffected — those are computed straight from the
-// underlying events/orders, not from this bucketed series, so today's real
-// activity still counts there.
-//
-// A bucket that ends at or before the true current instant (e.g. the last
-// day of a PAST calendar month picked from the month dropdown) is already
-// complete and is left alone — only a bucket whose end is still in the
-// future relative to right now gets trimmed.
-function trimInProgressBucket(buckets, nowMs) {
-  if (buckets.length <= 1) return buckets;
-  if (bucketAnchorEnd(nowMs) > Date.now()) return buckets.slice(0, -1);
-  return buckets;
+// Whether a timestamp belongs on the chart at all. bucketIndexFor CLAMPS
+// anything out of range into an end bucket, which is only ever right for
+// noise a pixel outside the window — used on its own it would pile the
+// in-progress period onto the last complete bar and inflate it, and (when a
+// panel still holds the previous period's fetched events while the new
+// fetch is in flight) dump every one of them onto the leftmost bar as a
+// phantom spike. Out-of-window data is dropped instead.
+function inBucketWindow(t, granularity, sinceMs, nowMs) {
+  return t >= sinceMs && t < bucketAnchorEnd(nowMs, granularity);
 }
+// KPI totals shown elsewhere on the dashboard (revenue, order counts, view
+// counts...) are deliberately NOT built from these buckets — they're counted
+// straight off the underlying events/orders — so the activity that's still
+// accumulating today keeps counting there even though the chart waits for
+// the day to close before plotting it.
 function bucketSeries(events, granularity, sinceMs, nowMs) {
   const bucketCount = bucketCountFor(granularity, sinceMs, nowMs);
   const buckets = Array.from({ length: bucketCount }, (_, i) => {
@@ -13898,10 +14229,11 @@ function bucketSeries(events, granularity, sinceMs, nowMs) {
   });
   events.forEach((e) => {
     const t = new Date(e.created_at).getTime();
+    if (!inBucketWindow(t, granularity, sinceMs, nowMs)) return;
     const idx = bucketIndexFor(t, bucketCount, granularity, nowMs);
     buckets[idx].count += 1;
   });
-  return trimInProgressBucket(buckets, nowMs);
+  return buckets;
 }
 // Same even-slice bucketing as bucketSeries, but sums a numeric value per
 // item (e.g. order revenue) instead of just counting — used for the sales
@@ -13916,10 +14248,11 @@ function bucketValueSeries(items, granularity, sinceMs, nowMs, getTime, getValue
   items.forEach((it) => {
     const t = getTime(it);
     if (t == null) return;
+    if (!inBucketWindow(t, granularity, sinceMs, nowMs)) return;
     const idx = bucketIndexFor(t, bucketCount, granularity, nowMs);
     buckets[idx].value += getValue(it) || 0;
   });
-  return trimInProgressBucket(buckets, nowMs);
+  return buckets;
 }
 // Dollar total for one order — sum of each line item's price × qty.
 function orderRevenue(order) {
@@ -15842,6 +16175,12 @@ function normalizeOrderItems(items) {
     qty: Number(li.qty) || 0,
     unit: li.unit || "each",
     price: Number(li.price) || 0,
+    // Sample/preview line items carry a thumbnail (real ones never do — a
+    // free-typed item name has nothing to match a photo to). It has to
+    // survive this whitelist: every updateOrder that touches `items`
+    // re-normalizes, so leaving it out made the preview's photos vanish the
+    // first time anyone ticked an order complete or opened its editor.
+    photo: li.photo || null,
   }));
 }
 
@@ -16007,22 +16346,44 @@ function useInventory(shopId, { onStockChange } = {}) {
   // storage round trip, and the caller (OrdersScreen) gets a callback per
   // item that actually changed so it can flip a linked storefront listing's
   // "Sold Out" banner without this hook needing to know about products.
+  // Returns what was ACTUALLY applied, per item — the caller records that on
+  // the order so reopening it can put back exactly what it took.
   const adjustStockBatch = useCallback(
     async (deltas, reason, orderId = null) => {
+      // Deltas are summed per item first. One order can list the same
+      // inventory item on two lines (and a free-typed line can resolve by
+      // name onto an item another line already linked), and a plain
+      // `deltas.find` matched only the first of them — so a "3 lb tomatoes +
+      // 2 lb tomatoes" order moved 3 lb, not 5, and logged one entry instead
+      // of two. The drift was permanent and silent.
+      const totals = new Map();
+      (deltas || []).forEach((d) => {
+        if (!d?.id) return;
+        totals.set(d.id, (totals.get(d.id) || 0) + (Number(d.delta) || 0));
+      });
       const logAdds = [];
       const changed = [];
+      const applied = [];
       const next = itemsRef.current.map((it) => {
-        const d = deltas.find((x) => x.id === it.id);
-        if (!d) return it;
+        if (!totals.has(it.id)) return it;
         const prevQty = it.qty;
-        const nextQty = Math.max(0, it.qty + d.delta);
-        logAdds.push({ id: uid("invlog"), itemId: it.id, itemName: it.name, change: d.delta, reason, orderId, at: Date.now() });
+        const nextQty = Math.max(0, it.qty + totals.get(it.id));
+        // The change that actually landed, not the one that was asked for.
+        // Stock stops at zero, so an order for 5 against 2 in stock only ever
+        // removes 2 — recording the requested -5 is what let reopening that
+        // order hand back 5 and conjure 3 units that never existed.
+        const change = nextQty - prevQty;
+        if (change === 0) return it;
+        applied.push({ id: it.id, delta: change });
+        logAdds.push({ id: uid("invlog"), itemId: it.id, itemName: it.name, change, reason, orderId, at: Date.now() });
         changed.push({ item: it, prevQty, nextQty });
         return { ...it, qty: nextQty, updatedAt: Date.now() };
       });
+      if (!applied.length) return applied;
       await persistItems(next);
       await persistLog([...logAdds, ...logRef.current].slice(0, 500));
       changed.forEach(({ item, prevQty, nextQty }) => onStockChange?.(item, prevQty, nextQty));
+      return applied;
     },
     [persistItems, persistLog, onStockChange]
   );
@@ -17063,6 +17424,16 @@ function toDatetimeLocalValue(ms) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// Where the "Custom date & time…" picker starts: an hour out, rounded up to
+// the next five minutes. It used to start at Date.now(), which the reminder
+// checker immediately read as due — so picking "Custom" fired a bogus toast
+// within seconds AND marked that event as already reminded, which meant the
+// real time chosen a moment later never fired at all.
+function defaultCustomReminderAt() {
+  const FIVE_MIN = 5 * 60000;
+  return Math.ceil((Date.now() + 3600000) / FIVE_MIN) * FIVE_MIN;
+}
+
 const REMINDER_OPTIONS = [
   { value: "", label: "No reminder" },
   { value: "0", label: "At the time" },
@@ -17612,8 +17983,7 @@ function DayViewModal({ open, onClose, date, events, onAddNote, onOpenEvent, onE
                     onChange={(e) => {
                       const val = e.target.value;
                       if (val === "custom") {
-                        // Default to right now so it's a one-tap adjustment from there.
-                        onSetReminder(ev.id, { reminderMinutesBefore: null, reminderAt: Date.now() });
+                        onSetReminder(ev.id, { reminderMinutesBefore: null, reminderAt: defaultCustomReminderAt() });
                         return;
                       }
                       onSetReminder(ev.id, { reminderMinutesBefore: val === "" ? null : Number(val), reminderAt: null });
@@ -17872,7 +18242,7 @@ function CalendarNoteModal({ open, onClose, onSave, initialDate, initialTime, in
               onChange={(e) => {
                 const val = e.target.value;
                 setReminder(val);
-                if (val === "custom" && !reminderAt) setReminderAt(toDatetimeLocalValue(Date.now()));
+                if (val === "custom" && !reminderAt) setReminderAt(toDatetimeLocalValue(defaultCustomReminderAt()));
               }}
               className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-emerald-700"
             >
@@ -18046,16 +18416,20 @@ function buildOrdersPreviewDemoData() {
   // only show a thumbnail when one is explicitly provided, like here.
   const items = [
     { id: "prev-item-1", name: "Heirloom Tomatoes", category: "Produce", unit: "lb", qty: 42, lowStockThreshold: 10, price: 3.5, notes: "", linkedProductId: null, photo: PHOTO("photo-1592924357228-91a4daadcfea"), createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-2", name: "Farm Eggs (dozen)", category: "Dairy & Eggs", unit: "dozen", qty: 6, lowStockThreshold: 8, price: 6, notes: "Low — order more from the coop", linkedProductId: null, photo: PHOTO("photo-1506976785307-8732e854ad03"), createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-3", name: "Raw Wildflower Honey", category: "Pantry", unit: "jar", qty: 18, lowStockThreshold: 5, price: 9, notes: "", linkedProductId: null, photo: PHOTO("photo-1558642452-9d2a7deb7f62"), createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-4", name: "Sourdough Loaves", category: "Bakery", unit: "loaf", qty: 0, lowStockThreshold: 4, price: 7.5, notes: "Sold out — bake day is Thursday", linkedProductId: null, photo: PHOTO("photo-1566698629409-787a68fc5724"), createdAt: Date.now(), updatedAt: Date.now() },
-    { id: "prev-item-5", name: "Mixed Salad Greens", category: "Produce", unit: "bag", qty: 27, lowStockThreshold: 10, price: 4.25, notes: "", linkedProductId: null, photo: PHOTO("photo-1524179091875-bf99a9a6af57"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-2", name: "Farm Fresh Eggs", category: "Dairy & Eggs", unit: "doz", qty: 6, lowStockThreshold: 8, price: 6, notes: "Low — order more from the coop", linkedProductId: null, photo: PHOTO("photo-1506976785307-8732e854ad03"), createdAt: Date.now(), updatedAt: Date.now() },
+    // Sold by the ounce here rather than "jar" or "each" — jar/loaf/bag are
+    // real selectable units now (see PRICE_UNITS), but the mock store is
+    // meant to showcase the common weight/count units (lb, oz, doz, bunch)
+    // a new vendor will actually reach for most often.
+    { id: "prev-item-3", name: "Raw Wildflower Honey", category: "Pantry", unit: "oz", qty: 96, lowStockThreshold: 24, price: 0.75, notes: "", linkedProductId: null, photo: PHOTO("photo-1558642452-9d2a7deb7f62"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-4", name: "Sourdough Loaves", category: "Bakery", unit: "each", qty: 0, lowStockThreshold: 4, price: 7.5, notes: "Sold out — bake day is Thursday", linkedProductId: null, photo: PHOTO("photo-1566698629409-787a68fc5724"), createdAt: Date.now(), updatedAt: Date.now() },
+    { id: "prev-item-5", name: "Mixed Salad Greens", category: "Produce", unit: "bunch", qty: 27, lowStockThreshold: 10, price: 4.25, notes: "", linkedProductId: null, photo: PHOTO("photo-1524179091875-bf99a9a6af57"), createdAt: Date.now(), updatedAt: Date.now() },
   ];
   const orders = [
     { id: "prev-order-1", customerName: "Maria Alvarez", customerUserId: null, items: [{ id: "oi1", inventoryItemId: "prev-item-1", productId: null, name: "Heirloom Tomatoes", qty: 3, unit: "lb", price: 3.5, photo: PHOTO("photo-1592924357228-91a4daadcfea") }], pickupDate: iso(0), pickupTime: "16:30", pickupLocation: "Farm stand", notes: "Regular — leave by the cooler if we're out front", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 86400000 },
-    { id: "prev-order-2", customerName: "Dwight Combs", customerUserId: null, items: [{ id: "oi2", inventoryItemId: "prev-item-3", productId: null, name: "Raw Wildflower Honey", qty: 2, unit: "jar", price: 9, photo: PHOTO("photo-1558642452-9d2a7deb7f62") }], pickupDate: iso(1), pickupTime: "10:00", pickupLocation: "Farmers market booth", notes: "", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 3600000 },
-    { id: "prev-order-3", customerName: "Priya Nair", customerUserId: null, items: [{ id: "oi3", inventoryItemId: "prev-item-5", productId: null, name: "Mixed Salad Greens", qty: 4, unit: "bag", price: 4.25, photo: PHOTO("photo-1524179091875-bf99a9a6af57") }], pickupDate: iso(-1), pickupTime: "14:00", pickupLocation: "Farm stand", notes: "", completed: true, completedAt: Date.now() - 90000000, archived: false, calendarEventId: null, createdAt: Date.now() - 172800000 },
-    { id: "prev-order-4", customerName: "Tom Riley", customerUserId: null, items: [{ id: "oi4", inventoryItemId: "prev-item-4", productId: null, name: "Sourdough Loaves", qty: 2, unit: "loaf", price: 7.5, photo: PHOTO("photo-1566698629409-787a68fc5724") }], pickupDate: iso(-2), pickupTime: "09:00", pickupLocation: "Farm stand", notes: "Missed pickup window", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 259200000 },
+    { id: "prev-order-2", customerName: "Dwight Combs", customerUserId: null, items: [{ id: "oi2", inventoryItemId: "prev-item-3", productId: null, name: "Raw Wildflower Honey", qty: 12, unit: "oz", price: 0.75, photo: PHOTO("photo-1558642452-9d2a7deb7f62") }], pickupDate: iso(1), pickupTime: "10:00", pickupLocation: "Farmers market booth", notes: "", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 3600000 },
+    { id: "prev-order-3", customerName: "Priya Nair", customerUserId: null, items: [{ id: "oi3", inventoryItemId: "prev-item-5", productId: null, name: "Mixed Salad Greens", qty: 4, unit: "bunch", price: 4.25, photo: PHOTO("photo-1524179091875-bf99a9a6af57") }], pickupDate: iso(-1), pickupTime: "14:00", pickupLocation: "Farm stand", notes: "", completed: true, completedAt: Date.now() - 90000000, archived: false, calendarEventId: null, createdAt: Date.now() - 172800000 },
+    { id: "prev-order-4", customerName: "Tom Riley", customerUserId: null, items: [{ id: "oi4", inventoryItemId: "prev-item-4", productId: null, name: "Sourdough Loaves", qty: 2, unit: "each", price: 7.5, photo: PHOTO("photo-1566698629409-787a68fc5724") }], pickupDate: iso(-2), pickupTime: "09:00", pickupLocation: "Farm stand", notes: "Missed pickup window", completed: false, completedAt: null, archived: false, calendarEventId: null, createdAt: Date.now() - 259200000 },
   ];
   const events = [
     { id: "prev-ev-1", title: "Maria Alvarez pickup", date: iso(0), time: "16:30", notes: "Farm stand", orderId: "prev-order-1", kind: "order", reminderMinutesBefore: 60, reminderAt: null, createdAt: Date.now() },
@@ -18119,14 +18493,39 @@ function OrdersPreviewScreen({ navigate, tab, setTab }) {
     [ordersList, addOrder, updateOrder, removeOrder, archiveOrder]
   );
 
+  // Kept in step with `items` on every render so a stock adjustment can read
+  // the latest list synchronously, the way the real hook's itemsRef does.
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+
+  // Mirrors the real hook: sum per item (an order can name one item twice),
+  // clamp at zero, and report back what actually moved so reopening an order
+  // restores exactly that much and no more.
   const adjustStockBatch = useCallback(async (deltas) => {
-    setItems((prev) =>
-      prev.map((it) => {
-        const d = deltas.find((x) => x.id === it.id);
-        if (!d) return it;
-        return { ...it, qty: Math.max(0, it.qty + d.delta), updatedAt: Date.now() };
-      })
-    );
+    const totals = new Map();
+    (deltas || []).forEach((d) => {
+      if (!d?.id) return;
+      totals.set(d.id, (totals.get(d.id) || 0) + (Number(d.delta) || 0));
+    });
+    // Built from a ref rather than inside a setItems updater: the updater
+    // runs later, during render, so anything collected in there would still
+    // be empty by the time this returns. The ref (not the `items` state) is
+    // what makes two adjustments dispatched before the next render still
+    // stack instead of the second overwriting the first.
+    const applied = [];
+    const next = itemsRef.current.map((it) => {
+      if (!totals.has(it.id)) return it;
+      const nextQty = Math.max(0, it.qty + totals.get(it.id));
+      const change = nextQty - it.qty;
+      if (change === 0) return it;
+      applied.push({ id: it.id, delta: change });
+      return { ...it, qty: nextQty, updatedAt: Date.now() };
+    });
+    if (applied.length) {
+      itemsRef.current = next;
+      setItems(next);
+    }
+    return applied;
   }, []);
   const adjustStock = useCallback((id, delta) => adjustStockBatch([{ id, delta }]), [adjustStockBatch]);
   const addItem = useCallback(async (draft) => {
@@ -18250,11 +18649,20 @@ function OrdersPreviewScreen({ navigate, tab, setTab }) {
         });
         deltas = items2.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: -li.qty }));
       } else {
-        deltas = order.items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: li.qty }));
+        // Put back what the order actually took, which isn't always what it
+        // asked for — stock stops at zero. See stockApplied below.
+        deltas = Array.isArray(order.stockApplied)
+          ? order.stockApplied.map((a) => ({ id: a.id, delta: -a.delta }))
+          : order.items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: li.qty }));
       }
     }
-    if (deltas.length) await inventory.adjustStockBatch(deltas);
-    await orders.updateOrder(order.id, { items: items2, completed: nowCompleting, completedAt: nowCompleting ? Date.now() : null });
+    const applied = deltas.length ? await inventory.adjustStockBatch(deltas) : [];
+    await orders.updateOrder(order.id, {
+      items: items2,
+      completed: nowCompleting,
+      completedAt: nowCompleting ? Date.now() : null,
+      stockApplied: nowCompleting ? applied : null,
+    });
   };
   const handleSaveInventoryItem = async (draft) => {
     const { showStock, prevLinkedProductId, ...itemDraft } = draft;
@@ -18495,7 +18903,6 @@ function OrdersScreen({ navigate, initialTab }) {
     const check = () => {
       const now = Date.now();
       calendar.events.forEach((ev) => {
-        if (remindedRef.current.has(ev.id)) return;
         // A custom reminder fires at the exact date/time picked for it,
         // independent of the event's own date — everything else fires the
         // usual N-minutes-before-the-event way.
@@ -18507,8 +18914,13 @@ function OrdersScreen({ navigate, initialTab }) {
           triggerAt = when - ev.reminderMinutesBefore * 60000;
         }
         if (triggerAt == null) return;
+        // Keyed on the trigger time, not just the event id: "already
+        // reminded" has to mean "already reminded for THIS time", otherwise
+        // rescheduling a reminder leaves it permanently suppressed.
+        const key = `${ev.id}:${triggerAt}`;
+        if (remindedRef.current.has(key)) return;
         if (now >= triggerAt && now - triggerAt < 6 * 3600000) {
-          remindedRef.current.add(ev.id);
+          remindedRef.current.add(key);
           showToast(`Reminder: ${ev.title}${ev.time ? ` @ ${ev.time}` : ""}`);
         }
       });
@@ -18628,11 +19040,25 @@ function OrdersScreen({ navigate, initialTab }) {
         });
         deltas = items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: -li.qty }));
       } else {
-        deltas = order.items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: li.qty }));
+        // Reopening puts back exactly what completing this order actually
+        // deducted, recorded as stockApplied below. Deducting is clamped at
+        // zero, so an order for 5 against 2 in stock only ever removed 2 —
+        // handing back the full 5 (what this used to do, and still does as a
+        // fallback for orders completed before this was recorded) invented
+        // three units out of nothing, then propagated to the low-stock badge,
+        // the auto "Sold Out" banner and the storefront's stock count.
+        deltas = Array.isArray(order.stockApplied)
+          ? order.stockApplied.map((a) => ({ id: a.id, delta: -a.delta }))
+          : order.items.filter((li) => li.inventoryItemId).map((li) => ({ id: li.inventoryItemId, delta: li.qty }));
       }
     }
-    if (deltas.length) await inventory.adjustStockBatch(deltas, nowCompleting ? "order" : "order-reverted", order.id);
-    await orders.updateOrder(order.id, { items, completed: nowCompleting, completedAt: nowCompleting ? Date.now() : null });
+    const applied = deltas.length ? await inventory.adjustStockBatch(deltas, nowCompleting ? "order" : "order-reverted", order.id) : [];
+    await orders.updateOrder(order.id, {
+      items,
+      completed: nowCompleting,
+      completedAt: nowCompleting ? Date.now() : null,
+      stockApplied: nowCompleting ? applied : null,
+    });
     showToast(nowCompleting ? (trackingOn ? "Order complete — inventory updated" : "Order marked complete") : "Order reopened");
   };
 
@@ -18846,7 +19272,7 @@ const ANALYTICS_KIND_TYPES = {
 // `.count`, bucketValueSeries gives `.value`), just told which key to plot.
 function DetailTrendChart({ data, dataKey, color, height = 160, formatY }) {
   if (!data || data.length === 0 || data.every((d) => (d[dataKey] || 0) === 0)) {
-    return <p className="text-sm text-stone-400 py-6 text-center">No activity in this range yet.</p>;
+    return <p className="text-sm text-stone-400 py-6 text-center">No activity in this range yet. Today's activity is counted in the totals above and joins the chart once the day closes.</p>;
   }
   return (
     <div style={{ width: "100%", height }}>
@@ -19201,7 +19627,7 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
         {kind === "bestseller" && (
           <div className="space-y-4">
             {data.bestSellers.length === 0 ? (
-              <p className="text-sm text-stone-400 py-4 text-center">No completed sales in this range yet.</p>
+              <p className="text-sm text-stone-400 py-4 text-center">No completed sales in this range yet. Today's sales are counted in the totals above and join the chart once the day closes.</p>
             ) : (
               <div className="space-y-2">
                 {data.bestSellers.map((p, i) => (
@@ -20658,7 +21084,7 @@ function VendorDashboard({ navigate }) {
               </div>
             )}
             {bestSellers.length === 0 ? (
-              <p className="text-sm text-stone-400 py-4 text-center">No completed sales in this range yet.</p>
+              <p className="text-sm text-stone-400 py-4 text-center">No completed sales in this range yet. Today's sales are counted in the totals above and join the chart once the day closes.</p>
             ) : (
               <div className="space-y-1.5">
                 {bestSellers.map((p, i) => (
@@ -21741,8 +22167,13 @@ function RootShell() {
   // useMarketData.loadAll) while they were signed out, their own private
   // profile still points at it until they're back — only their own session
   // can write to it, so this is where that gets corrected.
+  // market.loadOk, not just !market.loading: a read that failed all its
+  // retries also finishes "loading", just with an empty shop list. Treating
+  // that as proof the shop is gone rewrote a paying vendor's profile to
+  // isVendor:false on nothing worse than a flaky mobile connection, and their
+  // dashboard, orders and inventory disappeared while Stripe kept billing.
   useEffect(() => {
-    if (!me?.shopId || market.loading) return;
+    if (!me?.shopId || market.loading || !market.loadOk) return;
     if (!market.shopsById[me.shopId]) {
       updateMe({ isVendor: false, shopId: null });
     }
@@ -21948,6 +22379,13 @@ function RootShell() {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
   }, []);
+
+  // Hands the toaster to code that lives above this provider (the profile
+  // store), so a failed profile write can say so instead of failing silently.
+  useEffect(() => {
+    setGlobalToast(showToast);
+    return () => setGlobalToast(null);
+  }, [showToast]);
 
   // Completed-search analytics: logs once per distinct term, never on a
   // mid-keystroke pause. logSearchTerm is called two ways — immediately when
