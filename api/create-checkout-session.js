@@ -6,7 +6,7 @@
 // automatically) — no second subscription is ever created for the same
 // person, and no second trip through Checkout is needed since a card is
 // already on file.
-import { getStripe, PRICE_IDS } from "./_stripe.js";
+import { getStripe, PRICE_IDS, listLiveSubscriptions, isUpdatableSubscription, cancelSubscriptions } from "./_stripe.js";
 import { getUserFromRequest, patchProfile, patchShopBillingStatusForUser } from "./_supabaseAdmin.js";
 
 export async function POST(request) {
@@ -44,8 +44,11 @@ export async function POST(request) {
       customer = await stripe.customers.create({ email: user.email, metadata: { userId: user.id } });
     }
 
-    const activeSubs = await stripe.subscriptions.list({ customer: customer.id, status: "active", limit: 1 });
-    const currentSub = activeSubs.data[0];
+    // Includes past_due/trialing, not just active: skipping those is what let
+    // a subscriber whose renewal was mid-retry buy a SECOND subscription on
+    // the same customer and get billed for both.
+    const liveSubs = await listLiveSubscriptions(stripe, customer.id);
+    const currentSub = liveSubs.find(isUpdatableSubscription) || null;
     // Any plan change (tier, billing interval, or both) restarts the
     // "current paid term" for refund-window purposes, matching the app's
     // existing cancellation policy.
@@ -58,6 +61,18 @@ export async function POST(request) {
         proration_behavior: "create_prorations",
         metadata,
       });
+      // One subscription per customer, always. Anything else still live here
+      // is either an orphan left by the old "active"-only lookup or a stalled
+      // incomplete attempt; either way it must not keep billing alongside the
+      // one we just repriced.
+      // Best-effort: the reprice above has already happened, so a failure to
+      // tidy up an orphan must not fail the request and leave the profile
+      // un-patched while Stripe has moved on.
+      try {
+        await cancelSubscriptions(stripe, liveSubs.filter((s) => s.id !== currentSub.id));
+      } catch (err) {
+        console.error("create-checkout-session: orphan cleanup failed:", err);
+      }
       await patchProfile(user.id, {
         plan: {
           tier,
@@ -74,6 +89,12 @@ export async function POST(request) {
       await patchShopBillingStatusForUser(user.id, true);
       return Response.json({ updatedInPlace: true });
     }
+
+    // Nothing repriceable, but there can still be a dead-weight subscription
+    // (unpaid, or an incomplete attempt that was never paid) on this customer.
+    // Clear it before Checkout so the new one is the only subscription they
+    // have.
+    await cancelSubscriptions(stripe, liveSubs);
 
     const origin = request.headers.get("origin") || `https://${request.headers.get("host")}`;
     const session = await stripe.checkout.sessions.create({

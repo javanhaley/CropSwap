@@ -42,6 +42,28 @@ export async function getUserFromRequest(request) {
 // and useCurrentUser in src/App.jsx), so a webhook or API route updating
 // billing state looks, from the client's perspective, like any other
 // profile edit.
+// The subset of a profile that's safe to publish to `users:{id}` in
+// shared_kv, which any signed-in account can read. Mirrors
+// publicProfileProjection() in src/App.jsx — keep the two in step. Writing
+// the whole profile there (which this used to do) published every user's
+// legal name, phone number, zip code and email address to the entire signed-in
+// population.
+function publicProfileProjection(profile) {
+  if (!profile) return null;
+  return {
+    id: profile.id,
+    name: profile.name || "",
+    avatar: profile.avatar || "",
+    avatarPhotoId: profile.avatarPhotoId || null,
+    profileBackgroundId: profile.profileBackgroundId || null,
+    createdAt: profile.createdAt || null,
+    isVendor: !!profile.isVendor,
+    shopId: profile.shopId || null,
+    plan: { tier: profile.plan?.tier || "free" },
+    blockedUserIds: profile.blockedUserIds || [],
+  };
+}
+
 export async function patchProfile(userId, patch) {
   const admin = getSupabaseAdmin();
   const { data: row, error } = await admin.from("kv").select("value").eq("owner_id", userId).eq("key", "me:profile").maybeSingle();
@@ -57,7 +79,12 @@ export async function patchProfile(userId, patch) {
   const nowIso = new Date().toISOString();
   const { error: kvErr } = await admin.from("kv").upsert({ owner_id: userId, key: "me:profile", value: nextText, updated_at: nowIso }, { onConflict: "owner_id,key" });
   if (kvErr) throw kvErr;
-  const { error: sharedErr } = await admin.from("shared_kv").upsert({ key: `users:${userId}`, value: nextText, updated_by: userId, updated_at: nowIso }, { onConflict: "key" });
+  const { error: sharedErr } = await admin
+    .from("shared_kv")
+    .upsert(
+      { key: `users:${userId}`, value: JSON.stringify(publicProfileProjection(next)), updated_by: userId, updated_at: nowIso },
+      { onConflict: "key" }
+    );
   if (sharedErr) throw sharedErr;
   return next;
 }
