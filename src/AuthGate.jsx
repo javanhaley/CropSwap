@@ -209,8 +209,8 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
     e.preventDefault();
     setError("");
     setNotice("");
-    if (newPassword.length < 6) {
-      setError("Password must be at least 6 characters.");
+    if (newPassword.length < 7) {
+      setError("Password must be at least 7 characters.");
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -344,10 +344,10 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
               <input
                 type={showPassword ? "text" : "password"}
                 required
-                minLength={6}
+                minLength={7}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="At least 6 characters"
+                placeholder="At least 7 characters"
                 className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 pr-10 text-sm outline-none focus:border-emerald-700"
               />
               <button
@@ -560,10 +560,10 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
               <input
                 type={showNewPassword ? "text" : "password"}
                 required
-                minLength={6}
+                minLength={7}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="At least 6 characters"
+                placeholder="At least 7 characters"
                 className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 pr-10 text-sm outline-none focus:border-emerald-700"
               />
               <button
@@ -581,7 +581,7 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
               <input
                 type={showConfirmPassword ? "text" : "password"}
                 required
-                minLength={6}
+                minLength={7}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Type it again"
