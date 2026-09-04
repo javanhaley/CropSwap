@@ -239,29 +239,6 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
     }
   }
 
-  // Fixed-credential shortcut for the single internal admin account. Client
-  // JS ships to every visitor's browser, so this is a convenience for a
-  // trusted device, not a real access-control boundary — rotate the
-  // password from the account screen once beta is live, and don't treat
-  // this as secret.
-  async function adminQuickLogin() {
-    setError("");
-    setNotice("");
-    setBusy(true);
-    try {
-      const { data, error: err } = await supabase.auth.signInWithPassword({
-        email: "cropswapadmin@gmail.com",
-        password: "Password123$",
-      });
-      if (err) throw err;
-      if (data.session) onSignedIn?.();
-    } catch (err) {
-      setError(friendlyAuthError(err, "Admin sign-in failed — has the admin account been created yet?"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   const isForgotFlow = mode.startsWith("forgot-");
   const isMainFlow = mode === "signin" || mode === "signup";
 
@@ -610,19 +587,9 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
         )}
 
         {isMainFlow && (
-          <>
-            <p className="text-center text-[11px] text-stone-400 mt-4">
-              Your name and avatar are set up on the next screen — this just secures your account across devices.
-            </p>
-            <button
-              type="button"
-              onClick={adminQuickLogin}
-              disabled={busy}
-              className="block mx-auto mt-3 text-[11px] font-semibold text-stone-300 hover:text-stone-500 transition disabled:opacity-50"
-            >
-              Admin
-            </button>
-          </>
+          <p className="text-center text-[11px] text-stone-400 mt-4">
+            Your name and avatar are set up on the next screen — this just secures your account across devices.
+          </p>
         )}
       </div>
     </div>

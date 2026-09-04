@@ -9,7 +9,7 @@ import {
   Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check, ChevronUp,
   AlertTriangle, Image as ImageIcon, Video, PlayCircle,
   DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark, Rss,
-  Folder, MoreVertical, Inbox, Menu, Tag,
+  Folder, MoreVertical, Inbox, Menu, Tag, Flag, ExternalLink,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend, ComposedChart } from "recharts";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
@@ -2067,9 +2067,203 @@ const ADMIN_EMAIL = "cropswapadmin@gmail.com";
 let authSessionEmail = null;
 function setAuthSessionEmail(email) {
   authSessionEmail = email || null;
+  // A session that isn't the admin's any more (signed out, or switched to a
+  // different account without reloading the page) drops any earlier 2FA
+  // pass immediately — otherwise signing the admin account back in through
+  // the normal sign-in form later in the same tab would slip past the
+  // AdminLoginGate entirely and count as admin on the password alone.
+  if ((authSessionEmail || "").toLowerCase() !== ADMIN_EMAIL) adminMfaVerified = false;
+}
+// Set only by AdminLoginGate, after BOTH the admin password AND the emailed
+// 2FA code have checked out. Knowing the account's real password is no
+// longer enough on its own — a session with the right email but without
+// this flag (e.g. someone who signed in through the normal sign-in form and
+// happened to know/guess the admin password) still doesn't count as admin
+// here. Lives only in memory, so a fresh page load always requires 2FA
+// again — deliberately not persisted anywhere.
+let adminMfaVerified = false;
+function setAdminMfaVerified(v) {
+  adminMfaVerified = !!v;
 }
 function isAdminUser(me) {
-  return !!me && !!authSessionEmail && authSessionEmail.toLowerCase() === ADMIN_EMAIL;
+  return !!me && !!authSessionEmail && authSessionEmail.toLowerCase() === ADMIN_EMAIL && adminMfaVerified;
+}
+
+function friendlyAdminAuthError(err) {
+  const msg = err?.message || "";
+  if (/rate limit/i.test(msg)) return "Too many attempts in a short time — please wait a few minutes and try again.";
+  if (/invalid login credentials/i.test(msg)) return "Incorrect email or password.";
+  return msg || "Something went wrong. Try again.";
+}
+
+// The ONLY way into the Admin Dashboard now — a dedicated, two-factor login
+// screen reachable exclusively via a hidden URL (?admin=1, see RootShell),
+// never linked from anywhere in the normal UI. Two independent checks, both
+// required:
+//   1. The real Supabase password for cropswapadmin@gmail.com specifically
+//      — any other email is rejected before a network call is even made.
+//   2. A one-time code emailed to that same address (reusing the existing
+//      password-recovery code pipeline — same working, Resend-backed send
+//      path already proven out for signup/reset emails, just repurposed
+//      here as a second factor rather than an actual password change).
+// Passing both sets the in-memory adminMfaVerified flag isAdminUser() checks
+// — see the comment above that flag for why knowing the password alone
+// isn't enough any more.
+function AdminLoginGate({ onVerified, onCancel }) {
+  const [step, setStep] = useState("password"); // password | code
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, [resendCooldown]);
+
+  async function sendTwoFactorCode(targetEmail) {
+    const { error: err } = await supabase.auth.resetPasswordForEmail(targetEmail, { redirectTo: window.location.origin });
+    if (err) throw err;
+    setResendCooldown(60);
+  }
+
+  async function submitPassword(e) {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    const normalized = email.trim().toLowerCase();
+    if (normalized !== ADMIN_EMAIL) {
+      // Deliberately generic and deliberately no Supabase call at all — this
+      // account is the only one that's ever allowed in here.
+      setError("Invalid admin credentials.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data, error: err } = await supabase.auth.signInWithPassword({ email: normalized, password });
+      if (err) throw err;
+      if (!data.session) throw new Error("Sign-in failed.");
+      await sendTwoFactorCode(normalized);
+      setStep("code");
+      setNotice("Password verified. We've emailed a code to the admin address — enter it below to finish signing in.");
+    } catch (err) {
+      setError(friendlyAdminAuthError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resendCode() {
+    if (resendCooldown > 0 || busy) return;
+    setError("");
+    setBusy(true);
+    try {
+      await sendTwoFactorCode(ADMIN_EMAIL);
+      setNotice("Sent another code.");
+    } catch (err) {
+      setError(friendlyAdminAuthError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitCode(e) {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      const { data, error: err } = await supabase.auth.verifyOtp({ email: ADMIN_EMAIL, token: code.trim(), type: "recovery" });
+      if (err) throw err;
+      if (!data.session) throw new Error("That code didn't work.");
+      setAdminMfaVerified(true);
+      onVerified?.();
+    } catch (err) {
+      setError(err?.message || "That code didn't work. Double-check it and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="h-screen w-full flex items-start justify-center bg-stone-900 p-6 pt-16 overflow-y-auto" style={{ height: "100dvh" }}>
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-6">
+          <ShieldAlert size={28} className="text-emerald-500 mx-auto mb-2" />
+          <h1 className="text-white font-bold text-lg">Admin sign-in</h1>
+          <p className="text-stone-400 text-xs mt-1">Restricted access — password + email verification required.</p>
+        </div>
+        <div className="bg-white rounded-2xl p-5">
+          {step === "password" ? (
+            <form onSubmit={submitPassword}>
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Admin email</p>
+              <input
+                type="email"
+                required
+                autoFocus
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Admin email address"
+                className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700 mb-3"
+              />
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Password</p>
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700 mb-3"
+              />
+              {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full bg-stone-900 hover:bg-stone-800 text-white font-semibold py-3 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {busy && <Loader2 size={16} className="animate-spin" />} Continue
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={submitCode}>
+              {notice && <p className="text-xs text-emerald-700 mb-3">{notice}</p>}
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Verification code</p>
+              <input
+                required
+                autoFocus
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="Code from email"
+                className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700 mb-3 tracking-widest"
+              />
+              {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full bg-stone-900 hover:bg-stone-800 text-white font-semibold py-3 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {busy && <Loader2 size={16} className="animate-spin" />} Verify &amp; sign in
+              </button>
+              <button
+                type="button"
+                onClick={resendCode}
+                disabled={busy || resendCooldown > 0}
+                className="block w-full text-center mt-3 text-xs font-semibold text-stone-500 disabled:opacity-50"
+              >
+                {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend code"}
+              </button>
+            </form>
+          )}
+          <button type="button" onClick={onCancel} className="block mx-auto mt-4 text-xs text-stone-400 hover:text-stone-600">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // Hand-maintained index of every real account. The kv store only supports
@@ -11699,7 +11893,7 @@ function CancelPlanModal({ tierName, withinWindow, cancelling, onKeep, onConfirm
   );
 }
 
-function PlansScreen({ navigate }) {
+function PlansScreen({ navigate, route }) {
   const { me, cancelPlan, showToast, requireAuth } = useApp();
   const [billingByPlan, setBillingByPlan] = useState({ basic: "monthly", premium: "monthly" });
   const [cancelConfirm, setCancelConfirm] = useState(false);
@@ -11725,7 +11919,7 @@ function PlansScreen({ navigate }) {
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
       <div className="max-w-4xl mx-auto px-4 pt-4">
-        <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
+        <button onClick={() => navigate({ screen: route?.returnTo || "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
           <ArrowLeft size={15} /> Back
         </button>
         <div className="text-center mb-6">
@@ -12801,10 +12995,10 @@ function AdminScreenEntry({ navigate }) {
       />
     );
   }
-  return <AdminDashboardScreen />;
+  return <AdminDashboardScreen navigate={navigate} />;
 }
 
-function AdminDashboardScreen() {
+function AdminDashboardScreen({ navigate }) {
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState([]);
   const [shops, setShops] = useState([]);
@@ -12812,6 +13006,9 @@ function AdminDashboardScreen() {
   const [reports, setReports] = useState([]);
   const [sponsorships, setSponsorships] = useState([]);
   const [busyReportId, setBusyReportId] = useState(null);
+  const [userSearch, setUserSearch] = useState("");
+  const [billing, setBilling] = useState(null);
+  const [billingLoading, setBillingLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -12853,6 +13050,35 @@ function AdminDashboardScreen() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Real revenue numbers (MRR, active paying users, last-30-day collected
+  // revenue) — pulled live from Stripe by /api/admin-billing-summary rather
+  // than reconstructed from anything CropSwap stores itself, since Stripe is
+  // the only place that actually tracks individual charges. Best-effort: a
+  // failure here just means the revenue tiles don't render, the rest of the
+  // dashboard still works.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setBillingLoading(true);
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data?.session?.access_token;
+        if (!token) return;
+        const res = await fetch("/api/admin-billing-summary", { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (!cancelled) setBilling(payload);
+      } catch (e) {
+        /* revenue tiles just won't render */
+      } finally {
+        if (!cancelled) setBillingLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Platform-wide growth/activity charts — moved here from every vendor's own
   // Dashboard (they were never actually about that one vendor: new-signup
@@ -12938,6 +13164,32 @@ function AdminDashboardScreen() {
   const activeSponsorships = sponsorships.filter((s) => s.status === "active");
   const totalRevenue = sponsorships.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
 
+  // Repeat offenders — accounts with 2+ reports against them, worst first.
+  // Open reports weigh more than resolved ones, but a resolved history still
+  // counts: a pattern across several closed reports is still a pattern.
+  const repeatOffenders = useMemo(() => {
+    const counts = new Map();
+    reports.forEach((r) => {
+      if (!r.reportedUserId) return;
+      const cur = counts.get(r.reportedUserId) || { userId: r.reportedUserId, name: r.reportedUserName || r.reportedUserId, total: 0, open: 0 };
+      cur.total += 1;
+      if (r.status !== "resolved") cur.open += 1;
+      counts.set(r.reportedUserId, cur);
+    });
+    return [...counts.values()]
+      .filter((c) => c.total >= 2)
+      .sort((a, b) => b.open - a.open || b.total - a.total)
+      .slice(0, 8);
+  }, [reports]);
+
+  const filteredUsers = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) => (u.name || "").toLowerCase().includes(q) || (u.email || "").toLowerCase().includes(q) || (u.id || "").toLowerCase().includes(q));
+  }, [users, userSearch]);
+
+  const goToUser = (u) => navigate?.({ screen: "adminUserDetail", userId: u.id, userName: u.name, userAvatar: u.avatar });
+
   async function resolveReport(reportId) {
     setBusyReportId(reportId);
     const next = reports.map((r) => (r.id === reportId ? { ...r, status: "resolved" } : r));
@@ -12988,6 +13240,63 @@ function AdminDashboardScreen() {
           </div>
         ))}
       </div>
+
+      <div className="bg-white border border-stone-200 rounded-2xl p-5">
+        <h2 className="font-bold text-stone-900 mb-1 flex items-center gap-1.5">
+          <DollarSign size={16} className="text-emerald-700" /> Company health
+        </h2>
+        <p className="text-xs text-stone-400 mb-4">Live from Stripe — not an estimate.</p>
+        {billingLoading ? (
+          <div className="flex items-center justify-center py-6 text-stone-400">
+            <Loader2 size={18} className="animate-spin" />
+          </div>
+        ) : !billing ? (
+          <p className="text-sm text-stone-400">Couldn't load revenue data right now.</p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div>
+              <p className="text-2xl font-bold text-stone-900">{formatMoney(billing.mrr)}</p>
+              <p className="text-xs text-stone-400">MRR (monthly-equivalent)</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-stone-900">{billing.activeSubscriptions}</p>
+              <p className="text-xs text-stone-400">
+                Paying accounts · {billing.byTier?.basic?.monthly + billing.byTier?.basic?.annual || 0} Basic, {billing.byTier?.premium?.monthly + billing.byTier?.premium?.annual || 0} Premium
+              </p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-stone-900">{formatMoney(billing.revenue30d)}</p>
+              <p className="text-xs text-stone-400">Collected, last 30 days ({billing.chargeCount30d} charge{billing.chargeCount30d === 1 ? "" : "s"})</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-stone-900">{formatMoney(totalRevenue)}</p>
+              <p className="text-xs text-stone-400">Sponsored ads, all-time</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {repeatOffenders.length > 0 && (
+        <div className="bg-white border border-amber-200 rounded-2xl p-5">
+          <h2 className="font-bold text-stone-900 mb-3 flex items-center gap-1.5">
+            <Flag size={16} className="text-amber-600" /> Repeat offenders
+          </h2>
+          <div className="space-y-2">
+            {repeatOffenders.map((o) => (
+              <button
+                key={o.userId}
+                onClick={() => goToUser({ id: o.userId, name: o.name })}
+                className="w-full flex items-center justify-between gap-3 border border-stone-100 rounded-xl p-3 text-left hover:bg-stone-50 transition"
+              >
+                <p className="text-sm font-semibold text-stone-800">{o.name}</p>
+                <p className="text-xs text-stone-500 shrink-0">
+                  {o.total} report{o.total === 1 ? "" : "s"}{o.open > 0 ? ` · ${o.open} open` : ""}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="bg-white border border-stone-200 rounded-2xl p-5">
         <h2 className="font-bold text-stone-900 mb-3">Reports queue</h2>
@@ -13160,28 +13469,47 @@ function AdminDashboardScreen() {
       </div>
 
       <div className="bg-white border border-stone-200 rounded-2xl p-5">
-        <h2 className="font-bold text-stone-900 mb-3">Users ({users.length})</h2>
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <h2 className="font-bold text-stone-900">
+            Users ({filteredUsers.length}
+            {filteredUsers.length !== users.length ? ` of ${users.length}` : ""})
+          </h2>
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-400" />
+            <input
+              value={userSearch}
+              onChange={(e) => setUserSearch(e.target.value)}
+              placeholder="Search name, email, or user id…"
+              className="pl-8 pr-3 py-1.5 text-sm rounded-lg border border-stone-200 w-64 max-w-full focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-stone-400 mb-2">Click any account for signup details, flags, and payment history.</p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs font-bold text-stone-400 uppercase border-b border-stone-100">
                 <th className="pb-2 pr-3">Name</th>
                 <th className="pb-2 pr-3">Email</th>
-                <th className="pb-2">Joined</th>
+                <th className="pb-2 pr-3">Joined</th>
+                <th className="pb-2 w-6" />
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-b border-stone-50 last:border-0">
+              {filteredUsers.map((u) => (
+                <tr key={u.id} onClick={() => goToUser(u)} className="border-b border-stone-50 last:border-0 cursor-pointer hover:bg-stone-50">
                   <td className="py-2 pr-3 font-medium text-stone-800">{u.name || "—"}</td>
                   <td className="py-2 pr-3 text-stone-500">{u.email || "—"}</td>
-                  <td className="py-2 text-stone-400">{u.createdAt ? timeAgo(u.createdAt) : "—"}</td>
+                  <td className="py-2 pr-3 text-stone-400">{u.createdAt ? timeAgo(u.createdAt) : "—"}</td>
+                  <td className="py-2 text-stone-300">
+                    <ChevronRight size={15} />
+                  </td>
                 </tr>
               ))}
-              {users.length === 0 && (
+              {filteredUsers.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="py-3 text-stone-400 text-center">
-                    No users indexed yet.
+                  <td colSpan={4} className="py-3 text-stone-400 text-center">
+                    {users.length === 0 ? "No users indexed yet." : "No accounts match that search."}
                   </td>
                 </tr>
               )}
@@ -13222,6 +13550,264 @@ function AdminDashboardScreen() {
           </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Per-account "CRM" view behind the Admin Dashboard's Users table — signup
+// date, flags/reports against this account, and payment history (both
+// subscription receipts from Stripe and Sponsored Ads purchases). Same
+// admin-only gate pattern as AdminScreenEntry.
+function AdminUserDetailEntry({ navigate, userId, userName, userAvatar }) {
+  const { me } = useApp();
+  if (!isAdminUser(me)) {
+    return (
+      <EmptyState
+        icon={ShieldAlert}
+        title="Admins only"
+        body="This page is restricted to the CropSwap admin account."
+        action={
+          <button onClick={() => navigate({ screen: "explore" })} className="text-sm font-semibold text-emerald-800">
+            Back to Explore
+          </button>
+        }
+      />
+    );
+  }
+  return <AdminUserDetailScreen navigate={navigate} userId={userId} userName={userName} userAvatar={userAvatar} />;
+}
+
+function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
+  const [loading, setLoading] = useState(true);
+  const [detail, setDetail] = useState(null);
+  const [detailError, setDetailError] = useState(false);
+  const [flags, setFlags] = useState([]);
+  const [sponsorReceipts, setSponsorReceipts] = useState([]);
+  const [shopName, setShopName] = useState(null);
+
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setDetailError(false);
+
+      // Flags + sponsorship purchases come from the same shared collections
+      // the Admin Dashboard's Reports queue / Sponsored ads panels already
+      // read — just filtered down to this one account here.
+      const [reportQueue, market, sponsorList] = await Promise.all([
+        getJSON("reports:queue", true, []),
+        getJSON("market:v7", true, { shops: [], products: [] }),
+        getJSON("sponsorships:list", true, []),
+      ]);
+      if (cancelled) return;
+      setFlags((reportQueue || []).filter((r) => r.reportedUserId === userId).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+      const ownShop = (market?.shops || []).find((s) => s.ownerId === userId);
+      setShopName(ownShop?.name || null);
+      if (ownShop) {
+        setSponsorReceipts(
+          (sponsorList || [])
+            .filter((s) => s.shopId === ownShop.id)
+            .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+        );
+      } else {
+        setSponsorReceipts([]);
+      }
+
+      // Privileged fields (real email, exact signup/last-sign-in time, plan,
+      // Stripe invoice history) come from the admin-only server route.
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data?.session?.access_token;
+        if (!token) throw new Error("no session");
+        const res = await fetch(`/api/admin-user-detail?userId=${encodeURIComponent(userId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const payload = await res.json();
+        if (!cancelled) setDetail(payload);
+      } catch (e) {
+        if (!cancelled) setDetailError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  const displayName = detail?.email ? userName || detail.email : userName || "Account";
+
+  return (
+    <div className="max-w-3xl mx-auto p-6 space-y-6">
+      <button
+        onClick={() => navigate({ screen: "adminDashboard" })}
+        className="flex items-center gap-1.5 text-sm font-semibold text-stone-600"
+      >
+        <ArrowLeft size={15} /> Back to Admin Dashboard
+      </button>
+
+      <div className="flex items-center gap-3">
+        <span className="w-14 h-14 rounded-full bg-stone-100 border border-stone-200 flex items-center justify-center text-2xl shrink-0 overflow-hidden">
+          {userAvatar ? <img src={userAvatar} alt="" className="w-full h-full object-cover" /> : <User size={22} className="text-stone-400" />}
+        </span>
+        <div>
+          <h1 className="text-xl font-bold text-stone-900" style={displayFont}>
+            {userName || "Account"}
+          </h1>
+          <p className="text-sm text-stone-500 flex items-center gap-1">
+            <Mail size={13} /> {detail?.email || "—"}
+          </p>
+        </div>
+        {detail?.isVendor && (
+          <span className="ml-auto text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 flex items-center gap-1 shrink-0">
+            <Store size={12} /> Vendor{shopName ? ` · ${shopName}` : ""}
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12 text-stone-400">
+          <Loader2 size={22} className="animate-spin" />
+        </div>
+      ) : (
+        <>
+          {detailError && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+              Couldn't load signup/plan/payment details for this account right now. Flags and sponsorship history below are still current.
+            </div>
+          )}
+
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div className="bg-white border border-stone-200 rounded-2xl p-4">
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1">Signed up</p>
+              <p className="text-sm font-semibold text-stone-800">{detail?.createdAt ? new Date(detail.createdAt).toLocaleDateString() : "—"}</p>
+              <p className="text-xs text-stone-400">{detail?.createdAt ? timeAgo(detail.createdAt) : ""}</p>
+            </div>
+            <div className="bg-white border border-stone-200 rounded-2xl p-4">
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1">Last sign-in</p>
+              <p className="text-sm font-semibold text-stone-800">{detail?.lastSignInAt ? new Date(detail.lastSignInAt).toLocaleDateString() : "—"}</p>
+              <p className="text-xs text-stone-400">{detail?.lastSignInAt ? timeAgo(detail.lastSignInAt) : ""}</p>
+            </div>
+            <div className="bg-white border border-stone-200 rounded-2xl p-4">
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1">Plan</p>
+              <p className="text-sm font-semibold text-stone-800 capitalize">{detail?.plan?.tier || "free"}</p>
+              <p className="text-xs text-stone-400 capitalize">
+                {detail?.plan?.status ? `${detail.plan.status}${detail.plan.billing ? ` · ${detail.plan.billing}` : ""}` : "No paid plan"}
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-white border border-stone-200 rounded-2xl p-5">
+            <h2 className="font-bold text-stone-900 mb-3 flex items-center gap-1.5">
+              <Flag size={16} className={flags.length > 0 ? "text-amber-600" : "text-stone-400"} /> Flags ({flags.length})
+            </h2>
+            {flags.length === 0 ? (
+              <p className="text-sm text-stone-400">No reports filed against this account.</p>
+            ) : (
+              <div className="space-y-2">
+                {flags.map((f) => (
+                  <div key={f.id} className="border border-stone-100 rounded-xl p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-stone-800 capitalize">{(f.type || "report").replace(/_/g, " ")}</p>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${f.status === "resolved" ? "bg-stone-100 text-stone-500" : "bg-rose-50 text-rose-700"}`}>
+                        {f.status === "resolved" ? "Resolved" : "Open"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-stone-400 mt-0.5">{f.createdAt ? timeAgo(f.createdAt) : ""} · reported by {f.reporterId || "unknown"}</p>
+                    {Array.isArray(f.recentMessages) && f.recentMessages.length > 0 && (
+                      <div className="mt-2 bg-stone-50 rounded-lg p-2 space-y-1">
+                        {f.recentMessages.map((m, i) => (
+                          <p key={i} className="text-xs text-stone-600 truncate">
+                            <span className="font-semibold">{m.senderId === userId ? "This account" : "Other party"}:</span> {m.body}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-stone-200 rounded-2xl p-5">
+            <h2 className="font-bold text-stone-900 mb-3 flex items-center gap-1.5">
+              <Receipt size={16} className="text-emerald-700" /> Subscription payment history
+            </h2>
+            {!detail?.hasStripeCustomer ? (
+              <p className="text-sm text-stone-400">No billing relationship — this account has never checked out for a paid plan.</p>
+            ) : !detail?.invoices || detail.invoices.length === 0 ? (
+              <p className="text-sm text-stone-400">No invoices on file yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs font-bold text-stone-400 uppercase border-b border-stone-100">
+                      <th className="pb-2 pr-3">Date</th>
+                      <th className="pb-2 pr-3">Description</th>
+                      <th className="pb-2 pr-3">Amount</th>
+                      <th className="pb-2 pr-3">Status</th>
+                      <th className="pb-2">Receipt</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.invoices.map((inv) => (
+                      <tr key={inv.id} className="border-b border-stone-50 last:border-0">
+                        <td className="py-2 pr-3 text-stone-500">{new Date(inv.created).toLocaleDateString()}</td>
+                        <td className="py-2 pr-3 text-stone-700">{inv.description}</td>
+                        <td className="py-2 pr-3 font-semibold text-stone-800">{formatMoney(inv.amountPaid)}</td>
+                        <td className="py-2 pr-3 text-stone-500 capitalize">{inv.status}</td>
+                        <td className="py-2">
+                          {inv.hostedInvoiceUrl ? (
+                            <a href={inv.hostedInvoiceUrl} target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-semibold inline-flex items-center gap-1">
+                              View <ExternalLink size={12} />
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-stone-200 rounded-2xl p-5">
+            <h2 className="font-bold text-stone-900 mb-3 flex items-center gap-1.5">
+              <Megaphone size={16} className="text-emerald-700" /> Sponsored Ads purchases
+            </h2>
+            {sponsorReceipts.length === 0 ? (
+              <p className="text-sm text-stone-400">No Sponsored Ads purchases from this account's storefront.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs font-bold text-stone-400 uppercase border-b border-stone-100">
+                      <th className="pb-2 pr-3">Date</th>
+                      <th className="pb-2 pr-3">Duration</th>
+                      <th className="pb-2 pr-3">Amount</th>
+                      <th className="pb-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sponsorReceipts.map((s) => (
+                      <tr key={s.id} className="border-b border-stone-50 last:border-0">
+                        <td className="py-2 pr-3 text-stone-500">{s.createdAt ? new Date(s.createdAt).toLocaleDateString() : "—"}</td>
+                        <td className="py-2 pr-3 text-stone-700">{s.days ? `${s.days} day${s.days === 1 ? "" : "s"}` : "—"}</td>
+                        <td className="py-2 pr-3 font-semibold text-stone-800">{formatMoney(Number(s.amount) || 0)}</td>
+                        <td className="py-2 text-stone-500 capitalize">{s.status || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -21503,7 +22089,7 @@ function StartSellingPreviewScreen({ navigate, me }) {
       return;
     }
     showToast("Upgrade to a paid plan to unlock this");
-    navigate({ screen: "plans" });
+    navigate({ screen: "plans", returnTo: "store" });
   };
 
   return (
@@ -22597,6 +23183,28 @@ function RootShell() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The Admin Dashboard used to have a one-click "Admin" button right on the
+  // sign-in screen, with the account's password hardcoded in the shipped JS
+  // — anyone who opened the page could click it and be signed in as admin.
+  // The only way in now is this hidden URL flag, which just unlocks a real
+  // password + emailed-2FA-code form (AdminLoginGate) — it grants nothing by
+  // itself. Read once on first render, same pattern as authCallback/
+  // checkoutReturn above, then scrubbed from the address bar so a refresh or
+  // a shared link doesn't leave it sitting there (and doesn't re-open the
+  // gate after it's already been passed).
+  const [adminLoginRequested, setAdminLoginRequested] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search || "").get("admin") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    if (adminLoginRequested) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Every avatar in the app that represents someone else opens this same
   // small card — pass just {id, name, avatar} and it looks the rest up.
   const [profileCardTarget, setProfileCardTarget] = useState(null);
@@ -22980,6 +23588,22 @@ function RootShell() {
   // from scratch on the next render, resetting its internal `mode` state
   // back to initialMode and losing the "choose a new password" step —
   // this is what caused the reset flow to dump back to plain sign-in.
+  // Takes over the whole screen ahead of every other gate below, including
+  // the loading ones — it doesn't depend on `me` or market data at all, and
+  // shouldn't flash the normal app (or a normal sign-in screen) behind it
+  // even for a moment.
+  if (adminLoginRequested && !adminMfaVerified) {
+    return (
+      <AdminLoginGate
+        onCancel={() => setAdminLoginRequested(false)}
+        onVerified={() => {
+          setAdminLoginRequested(false);
+          navigate({ screen: "adminDashboard" });
+        }}
+      />
+    );
+  }
+
   if (meLoading && !recovering) return <LoadingScreen />;
   if (market.loading && !recovering) return <LoadingScreen />;
 
@@ -23152,7 +23776,10 @@ function RootShell() {
             {route.screen === "bulkMessaging" && <BulkMessagingScreen navigate={navigate} />}
             {route.screen === "ads" && <AdsScreenEntry navigate={navigate} />}
             {route.screen === "adminDashboard" && <AdminScreenEntry navigate={navigate} />}
-            {route.screen === "plans" && <PlansScreen navigate={navigate} />}
+            {route.screen === "adminUserDetail" && (
+              <AdminUserDetailEntry navigate={navigate} userId={route.userId} userName={route.userName} userAvatar={route.userAvatar} />
+            )}
+            {route.screen === "plans" && <PlansScreen navigate={navigate} route={route} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
             {route.screen === "profile" && <PublicProfileView userId={route.userId} navigate={navigate} />}
