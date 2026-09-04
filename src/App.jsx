@@ -3005,6 +3005,11 @@ function useCurrentUser() {
       plan: { tier: "free", billing: null, status: null, startedAt: null, periodEnd: null, cancelledAt: null, refundPct: null },
       notificationPrefs: { master: true, sound: true, messages: true, reviews: true, favorites: true },
       blockedUserIds: [],
+      // Onboarding's submit button is disabled until the Terms/Privacy
+      // checkbox is checked (see LegalAgreeCheckbox in Onboarding), so
+      // reaching this point already implies acceptance — this just records
+      // when, and against which version, for the day it actually matters.
+      legal: { acceptedAt: Date.now(), version: LEGAL_VERSION },
     };
     await setJSON("me:profile", profile, false);
     await setJSON(`users:${id}`, publicProfileProjection(profile), true);
@@ -3520,6 +3525,11 @@ function useMarketData() {
         faq: [],
         responseMinutes: null,
         createdAt: Date.now(),
+        // Carried through from StoreScreen's mandatory Seller Agreement
+        // checkbox — see LegalAgreeCheckbox there. Not present (both null)
+        // for any shop created before this checkbox existed.
+        sellerAgreementAcceptedAt: location?.sellerAgreementAcceptedAt || null,
+        sellerAgreementVersion: location?.sellerAgreementVersion || null,
       };
       markCreated("shops", newShop);
       applyMarket([...shopsRef.current, newShop], productsRef.current);
@@ -13537,6 +13547,7 @@ function AccountModal({ open, onClose }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [storageReport, setStorageReport] = useState(null);
   const [checking, setChecking] = useState(false);
+  const [openLegalDoc, setOpenLegalDoc] = useState(null); // "terms" | "privacy" | "seller" | null
 
   // The modal stays mounted between opens (only `open` toggles), so without
   // this the tab would silently remember whatever was last clicked. Tapping
@@ -13675,6 +13686,7 @@ function AccountModal({ open, onClose }) {
   ];
 
   return (
+    <>
     <Modal open={open} onClose={onClose} labelledBy="account-title">
       <div className="p-5">
         <div className="flex items-center justify-between mb-4">
@@ -13794,6 +13806,21 @@ function AccountModal({ open, onClose }) {
             </button>
             <p className="text-xs text-stone-400 mb-5">Includes your profile, favorites, saved payment methods, and settings.</p>
 
+            <p className="text-xs font-bold text-stone-400 uppercase mb-2">Legal</p>
+            <div className="flex flex-col gap-2 mb-5">
+              <button onClick={() => setOpenLegalDoc("terms")} className="w-full border border-stone-200 font-semibold py-2.5 rounded-xl text-stone-700 text-sm text-left px-3.5">
+                Terms of Service
+              </button>
+              <button onClick={() => setOpenLegalDoc("privacy")} className="w-full border border-stone-200 font-semibold py-2.5 rounded-xl text-stone-700 text-sm text-left px-3.5">
+                Privacy Policy
+              </button>
+              {me.isVendor && (
+                <button onClick={() => setOpenLegalDoc("seller")} className="w-full border border-stone-200 font-semibold py-2.5 rounded-xl text-stone-700 text-sm text-left px-3.5">
+                  Seller Agreement
+                </button>
+              )}
+            </div>
+
             <p className="text-xs font-bold text-stone-400 uppercase mb-2">Delete account</p>
             {!confirmDelete ? (
               <button onClick={() => setConfirmDelete(true)} className="w-full border border-rose-200 text-rose-600 font-semibold py-2.5 rounded-xl text-sm">
@@ -13833,6 +13860,10 @@ function AccountModal({ open, onClose }) {
         </button>
       </div>
     </Modal>
+    <LegalDocModal open={openLegalDoc === "terms"} onClose={() => setOpenLegalDoc(null)} title="Terms of Service" sections={TERMS_SECTIONS} />
+    <LegalDocModal open={openLegalDoc === "privacy"} onClose={() => setOpenLegalDoc(null)} title="Privacy Policy" sections={PRIVACY_SECTIONS} />
+    <LegalDocModal open={openLegalDoc === "seller"} onClose={() => setOpenLegalDoc(null)} title="Seller Agreement" sections={SELLER_AGREEMENT_SECTIONS} />
+    </>
   );
 }
 
@@ -21648,6 +21679,8 @@ function StoreScreen({ navigate }) {
   const [shopState, setShopState] = useState((homeLoc.state || "").toUpperCase().slice(0, 2));
   const [shopCountry, setShopCountry] = useState("US");
   const [creating, setCreating] = useState(false);
+  const [agreedToSellerTerms, setAgreedToSellerTerms] = useState(false);
+  const [showSellerAgreement, setShowSellerAgreement] = useState(false);
   const shop = me.isVendor && me.shopId ? shopsById[me.shopId] : null;
 
   // One storefront per account, enforced here too — not just at signup.
@@ -21761,6 +21794,15 @@ function StoreScreen({ navigate }) {
           </div>
         </div>
         <p className="cs-t11 text-stone-400 mb-3 text-left">So shoppers looking near you can actually find you on the map.</p>
+
+        <LegalAgreeCheckbox checked={agreedToSellerTerms} onChange={setAgreedToSellerTerms}>
+          I agree to the CropSwap{" "}
+          <button type="button" onClick={() => setShowSellerAgreement(true)} className="font-semibold text-emerald-700 underline underline-offset-2">
+            Seller Agreement
+          </button>
+          , and confirm I'll follow any licensing, permitting, or health/safety laws that apply to what I sell — including, for live animals, any health certificates or transport rules my state requires.
+        </LegalAgreeCheckbox>
+
         <button
           onClick={async () => {
             setCreating(true);
@@ -21777,6 +21819,11 @@ function StoreScreen({ navigate }) {
               state: shopState.trim(),
               country: shopCountry,
               ...(geo ? { lat: geo.lat, lng: geo.lng } : {}),
+              // Recorded on the shop itself (see createShopForUser) — the
+              // button below is disabled until this checkbox is checked, so
+              // reaching this point already implies acceptance.
+              sellerAgreementAcceptedAt: Date.now(),
+              sellerAgreementVersion: LEGAL_VERSION,
             });
             await updateMe({ isVendor: true, shopId: newShop.id });
             setCreating(false);
@@ -21785,7 +21832,7 @@ function StoreScreen({ navigate }) {
             }
             navigate({ screen: "storeEditor" });
           }}
-          disabled={creating || !shopName.trim() || !shopState.trim()}
+          disabled={creating || !shopName.trim() || !shopState.trim() || !agreedToSellerTerms}
           className="w-full bg-emerald-800 text-white font-semibold py-3 rounded-xl disabled:opacity-40"
         >
           {creating ? "Setting up…" : "Create my storefront"}
@@ -21796,6 +21843,7 @@ function StoreScreen({ navigate }) {
           </p>
         )}
       </div>
+      <LegalDocModal open={showSellerAgreement} onClose={() => setShowSellerAgreement(false)} title="Seller Agreement" sections={SELLER_AGREEMENT_SECTIONS} />
     </div>
   );
 }
@@ -21932,6 +21980,239 @@ function clearOnboardingDraft() {
   } catch (e) {}
 }
 
+/* ============================================================================
+   SECTION 25b: LEGAL — Terms of Service, Privacy Policy, and the Seller/
+   Vendor Agreement, shown in-app via LegalDocModal (no external pages).
+   Fill in the bracketed constants below with real business details before
+   launch — everything else references these so one edit updates all three
+   documents everywhere they're shown. LEGAL_VERSION is bumped whenever the
+   substance of any document changes; it's stored on the profile/shop at
+   acceptance time so a future re-prompt (if ever needed) has something to
+   compare against.
+============================================================================ */
+const LEGAL_BUSINESS_NAME = "[YOUR LEGAL BUSINESS NAME]";
+const LEGAL_GOVERNING_STATE = "[YOUR STATE]";
+const LEGAL_VENUE = "[YOUR COUNTY/CITY, STATE]";
+const LEGAL_SUPPORT_EMAIL = "[SUPPORT EMAIL]";
+const LEGAL_EFFECTIVE_DATE = "[DATE]";
+const LEGAL_VERSION = "1.0";
+
+const TERMS_SECTIONS = [
+  {
+    heading: null,
+    body: `These Terms of Service ("Terms") are a legal agreement between you and ${LEGAL_BUSINESS_NAME} ("CropSwap," "we," "us"). By creating an account, browsing listings, or using CropSwap in any way, you agree to these Terms. If you don't agree, please don't use CropSwap.\nYou must be at least 18 years old to create an account or complete a transaction on CropSwap.`,
+  },
+  {
+    heading: "1. What CropSwap Is",
+    body: `CropSwap is a venue. We connect local buyers and vendors of farm goods, produce, and (where permitted) livestock and animals. We are not a party to any transaction that happens between a buyer and a vendor. We don't own, inspect, handle, ship, or guarantee anything that's listed. When you buy or sell through CropSwap, you're dealing directly with another user, at your own risk.`,
+  },
+  {
+    heading: "2. Your Account",
+    body: `You're responsible for keeping your login credentials secure and for everything that happens under your account. Give us accurate information when you sign up, and keep it up to date. One account per person — don't create accounts to evade a suspension or impersonate someone else.`,
+  },
+  {
+    heading: "3. Content You Post",
+    body: `Anything you post — listings, photos, descriptions, messages, shop info — is yours, and you are solely responsible for it. By posting, you confirm that:\n- You have the right to post it (it's your content, or you have permission to use it).\n- It's accurate and not misleading.\n- It complies with every law that applies to it — federal, state, and local — including any licensing, permitting, health, or safety requirements for whatever you're selling.\nYou grant CropSwap a license to display, store, and distribute your content as needed to operate the site. We may remove any listing or content, for any reason or no reason, at our discretion.`,
+  },
+  {
+    heading: "4. Vendor & Livestock Listings",
+    body: `If you sell through CropSwap — produce, food items, animals, or anything else — you, the seller, are solely responsible for confirming that what you're selling and how you're selling it is legal in your state and locality. This includes, without limitation:\n- Cottage food, food handler, or health department licensing for food products (this varies significantly by state).\n- Any permits, brand inspections, health certificates, or transport documentation required to sell or move livestock or animals, including across state lines.\n- Any state or local restriction on the sale of specific species (including during disease outbreaks such as avian flu).\nCropSwap does not verify licenses, inspect animals or products, or confirm that any listing complies with applicable law. Vendors must separately accept our Seller Agreement before creating a shop.`,
+  },
+  {
+    heading: "5. Prohibited Listings & Conduct",
+    body: `You may not use CropSwap to post or facilitate:\n- Anything illegal to sell, own, or transport under federal, state, or local law.\n- Endangered or protected species, or animal parts from them.\n- Stolen goods, counterfeit goods, or fraudulent listings.\n- Weapons, ammunition, explosives, or hazardous materials.\n- Illegal drugs or controlled substances.\n- Content that harasses, threatens, or discloses someone's personal information without consent.\n- Spam, scams, or anything designed to drive traffic off-platform deceptively.\nWe may suspend or terminate any account that violates this section.`,
+  },
+  {
+    heading: "6. Fees & Payments",
+    body: `Some features require a paid subscription; pricing is shown at checkout. Payments are processed by Stripe — CropSwap never sees or stores your full card number. Subscription fees are billed as disclosed at signup and are non-refundable except where required by law or separately stated.`,
+  },
+  {
+    heading: "7. No Warranty",
+    body: `CropSwap is provided "as is" and "as available," with no warranty of any kind — express or implied — including merchantability, fitness for a particular purpose, or that the site will be uninterrupted, secure, or error-free. We do not warrant the quality, safety, legality, or accuracy of any listing, or the conduct of any user.`,
+  },
+  {
+    heading: "8. Limitation of Liability",
+    body: `To the fullest extent permitted by law, CropSwap and its owners are not liable for any indirect, incidental, special, or consequential damages arising from your use of the site, or from any transaction, listing, or interaction between users. Our total liability for any claim relating to CropSwap will not exceed the greater of $100 or the amount you paid us in the 12 months before the claim arose.`,
+  },
+  {
+    heading: "9. Indemnification",
+    body: `You agree to indemnify and hold CropSwap harmless from any claim, loss, liability, or expense (including attorneys' fees) arising from your use of CropSwap, your listings, your violation of these Terms, or your violation of any law.`,
+  },
+  {
+    heading: "10. Termination",
+    body: `We may suspend or terminate your account at any time, for any reason, including violation of these Terms. You may stop using CropSwap and close your account at any time.`,
+  },
+  {
+    heading: "11. Governing Law",
+    body: `These Terms are governed by the laws of the State of ${LEGAL_GOVERNING_STATE}, without regard to conflict-of-law rules. Any dispute will be resolved exclusively in the state or federal courts located in ${LEGAL_VENUE}, and you consent to jurisdiction there.`,
+  },
+  {
+    heading: "12. Changes to These Terms",
+    body: `We may update these Terms from time to time. Continued use of CropSwap after changes take effect means you accept the updated Terms.`,
+  },
+  {
+    heading: "13. Contact",
+    body: `Questions about these Terms? Contact us at ${LEGAL_SUPPORT_EMAIL}.`,
+  },
+  {
+    heading: null,
+    body: `CropSwap currently operates within the United States only. We plan to support international listings in the future; when we do, additional country-specific terms will apply.`,
+  },
+];
+
+const PRIVACY_SECTIONS = [
+  {
+    heading: null,
+    body: `This Privacy Policy explains what information CropSwap collects, how we use it, and what we share. By using CropSwap, you agree to this policy.`,
+  },
+  {
+    heading: "1. Information We Collect",
+    body: `- Account information: name, email address, phone number, zip code, and password (handled securely through our authentication provider — we never see or store your raw password).\n- Listing content: anything you post — shop info, product listings, photos, descriptions.\n- Payment information: handled entirely by Stripe, our payment processor. CropSwap does not receive or store your card number.\n- Usage information: basic technical data (like device/browser type) needed to keep the site working and secure.`,
+  },
+  {
+    heading: "2. How We Use It",
+    body: `We use your information to:\n- Operate your account and the marketplace (matching buyers with vendors, displaying listings).\n- Process payments and subscriptions through Stripe.\n- Communicate with you about your account, orders, or changes to our policies.\n- Maintain security and prevent fraud or abuse.\nWe do not sell your personal information to third parties.`,
+  },
+  {
+    heading: "3. What's Public",
+    body: `Some information is visible to other CropSwap users so the marketplace can function — this generally includes your display name, avatar, vendor shop details (if you're a vendor), and your listings. Your email, phone number, and exact address are not shared publicly; they're only used by CropSwap and, where necessary for a transaction, may be shared directly between a buyer and seller at their own discretion.`,
+  },
+  {
+    heading: "4. Who We Share Data With",
+    body: `We share data with the service providers that make CropSwap work:\n- Supabase — our database and authentication provider, which stores your account and listing data.\n- Stripe — our payment processor, which handles all billing and card information.\n- Vercel — our hosting provider.\nWe may also disclose information if required by law, or to protect the rights, safety, or property of CropSwap or our users.`,
+  },
+  {
+    heading: "5. Data Retention & Deletion",
+    body: `We retain your data as long as your account is active. You can request deletion of your account and associated data at any time from the Account screen, or by contacting us at ${LEGAL_SUPPORT_EMAIL}. Some information may be retained if required for legal, tax, or fraud-prevention purposes.`,
+  },
+  {
+    heading: "6. Security",
+    body: `We take reasonable measures to protect your information, but no online service can guarantee absolute security. Use a strong, unique password and let us know right away if you suspect unauthorized access to your account.`,
+  },
+  {
+    heading: "7. Children's Privacy",
+    body: `CropSwap is not directed at children, and you must be at least 18 to create an account. We do not knowingly collect information from anyone under 18.`,
+  },
+  {
+    heading: "8. Changes to This Policy",
+    body: `We may update this Privacy Policy from time to time. Continued use of CropSwap after changes take effect means you accept the updated policy.`,
+  },
+  {
+    heading: "9. Contact",
+    body: `Questions about this policy or your data? Contact us at ${LEGAL_SUPPORT_EMAIL}.`,
+  },
+  {
+    heading: null,
+    body: `CropSwap currently operates within the United States only. If we expand internationally, additional country-specific privacy terms (such as GDPR disclosures for EU users) will be added at that time.`,
+  },
+];
+
+const SELLER_AGREEMENT_SECTIONS = [
+  {
+    heading: null,
+    body: `This Agreement applies to anyone who creates a shop or lists items for sale on CropSwap ("Vendor," "you"). It supplements — and is part of — the CropSwap Terms of Service. You must accept this Agreement before you can create a shop or list any item.`,
+  },
+  {
+    heading: "1. You're Independent",
+    body: `You're an independent seller, not an employee, agent, partner, or joint venturer of CropSwap. CropSwap does not direct how you run your shop, price your goods, or fulfill orders.`,
+  },
+  {
+    heading: "2. You Are Solely Responsible for What You List",
+    body: `CropSwap does not inspect, test, license, or verify anything you list. You are solely responsible for:\n- The accuracy of your listings (description, price, availability, condition).\n- The safety and quality of everything you sell.\n- Holding any license, permit, or registration required to sell it — including cottage food, food handler, or health department permits for food items (these vary by state, and some products like eggs are often not covered by standard cottage food exemptions).\n- Complying with every applicable federal, state, and local law.`,
+  },
+  {
+    heading: "3. Selling Livestock & Animals",
+    body: `If you list livestock, poultry, or other animals, you additionally certify that:\n- The sale is legal in your state and the buyer's state, if different.\n- You hold any health certificate, brand inspection, or other documentation required to sell or transport the animal, including across state lines.\n- You are aware of and will comply with any current state restrictions related to animal health (for example, avian flu-related restrictions on live bird sales).\n- You will handle transport, care, and delivery in a lawful and humane manner.\nCropSwap has not verified any of the above. We are not a party to the sale and take no responsibility for the legality, health, or condition of any animal listed or sold through the platform.`,
+  },
+  {
+    heading: "4. Taxes",
+    body: `You are responsible for determining, collecting (if applicable), and remitting any sales tax, and for reporting your own income. CropSwap does not act as your tax agent.`,
+  },
+  {
+    heading: "5. Transactions Happen Between You and the Buyer",
+    body: `CropSwap provides the listing and messaging tools; the transaction itself — payment arrangement, fulfillment, delivery, and any dispute — is between you and the buyer. CropSwap is not responsible for buyer conduct, non-payment, or disputes, though we may assist in good faith where we can.`,
+  },
+  {
+    heading: "6. Fees",
+    body: `Vendor access is billed according to the subscription plan you choose, as shown at checkout. Fees are non-refundable except where required by law or separately stated.`,
+  },
+  {
+    heading: "7. Indemnification",
+    body: `You agree to indemnify and hold CropSwap harmless from any claim, loss, or expense (including attorneys' fees) arising from your listings, your products, or your conduct as a vendor.`,
+  },
+  {
+    heading: "8. Termination",
+    body: `CropSwap may suspend or close your shop at any time for violating this Agreement, the Terms of Service, or applicable law. You may close your shop at any time.`,
+  },
+  {
+    heading: "9. Acknowledgment",
+    body: `By creating a shop or listing an item, you confirm that you have read this Agreement, meet the requirements above, and agree to be bound by it.`,
+  },
+  {
+    heading: null,
+    body: `CropSwap currently operates within the United States only. International vendor terms will be added when international listings become available.`,
+  },
+];
+
+// Shared reader for all three legal documents — reuses the app's existing
+// Modal shell rather than a bespoke one, and renders each section's body as
+// plain paragraphs, treating any line starting with "- " as a bullet. Kept
+// deliberately dumb (no markdown lib) since the content above never needs
+// more than headings, paragraphs, and simple lists.
+function LegalDocModal({ open, onClose, title, sections }) {
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="legal-doc-title" size="lg">
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-1">
+          <h2 id="legal-doc-title" className="text-lg font-bold text-stone-900" style={displayFont}>
+            {title}
+          </h2>
+          <button onClick={onClose} aria-label="Close">
+            <X size={20} className="text-stone-400" />
+          </button>
+        </div>
+        <p className="cs-t11 text-stone-400 mb-4">Effective {LEGAL_EFFECTIVE_DATE}</p>
+        <div className="max-h-[65vh] overflow-y-auto pr-1">
+          {sections.map((s, i) => (
+            <div key={i} className="mb-4">
+              {s.heading && <h3 className="text-sm font-bold text-stone-800 mb-1.5">{s.heading}</h3>}
+              {s.body.split("\n").map((line, j) =>
+                line.trim().startsWith("- ") ? (
+                  <p key={j} className="text-sm text-stone-600 leading-relaxed pl-3 mb-1">
+                    • {line.trim().slice(2)}
+                  </p>
+                ) : (
+                  <p key={j} className="text-sm text-stone-600 leading-relaxed mb-1.5">
+                    {line}
+                  </p>
+                )
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// A small "I agree" row used at both acceptance points (account creation and
+// shop creation) — a required checkbox plus inline links that open the
+// relevant document(s) in LegalDocModal, so nobody has to leave the flow to
+// read what they're agreeing to.
+function LegalAgreeCheckbox({ checked, onChange, children }) {
+  return (
+    <label className="flex items-start gap-2.5 mb-4 cursor-pointer select-none">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 w-4 h-4 accent-emerald-800 shrink-0"
+      />
+      <span className="text-xs text-stone-500 leading-relaxed">{children}</span>
+    </label>
+  );
+}
+
 function Onboarding({ onCreate, reason, onCancel }) {
   const draft = useMemo(() => loadOnboardingDraft(), []);
   const [name, setName] = useState(draft?.name || "");
@@ -21939,6 +22220,8 @@ function Onboarding({ onCreate, reason, onCancel }) {
   const [zipcode, setZipcode] = useState(draft?.zipcode || "");
   const [phone, setPhone] = useState(draft?.phone || "");
   const [busy, setBusy] = useState(false);
+  const [agreedToLegal, setAgreedToLegal] = useState(false);
+  const [openLegalDoc, setOpenLegalDoc] = useState(null); // "terms" | "privacy" | null
 
   // The account's own sign-up email — already real and already verified:
   // getting a session at all (AuthGate's emailed-code signup, a magic-link
@@ -21964,7 +22247,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
   const nameValid = fullName.trim().length >= 2;
   const zipValid = isValidZip(zipcode);
   const phoneValid = digitsOnly(phone).length === 10;
-  const formReady = nameValid && zipValid && phoneValid;
+  const formReady = nameValid && zipValid && phoneValid && agreedToLegal;
 
   return (
     <div className="h-screen w-full flex items-start justify-center bg-stone-50 p-6 pt-8 overflow-y-auto" style={{ ...bodyFont, height: "100dvh" }}>
@@ -22039,6 +22322,18 @@ function Onboarding({ onCreate, reason, onCancel }) {
             <BadgeCheck size={13} /> Email verified
           </p>
 
+          <LegalAgreeCheckbox checked={agreedToLegal} onChange={setAgreedToLegal}>
+            I agree to CropSwap's{" "}
+            <button type="button" onClick={() => setOpenLegalDoc("terms")} className="font-semibold text-emerald-700 underline underline-offset-2">
+              Terms of Service
+            </button>{" "}
+            and{" "}
+            <button type="button" onClick={() => setOpenLegalDoc("privacy")} className="font-semibold text-emerald-700 underline underline-offset-2">
+              Privacy Policy
+            </button>
+            .
+          </LegalAgreeCheckbox>
+
           <button
             onClick={async () => {
               setBusy(true);
@@ -22054,6 +22349,8 @@ function Onboarding({ onCreate, reason, onCancel }) {
         </div>
         <p className="text-center cs-t11 text-stone-500 mt-4">Your display name and avatar are what other growers and buyers see. Everything else stays private — you can change any of it later in your account.</p>
       </div>
+      <LegalDocModal open={openLegalDoc === "terms"} onClose={() => setOpenLegalDoc(null)} title="Terms of Service" sections={TERMS_SECTIONS} />
+      <LegalDocModal open={openLegalDoc === "privacy"} onClose={() => setOpenLegalDoc(null)} title="Privacy Policy" sections={PRIVACY_SECTIONS} />
     </div>
   );
 }
