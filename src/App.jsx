@@ -11861,8 +11861,19 @@ function PlansScreen({ navigate }) {
 
 // US zip only — matches the rest of the app's address model (state
 // abbreviations, US lat/lng seed data).
+// Deliberately loose: CropSwap accepts sellers and buyers worldwide, and
+// postal code formats vary wildly by country (US 5/9-digit, Canadian
+// "A1A 1A1", UK "SW1A 1AA", and so on). This just rules out empty input and
+// obviously-wrong lengths rather than enforcing any one country's format.
 function isValidZip(z) {
-  return /^\d{5}(-\d{4})?$/.test((z || "").trim());
+  const trimmed = (z || "").trim();
+  return trimmed.length >= 3 && trimmed.length <= 10 && /^[A-Za-z0-9 -]+$/.test(trimmed);
+}
+// Same idea for phone numbers: international numbers run anywhere from ~7 to
+// 15 digits (E.164), so this only checks the digit count is in that range
+// rather than assuming a US-style 10-digit number.
+function isValidPhoneDigits(digits) {
+  return digits.length >= 7 && digits.length <= 15;
 }
 function digitsOnly(s) {
   return (s || "").replace(/\D/g, "");
@@ -11906,7 +11917,7 @@ function CheckoutScreen({ navigate, tier, billing }) {
   const price = billing === "annual" ? plan.annual : plan.monthly;
   const nameValid = fullName.trim().length >= 2;
   const zipValid = isValidZip(zipcode);
-  const phoneValid = digitsOnly(phone).length === 10;
+  const phoneValid = isValidPhoneDigits(digitsOnly(phone));
   const formReady = showDetailsForm ? nameValid && zipValid && phoneValid && phoneVerified : true;
 
   const handlePhoneChange = (v) => {
@@ -12028,15 +12039,14 @@ function CheckoutScreen({ navigate, tier, billing }) {
           </label>
 
           <label className="block mb-3">
-            <span className="block text-xs font-semibold text-stone-500 mb-1">Zip code</span>
+            <span className="block text-xs font-semibold text-stone-500 mb-1">Zip / postal code</span>
             <input
               value={zipcode}
               onChange={(e) => setZipcode(e.target.value)}
               placeholder="83854"
-              inputMode="numeric"
               className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:border-emerald-700"
             />
-            {zipcode && !zipValid && <span className="block cs-t11 text-rose-600 mt-1">Enter a valid 5-digit zip code</span>}
+            {zipcode && !zipValid && <span className="block cs-t11 text-rose-600 mt-1">Enter a valid zip or postal code</span>}
           </label>
 
           <label className="block mb-1.5">
@@ -22016,47 +22026,51 @@ const TERMS_SECTIONS = [
   },
   {
     heading: "4. Vendor & Livestock Listings",
-    body: `If you sell through CropSwap — produce, food items, animals, or anything else — you, the seller, are solely responsible for confirming that what you're selling and how you're selling it is legal in your state and locality. This includes, without limitation:\n- Cottage food, food handler, or health department licensing for food products (this varies significantly by state).\n- Any permits, brand inspections, health certificates, or transport documentation required to sell or move livestock or animals, including across state lines.\n- Any state or local restriction on the sale of specific species (including during disease outbreaks such as avian flu).\nCropSwap does not verify licenses, inspect animals or products, or confirm that any listing complies with applicable law. Vendors must separately accept our Seller Agreement before creating a shop.`,
+    body: `If you sell through CropSwap — produce, food items, animals, or anything else — you, the seller, are solely responsible for confirming that what you're selling and how you're selling it is legal where you and your buyer are located. This includes, without limitation:\n- Any food handling, health department, or agricultural licensing that applies to food products (requirements vary significantly by country, state, and locality).\n- Any permits, inspections, health certificates, or transport documentation required to sell or move livestock or animals, including across state or national borders.\n- Any national, state, or local restriction on the sale of specific species (including during disease outbreaks such as avian flu), and any restriction on importing or exporting animals or animal products between countries.\nCropSwap does not verify licenses, inspect animals or products, or confirm that any listing complies with the law of any country, state, or locality. Vendors must separately accept our Seller Agreement before creating a shop.`,
   },
   {
-    heading: "5. Prohibited Listings & Conduct",
+    heading: "5. Worldwide Use — Know Your Own Laws",
+    body: `CropSwap is available to buyers and sellers around the world. We do not review or verify the laws of every country, state, or region CropSwap reaches, and we make no representation that any listing, product, or transaction is legal wherever you happen to be. Before you post, buy, or sell anything on CropSwap, it's on you to check your own country's and region's laws — including customs, import/export, and animal or food safety rules — and to follow them. If a law where you live is stricter than what CropSwap's own rules require, your local law wins, and it's your responsibility to comply with it.`,
+  },
+  {
+    heading: "6. Prohibited Listings & Conduct",
     body: `You may not use CropSwap to post or facilitate:\n- Anything illegal to sell, own, or transport under federal, state, or local law.\n- Endangered or protected species, or animal parts from them.\n- Stolen goods, counterfeit goods, or fraudulent listings.\n- Weapons, ammunition, explosives, or hazardous materials.\n- Illegal drugs or controlled substances.\n- Content that harasses, threatens, or discloses someone's personal information without consent.\n- Spam, scams, or anything designed to drive traffic off-platform deceptively.\nWe may suspend or terminate any account that violates this section.`,
   },
   {
-    heading: "6. Fees & Payments",
+    heading: "7. Fees & Payments",
     body: `Some features require a paid subscription; pricing is shown at checkout. Payments are processed by Stripe — CropSwap never sees or stores your full card number. Subscription fees are billed as disclosed at signup and are non-refundable except where required by law or separately stated.`,
   },
   {
-    heading: "7. No Warranty",
+    heading: "8. No Warranty",
     body: `CropSwap is provided "as is" and "as available," with no warranty of any kind — express or implied — including merchantability, fitness for a particular purpose, or that the site will be uninterrupted, secure, or error-free. We do not warrant the quality, safety, legality, or accuracy of any listing, or the conduct of any user.`,
   },
   {
-    heading: "8. Limitation of Liability",
+    heading: "9. Limitation of Liability",
     body: `To the fullest extent permitted by law, CropSwap and its owners are not liable for any indirect, incidental, special, or consequential damages arising from your use of the site, or from any transaction, listing, or interaction between users. Our total liability for any claim relating to CropSwap will not exceed the greater of $100 or the amount you paid us in the 12 months before the claim arose.`,
   },
   {
-    heading: "9. Indemnification",
+    heading: "10. Indemnification",
     body: `You agree to indemnify and hold CropSwap harmless from any claim, loss, liability, or expense (including attorneys' fees) arising from your use of CropSwap, your listings, your violation of these Terms, or your violation of any law.`,
   },
   {
-    heading: "10. Termination",
+    heading: "11. Termination",
     body: `We may suspend or terminate your account at any time, for any reason, including violation of these Terms. You may stop using CropSwap and close your account at any time.`,
   },
   {
-    heading: "11. Governing Law",
+    heading: "12. Governing Law",
     body: `These Terms are governed by the laws of the State of ${LEGAL_GOVERNING_STATE}, without regard to conflict-of-law rules. Any dispute will be resolved exclusively in the state or federal courts located in ${LEGAL_VENUE}, and you consent to jurisdiction there.`,
   },
   {
-    heading: "12. Changes to These Terms",
+    heading: "13. Changes to These Terms",
     body: `We may update these Terms from time to time. Continued use of CropSwap after changes take effect means you accept the updated Terms.`,
   },
   {
-    heading: "13. Contact",
+    heading: "14. Contact",
     body: `Questions about these Terms? Contact us at ${LEGAL_SUPPORT_EMAIL}.`,
   },
   {
     heading: null,
-    body: `CropSwap currently operates within the United States only. We plan to support international listings in the future; when we do, additional country-specific terms will apply.`,
+    body: `CropSwap is available worldwide. No matter where you're located, these Terms — including Section 12's choice of governing law and venue — apply to your use of CropSwap.`,
   },
 ];
 
@@ -22094,16 +22108,20 @@ const PRIVACY_SECTIONS = [
     body: `CropSwap is not directed at children, and you must be at least 18 to create an account. We do not knowingly collect information from anyone under 18.`,
   },
   {
-    heading: "8. Changes to This Policy",
+    heading: "8. International Users",
+    body: `CropSwap is available to users worldwide, and our servers and service providers are located in the United States. If you're using CropSwap from outside the United States, you understand and agree that your information will be transferred to, stored in, and processed in the United States, which may not offer the same data protection rules as your own country.`,
+  },
+  {
+    heading: "9. Changes to This Policy",
     body: `We may update this Privacy Policy from time to time. Continued use of CropSwap after changes take effect means you accept the updated policy.`,
   },
   {
-    heading: "9. Contact",
+    heading: "10. Contact",
     body: `Questions about this policy or your data? Contact us at ${LEGAL_SUPPORT_EMAIL}.`,
   },
   {
     heading: null,
-    body: `CropSwap currently operates within the United States only. If we expand internationally, additional country-specific privacy terms (such as GDPR disclosures for EU users) will be added at that time.`,
+    body: `CropSwap is available worldwide. This policy applies to everyone who uses CropSwap, regardless of location.`,
   },
 ];
 
@@ -22118,11 +22136,11 @@ const SELLER_AGREEMENT_SECTIONS = [
   },
   {
     heading: "2. You Are Solely Responsible for What You List",
-    body: `CropSwap does not inspect, test, license, or verify anything you list. You are solely responsible for:\n- The accuracy of your listings (description, price, availability, condition).\n- The safety and quality of everything you sell.\n- Holding any license, permit, or registration required to sell it — including cottage food, food handler, or health department permits for food items (these vary by state, and some products like eggs are often not covered by standard cottage food exemptions).\n- Complying with every applicable federal, state, and local law.`,
+    body: `CropSwap does not inspect, test, license, or verify anything you list. You are solely responsible for:\n- The accuracy of your listings (description, price, availability, condition).\n- The safety and quality of everything you sell.\n- Holding any license, permit, or registration required to sell it — including any food handling or health department permits that apply (requirements vary by country, state, and locality, and some products like eggs are often not covered by standard small-producer exemptions).\n- Complying with every applicable national, state or provincial, and local law — wherever you and your buyer are located.`,
   },
   {
     heading: "3. Selling Livestock & Animals",
-    body: `If you list livestock, poultry, or other animals, you additionally certify that:\n- The sale is legal in your state and the buyer's state, if different.\n- You hold any health certificate, brand inspection, or other documentation required to sell or transport the animal, including across state lines.\n- You are aware of and will comply with any current state restrictions related to animal health (for example, avian flu-related restrictions on live bird sales).\n- You will handle transport, care, and delivery in a lawful and humane manner.\nCropSwap has not verified any of the above. We are not a party to the sale and take no responsibility for the legality, health, or condition of any animal listed or sold through the platform.`,
+    body: `If you list livestock, poultry, or other animals, you additionally certify that:\n- The sale is legal under the laws of your country and region, and the buyer's, if different.\n- You hold any health certificate, import/export permit, brand inspection, or other documentation required to sell or transport the animal, including across state or national borders.\n- You are aware of and will comply with any current restriction related to animal health (for example, avian flu-related restrictions on live bird sales) wherever you're located.\n- You will handle transport, care, and delivery in a lawful and humane manner.\nCropSwap has not verified any of the above and does not know the law of every country, state, or locality it reaches. We are not a party to the sale and take no responsibility for the legality, health, or condition of any animal listed or sold through the platform. Check your own government's rules before you list or buy — not just CropSwap's.`,
   },
   {
     heading: "4. Taxes",
@@ -22150,7 +22168,7 @@ const SELLER_AGREEMENT_SECTIONS = [
   },
   {
     heading: null,
-    body: `CropSwap currently operates within the United States only. International vendor terms will be added when international listings become available.`,
+    body: `CropSwap welcomes vendors worldwide. This Agreement applies to you no matter what country you're selling from — the responsibility to know and follow your own local laws (Sections 2 and 3 above) applies with equal force wherever "local" happens to be.`,
   },
 ];
 
@@ -22246,7 +22264,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
 
   const nameValid = fullName.trim().length >= 2;
   const zipValid = isValidZip(zipcode);
-  const phoneValid = digitsOnly(phone).length === 10;
+  const phoneValid = isValidPhoneDigits(digitsOnly(phone));
   const formReady = nameValid && zipValid && phoneValid && agreedToLegal;
 
   return (
@@ -22291,15 +22309,14 @@ function Onboarding({ onCreate, reason, onCancel }) {
             className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-4 outline-none focus:border-emerald-700"
           />
 
-          <p className="text-xs font-bold text-stone-600 uppercase mb-2">Zip code</p>
+          <p className="text-xs font-bold text-stone-600 uppercase mb-2">Zip / postal code</p>
           <input
             value={zipcode}
             onChange={(e) => setZipcode(e.target.value)}
             placeholder="83854"
-            inputMode="numeric"
             className="w-full border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm mb-1 outline-none focus:border-emerald-700"
           />
-          {zipcode && !zipValid && <p className="cs-t11 text-rose-600 mb-3">Enter a valid 5-digit zip code</p>}
+          {zipcode && !zipValid && <p className="cs-t11 text-rose-600 mb-3">Enter a valid zip or postal code</p>}
           {(!zipcode || zipValid) && <div className="mb-3" />}
 
           <p className="text-xs font-bold text-stone-600 uppercase mb-2">Phone number</p>
