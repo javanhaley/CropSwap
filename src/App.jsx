@@ -13389,7 +13389,7 @@ function AdminDashboardScreen({ navigate }) {
   ];
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6">
+    <div className="flex-1 overflow-y-auto max-w-5xl mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold text-stone-900 flex items-center gap-2" style={displayFont}>
@@ -13857,7 +13857,7 @@ function AdminDirectoryScreen({ navigate }) {
   };
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-5">
+    <div className="flex-1 overflow-y-auto max-w-6xl mx-auto p-6 space-y-5">
       <button onClick={() => navigate({ screen: "adminDashboard" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600">
         <ArrowLeft size={15} /> Back to Admin Dashboard
       </button>
@@ -14096,7 +14096,7 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
   const locationLabel = [detail?.city, detail?.state, detail?.country].filter(Boolean).join(", ");
 
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-6">
+    <div className="flex-1 overflow-y-auto max-w-3xl mx-auto p-6 space-y-6">
       <button
         onClick={() => navigate({ screen: "adminDashboard" })}
         className="flex items-center gap-1.5 text-sm font-semibold text-stone-600"
