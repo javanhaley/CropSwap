@@ -9,9 +9,11 @@ import {
   Bug, Save, ChevronLeft, Minus, ClipboardList, Boxes, Archive, Check, ChevronUp,
   AlertTriangle, Image as ImageIcon, Video, PlayCircle,
   DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark, Rss,
-  Folder, MoreVertical, Inbox, Menu, Tag, Flag, ExternalLink,
+  Folder, MoreVertical, Inbox, Menu, Tag, Flag, ExternalLink, Unlock, Download, SlidersHorizontal,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend, ComposedChart } from "recharts";
+import { jsPDF } from "jspdf";
+import html2canvas from "html2canvas";
 // Real persistence: attaches window.storage backed by Supabase (see storage.js)
 // in place of the Claude.ai artifact runtime's sandbox-only implementation.
 import "./storage";
@@ -2261,6 +2263,68 @@ function AdminLoginGate({ onVerified, onCancel }) {
             Cancel
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Full-screen block shown the moment RootShell's checkAccountLock notices
+// this session's account has been locked (see that function for how it
+// actually detects it — a real Supabase Auth ban doesn't kill an
+// already-open session by itself, so this is what closes that gap from the
+// browser side). Deliberately has exactly one way out: the X, which signs
+// out for real rather than just dismissing — there's nothing behind this
+// worth leaving them able to poke at.
+function AccountLockedOverlay({ onDismiss }) {
+  const [signingOut, setSigningOut] = useState(false);
+  async function handleDismiss() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await onDismiss();
+    } catch {
+      // Even if sign-out itself hiccups, still force the reload below —
+      // sitting behind this screen forever would be worse than a session
+      // that takes an extra refresh to fully clear.
+    }
+  }
+  return (
+    <div
+      className="fixed inset-0 z-[9999] bg-stone-950 flex items-center justify-center p-6"
+      style={{ ...bodyFont, height: "100dvh" }}
+      role="alertdialog"
+      aria-modal="true"
+      aria-label="Account locked"
+    >
+      <button
+        type="button"
+        onClick={handleDismiss}
+        disabled={signingOut}
+        aria-label="Close and sign out"
+        className="absolute top-5 right-5 text-stone-500 hover:text-white p-2 disabled:opacity-50"
+      >
+        <X size={26} />
+      </button>
+      <div className="max-w-sm w-full text-center">
+        <div className="mx-auto mb-5 w-16 h-16 rounded-full bg-rose-500/10 flex items-center justify-center">
+          <Lock size={30} className="text-rose-400" />
+        </div>
+        <h1 className="text-white text-xl font-bold mb-2" style={displayFont}>
+          This account has been locked
+        </h1>
+        <p className="text-stone-300 text-sm mb-6 leading-relaxed">
+          An administrator has locked this account, so it can't be used right now. If you believe this is a
+          mistake, contact <span className="text-white font-semibold">support@cropswapmarket.com</span>.
+        </p>
+        <button
+          type="button"
+          onClick={handleDismiss}
+          disabled={signingOut}
+          className="w-full bg-rose-600 hover:bg-rose-500 text-white font-semibold py-3 rounded-xl disabled:opacity-60 transition flex items-center justify-center gap-2"
+        >
+          {signingOut && <Loader2 size={16} className="animate-spin" />}
+          Close &amp; sign out
+        </button>
       </div>
     </div>
   );
@@ -12976,6 +13040,117 @@ function AdsPreviewScreen({ navigate }) {
   );
 }
 
+// Tiny CSV export helper for the Admin Directory's "Export CSV" button — no
+// library needed for something this simple.
+function toCsvRow(values) {
+  return values.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",");
+}
+function downloadCsv(filename, rows) {
+  const csv = rows.map(toCsvRow).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// A branded, downloadable receipt for one payment — a subscription invoice
+// or a Sponsored Ads purchase. Neither has CropSwap-branded proof of
+// purchase any other way: Stripe's own hosted invoice covers subscriptions
+// only (and isn't branded as CropSwap), and a Sponsored Ads purchase has no
+// Stripe charge behind it at all today. Rendered on-screen, then snapshotted
+// to a real PDF client-side (html2canvas + jsPDF) so "download" means an
+// actual saved file, not "use your browser's print dialog."
+// `receipt` shape: { receiptNumber, date (ms), description, amount
+// (dollars), status, customerName, customerEmail }.
+function ReceiptModal({ receipt, onClose }) {
+  const nodeRef = useRef(null);
+  const [downloading, setDownloading] = useState(false);
+
+  async function downloadPdf() {
+    if (!nodeRef.current || !receipt) return;
+    setDownloading(true);
+    try {
+      const canvas = await html2canvas(nodeRef.current, { scale: 2, backgroundColor: "#ffffff" });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ unit: "px", format: [canvas.width, canvas.height] });
+      pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
+      pdf.save(`cropswap-receipt-${receipt.receiptNumber}.pdf`);
+    } catch (e) {
+      // The on-screen receipt is still right there to screenshot as a
+      // fallback — not worth surfacing a scary error for a PDF-render hiccup.
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <Modal open={!!receipt} onClose={onClose} labelledBy="receipt-title" size="md">
+      {receipt && (
+        <div className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 id="receipt-title" className="text-lg font-bold text-stone-900" style={displayFont}>
+              Receipt
+            </h2>
+            <button onClick={onClose} aria-label="Close">
+              <X size={20} className="text-stone-400" />
+            </button>
+          </div>
+
+          <div ref={nodeRef} className="bg-white p-6 rounded-xl border border-stone-200">
+            <div className="flex items-center justify-between mb-6">
+              <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-8 w-auto" crossOrigin="anonymous" />
+              <div className="text-right">
+                <p className="text-xs font-bold text-stone-400 uppercase">Receipt</p>
+                <p className="text-sm font-semibold text-stone-800">#{receipt.receiptNumber}</p>
+              </div>
+            </div>
+            <p className="text-lg font-bold text-emerald-800 mb-1" style={displayFont}>
+              Thank you for growing with CropSwap!
+            </p>
+            <p className="text-sm text-stone-500 mb-6">Here's your receipt — keep it for your records.</p>
+            <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
+              <div>
+                <p className="text-xs font-bold text-stone-400 uppercase mb-0.5">Billed to</p>
+                <p className="text-stone-800 font-medium">{receipt.customerName || "—"}</p>
+                <p className="text-stone-500">{receipt.customerEmail || "—"}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-bold text-stone-400 uppercase mb-0.5">Date</p>
+                <p className="text-stone-800 font-medium">{new Date(receipt.date).toLocaleDateString()}</p>
+              </div>
+            </div>
+            <div className="border-t border-b border-stone-100 py-3 mb-4">
+              <div className="flex items-center justify-between text-sm">
+                <p className="text-stone-700">{receipt.description}</p>
+                <p className="font-semibold text-stone-900">{formatMoney(receipt.amount)}</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between mb-1">
+              <p className="font-bold text-stone-900">Total paid</p>
+              <p className="font-bold text-emerald-800 text-lg">{formatMoney(receipt.amount)}</p>
+            </div>
+            <p className="text-xs text-stone-400 capitalize">Status: {receipt.status || "paid"}</p>
+            <p className="text-xs text-stone-400 mt-6 text-center">CropSwap · Local growers, nationwide · Thank you for your support 🌱</p>
+          </div>
+
+          <button
+            onClick={downloadPdf}
+            disabled={downloading}
+            className="w-full mt-4 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />} Download PDF
+          </button>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // Guests get the interactive sample-listing sandbox above; anyone signed in
 // falls through to the real AdsScreen, which already has its own "become a
 // vendor first" nudge for a non-vendor account — that part is unchanged.
@@ -13468,10 +13643,25 @@ function AdminDashboardScreen({ navigate }) {
         </DashPanel>
       </div>
 
+      <div className="bg-emerald-800 rounded-2xl p-5 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="font-bold text-white flex items-center gap-1.5">
+            <SlidersHorizontal size={16} /> Full account directory
+          </h2>
+          <p className="text-sm text-emerald-100 mt-0.5">Search and filter by state, country, city, or join date — see shop name, phone, and lock any account.</p>
+        </div>
+        <button
+          onClick={() => navigate?.({ screen: "adminDirectory" })}
+          className="bg-white text-emerald-800 font-semibold text-sm px-4 py-2.5 rounded-xl shrink-0 hover:bg-emerald-50 transition"
+        >
+          Open Directory
+        </button>
+      </div>
+
       <div className="bg-white border border-stone-200 rounded-2xl p-5">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <h2 className="font-bold text-stone-900">
-            Users ({filteredUsers.length}
+            Quick search ({filteredUsers.length}
             {filteredUsers.length !== users.length ? ` of ${users.length}` : ""})
           </h2>
           <div className="relative">
@@ -13554,6 +13744,248 @@ function AdminDashboardScreen({ navigate }) {
   );
 }
 
+// The full account directory — every account, filterable by name/email/
+// shop/phone text search, country, and state, sortable by name/join date/
+// location, with a CSV export and a lock/unlock badge, sourced from
+// /api/admin-directory (see that file for why this needs a dedicated
+// server-side query rather than the client's own kv store).
+function AdminDirectoryEntry({ navigate }) {
+  const { me } = useApp();
+  if (!isAdminUser(me)) {
+    return (
+      <EmptyState
+        icon={ShieldAlert}
+        title="Admins only"
+        body="This page is restricted to the CropSwap admin account."
+        action={
+          <button onClick={() => navigate({ screen: "explore" })} className="text-sm font-semibold text-emerald-800">
+            Back to Explore
+          </button>
+        }
+      />
+    );
+  }
+  return <AdminDirectoryScreen navigate={navigate} />;
+}
+
+const ADMIN_DIRECTORY_SORTS = [
+  { id: "newest", label: "Newest first" },
+  { id: "oldest", label: "Oldest first" },
+  { id: "name", label: "Name A–Z" },
+  { id: "country", label: "Country" },
+  { id: "state", label: "State" },
+  { id: "city", label: "City" },
+];
+
+function AdminDirectoryScreen({ navigate }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [search, setSearch] = useState("");
+  const [countryFilter, setCountryFilter] = useState("");
+  const [stateFilter, setStateFilter] = useState("");
+  const [sortBy, setSortBy] = useState("newest");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch("/api/admin-directory", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const payload = await res.json();
+      setUsers(payload.users || []);
+    } catch (e) {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const countries = useMemo(() => [...new Set(users.map((u) => u.country).filter(Boolean))].sort(), [users]);
+  const states = useMemo(() => [...new Set(users.map((u) => u.state).filter(Boolean))].sort(), [users]);
+
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let list = users.filter((u) => {
+      if (countryFilter && u.country !== countryFilter) return false;
+      if (stateFilter && u.state !== stateFilter) return false;
+      if (!q) return true;
+      return [u.name, u.email, u.shopName, u.phone, u.city].some((f) => (f || "").toLowerCase().includes(q));
+    });
+    list = [...list].sort((a, b) => {
+      switch (sortBy) {
+        case "oldest":
+          return (a.createdAt || 0) - (b.createdAt || 0);
+        case "name":
+          return (a.name || "").localeCompare(b.name || "");
+        case "country":
+          return (a.country || "￿").localeCompare(b.country || "￿");
+        case "state":
+          return (a.state || "￿").localeCompare(b.state || "￿");
+        case "city":
+          return (a.city || "￿").localeCompare(b.city || "￿");
+        case "newest":
+        default:
+          return (b.createdAt || 0) - (a.createdAt || 0);
+      }
+    });
+    return list;
+  }, [users, search, countryFilter, stateFilter, sortBy]);
+
+  const exportCsv = () => {
+    const header = ["Name", "Email", "Shop", "Phone", "City", "State", "Country", "Plan", "Joined", "Locked"];
+    const dataRows = rows.map((u) => [
+      u.name || "",
+      u.email || "",
+      u.shopName || "",
+      u.phone || "",
+      u.city || "",
+      u.state || "",
+      u.country || "",
+      u.planTier || "",
+      u.createdAt ? new Date(u.createdAt).toISOString().slice(0, 10) : "",
+      u.locked ? "Locked" : "",
+    ]);
+    downloadCsv(`cropswap-directory-${new Date().toISOString().slice(0, 10)}.csv`, [header, ...dataRows]);
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto p-6 space-y-5">
+      <button onClick={() => navigate({ screen: "adminDashboard" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600">
+        <ArrowLeft size={15} /> Back to Admin Dashboard
+      </button>
+
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-2xl font-bold text-stone-900 flex items-center gap-2" style={displayFont}>
+            <SlidersHorizontal size={20} className="text-emerald-700" /> Account Directory
+          </h1>
+          <p className="text-sm text-stone-500 mt-1">{rows.length} of {users.length} account{users.length === 1 ? "" : "s"}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={load} className="text-xs font-semibold text-stone-500 hover:text-stone-700 flex items-center gap-1.5 border border-stone-200 rounded-lg px-3 py-1.5">
+            <Repeat size={13} /> Refresh
+          </button>
+          <button onClick={exportCsv} disabled={rows.length === 0} className="text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-700 flex items-center gap-1.5 rounded-lg px-3 py-1.5 disabled:opacity-50">
+            <Download size={13} /> Export CSV
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white border border-stone-200 rounded-2xl p-4 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-stone-400" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name, email, shop, phone, or city…"
+            className="w-full pl-8 pr-3 py-2 text-sm rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+          />
+        </div>
+        <select value={countryFilter} onChange={(e) => setCountryFilter(e.target.value)} className="text-sm border border-stone-200 rounded-lg px-2.5 py-2 bg-white">
+          <option value="">All countries</option>
+          {countries.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} className="text-sm border border-stone-200 rounded-lg px-2.5 py-2 bg-white">
+          <option value="">All states</option>
+          {states.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="text-sm border border-stone-200 rounded-lg px-2.5 py-2 bg-white">
+          {ADMIN_DIRECTORY_SORTS.map((s) => (
+            <option key={s.id} value={s.id}>Sort: {s.label}</option>
+          ))}
+        </select>
+        {(search || countryFilter || stateFilter) && (
+          <button
+            onClick={() => {
+              setSearch("");
+              setCountryFilter("");
+              setStateFilter("");
+            }}
+            className="text-xs font-semibold text-stone-500 hover:text-stone-700"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
+      <div className="bg-white border border-stone-200 rounded-2xl p-5">
+        {loading ? (
+          <div className="flex items-center justify-center py-12 text-stone-400">
+            <Loader2 size={22} className="animate-spin" />
+          </div>
+        ) : error ? (
+          <p className="text-sm text-stone-400 text-center py-6">Couldn't load the directory right now. Try refreshing.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs font-bold text-stone-400 uppercase border-b border-stone-100">
+                  <th className="pb-2 pr-3">Name</th>
+                  <th className="pb-2 pr-3">Shop</th>
+                  <th className="pb-2 pr-3">Email</th>
+                  <th className="pb-2 pr-3">Phone</th>
+                  <th className="pb-2 pr-3">Location</th>
+                  <th className="pb-2 pr-3">Plan</th>
+                  <th className="pb-2 pr-3">Joined</th>
+                  <th className="pb-2 w-6" />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((u) => (
+                  <tr
+                    key={u.id}
+                    onClick={() => navigate({ screen: "adminUserDetail", userId: u.id, userName: u.name, userAvatar: u.avatar })}
+                    className="border-b border-stone-50 last:border-0 cursor-pointer hover:bg-stone-50"
+                  >
+                    <td className="py-2 pr-3 font-medium text-stone-800">
+                      <span className="flex items-center gap-1.5">
+                        {u.name || "—"}
+                        {u.locked && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-700 flex items-center gap-0.5">
+                            <Lock size={9} /> Locked
+                          </span>
+                        )}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 text-stone-500">{u.shopName || "—"}</td>
+                    <td className="py-2 pr-3 text-stone-500">{u.email || "—"}</td>
+                    <td className="py-2 pr-3 text-stone-500">{u.phone || "—"}</td>
+                    <td className="py-2 pr-3 text-stone-500">{[u.city, u.state, u.country].filter(Boolean).join(", ") || "—"}</td>
+                    <td className="py-2 pr-3 text-stone-500 capitalize">{u.planTier || "free"}</td>
+                    <td className="py-2 pr-3 text-stone-400">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}</td>
+                    <td className="py-2 text-stone-300">
+                      <ChevronRight size={15} />
+                    </td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="py-6 text-stone-400 text-center">
+                      No accounts match these filters.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Per-account "CRM" view behind the Admin Dashboard's Users table — signup
 // date, flags/reports against this account, and payment history (both
 // subscription receipts from Stripe and Sponsored Ads purchases). Same
@@ -13583,61 +14015,85 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
   const [detailError, setDetailError] = useState(false);
   const [flags, setFlags] = useState([]);
   const [sponsorReceipts, setSponsorReceipts] = useState([]);
-  const [shopName, setShopName] = useState(null);
+  const [productNameById, setProductNameById] = useState({});
+  const [lockBusy, setLockBusy] = useState(false);
+  const [lockConfirming, setLockConfirming] = useState(false);
+  const [activeReceipt, setActiveReceipt] = useState(null);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!userId) return;
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setDetailError(false);
+    setLoading(true);
+    setDetailError(false);
 
-      // Flags + sponsorship purchases come from the same shared collections
-      // the Admin Dashboard's Reports queue / Sponsored ads panels already
-      // read — just filtered down to this one account here.
-      const [reportQueue, market, sponsorList] = await Promise.all([
-        getJSON("reports:queue", true, []),
-        getJSON("market:v7", true, { shops: [], products: [] }),
-        getJSON("sponsorships:list", true, []),
-      ]);
-      if (cancelled) return;
-      setFlags((reportQueue || []).filter((r) => r.reportedUserId === userId).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
-      const ownShop = (market?.shops || []).find((s) => s.ownerId === userId);
-      setShopName(ownShop?.name || null);
-      if (ownShop) {
-        setSponsorReceipts(
-          (sponsorList || [])
-            .filter((s) => s.shopId === ownShop.id)
-            .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-        );
-      } else {
-        setSponsorReceipts([]);
-      }
+    // Flags + sponsorship purchases come from the same shared collections
+    // the Admin Dashboard's Reports queue / Sponsored ads panels already
+    // read — just filtered down to this one account here.
+    const [reportQueue, market, sponsorList] = await Promise.all([
+      getJSON("reports:queue", true, []),
+      getJSON("market:v7", true, { shops: [], products: [] }),
+      getJSON("sponsorships:list", true, []),
+    ]);
+    setFlags((reportQueue || []).filter((r) => r.reportedUserId === userId).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)));
+    const ownShop = (market?.shops || []).find((s) => s.ownerId === userId);
+    setProductNameById(Object.fromEntries((market?.products || []).map((p) => [p.id, p.name])));
+    if (ownShop) {
+      setSponsorReceipts(
+        (sponsorList || [])
+          .filter((s) => s.shopId === ownShop.id)
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      );
+    } else {
+      setSponsorReceipts([]);
+    }
 
-      // Privileged fields (real email, exact signup/last-sign-in time, plan,
-      // Stripe invoice history) come from the admin-only server route.
-      try {
-        const { data } = await supabase.auth.getSession();
-        const token = data?.session?.access_token;
-        if (!token) throw new Error("no session");
-        const res = await fetch(`/api/admin-user-detail?userId=${encodeURIComponent(userId)}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error(`status ${res.status}`);
-        const payload = await res.json();
-        if (!cancelled) setDetail(payload);
-      } catch (e) {
-        if (!cancelled) setDetailError(true);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    // Privileged fields (real email, exact signup/last-sign-in time, plan,
+    // location, phone, lock status, Stripe invoice history) come from the
+    // admin-only server route.
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch(`/api/admin-user-detail?userId=${encodeURIComponent(userId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const payload = await res.json();
+      setDetail(payload);
+    } catch (e) {
+      setDetailError(true);
+    } finally {
+      setLoading(false);
+    }
   }, [userId]);
 
-  const displayName = detail?.email ? userName || detail.email : userName || "Account";
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function toggleLock() {
+    setLockBusy(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch("/api/admin-set-account-lock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId, locked: !detail?.locked }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const payload = await res.json();
+      setDetail((d) => (d ? { ...d, locked: payload.locked, bannedUntil: payload.bannedUntil } : d));
+    } catch (e) {
+      /* the button just goes back to its normal state; nothing changed server-side */
+    } finally {
+      setLockBusy(false);
+      setLockConfirming(false);
+    }
+  }
+
+  const shopName = detail?.shopName || null;
+  const locationLabel = [detail?.city, detail?.state, detail?.country].filter(Boolean).join(", ");
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
@@ -13648,12 +14104,18 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
         <ArrowLeft size={15} /> Back to Admin Dashboard
       </button>
 
+      {detail?.locked && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-sm text-rose-800 flex items-center gap-2">
+          <Lock size={15} className="shrink-0" /> This account is locked — it can't sign in until unlocked.
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
         <span className="w-14 h-14 rounded-full bg-stone-100 border border-stone-200 flex items-center justify-center text-2xl shrink-0 overflow-hidden">
           {userAvatar ? <img src={userAvatar} alt="" className="w-full h-full object-cover" /> : <User size={22} className="text-stone-400" />}
         </span>
-        <div>
-          <h1 className="text-xl font-bold text-stone-900" style={displayFont}>
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold text-stone-900 truncate" style={displayFont}>
             {userName || "Account"}
           </h1>
           <p className="text-sm text-stone-500 flex items-center gap-1">
@@ -13696,6 +14158,49 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
               <p className="text-xs text-stone-400 capitalize">
                 {detail?.plan?.status ? `${detail.plan.status}${detail.plan.billing ? ` · ${detail.plan.billing}` : ""}` : "No paid plan"}
               </p>
+            </div>
+            <div className="bg-white border border-stone-200 rounded-2xl p-4">
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1">Phone</p>
+              <p className="text-sm font-semibold text-stone-800">{detail?.phone || "—"}</p>
+            </div>
+            <div className="bg-white border border-stone-200 rounded-2xl p-4">
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1">Location</p>
+              <p className="text-sm font-semibold text-stone-800">{locationLabel || detail?.homeLabel || "—"}</p>
+            </div>
+            <div className="bg-white border border-stone-200 rounded-2xl p-4 flex flex-col justify-between">
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1">Account access</p>
+              {lockConfirming ? (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-stone-500">{detail?.locked ? "Unlock this account?" : "Lock this account? They won't be able to sign in."}</p>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={toggleLock}
+                      disabled={lockBusy}
+                      className={`flex-1 text-xs font-bold py-1.5 rounded-lg text-white disabled:opacity-50 ${detail?.locked ? "bg-emerald-700" : "bg-rose-600"}`}
+                    >
+                      {lockBusy ? "…" : "Confirm"}
+                    </button>
+                    <button onClick={() => setLockConfirming(false)} disabled={lockBusy} className="flex-1 text-xs font-semibold py-1.5 rounded-lg border border-stone-200">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setLockConfirming(true)}
+                  className={`text-sm font-semibold flex items-center gap-1.5 ${detail?.locked ? "text-emerald-700" : "text-rose-600"}`}
+                >
+                  {detail?.locked ? (
+                    <>
+                      <Unlock size={14} /> Unlock account
+                    </>
+                  ) : (
+                    <>
+                      <Lock size={14} /> Lock account
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
 
@@ -13748,6 +14253,7 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
                       <th className="pb-2 pr-3">Description</th>
                       <th className="pb-2 pr-3">Amount</th>
                       <th className="pb-2 pr-3">Status</th>
+                      <th className="pb-2 pr-3">Stripe</th>
                       <th className="pb-2">Receipt</th>
                     </tr>
                   </thead>
@@ -13758,14 +14264,32 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
                         <td className="py-2 pr-3 text-stone-700">{inv.description}</td>
                         <td className="py-2 pr-3 font-semibold text-stone-800">{formatMoney(inv.amountPaid)}</td>
                         <td className="py-2 pr-3 text-stone-500 capitalize">{inv.status}</td>
-                        <td className="py-2">
+                        <td className="py-2 pr-3">
                           {inv.hostedInvoiceUrl ? (
-                            <a href={inv.hostedInvoiceUrl} target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-semibold inline-flex items-center gap-1">
+                            <a href={inv.hostedInvoiceUrl} target="_blank" rel="noopener noreferrer" className="text-stone-500 font-semibold inline-flex items-center gap-1">
                               View <ExternalLink size={12} />
                             </a>
                           ) : (
                             "—"
                           )}
+                        </td>
+                        <td className="py-2">
+                          <button
+                            onClick={() =>
+                              setActiveReceipt({
+                                receiptNumber: inv.id,
+                                date: inv.created,
+                                description: inv.description,
+                                amount: inv.amountPaid,
+                                status: inv.status,
+                                customerName: userName,
+                                customerEmail: detail?.email,
+                              })
+                            }
+                            className="text-emerald-700 font-semibold inline-flex items-center gap-1"
+                          >
+                            <Download size={12} /> CropSwap receipt
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -13787,18 +14311,39 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
                   <thead>
                     <tr className="text-left text-xs font-bold text-stone-400 uppercase border-b border-stone-100">
                       <th className="pb-2 pr-3">Date</th>
+                      <th className="pb-2 pr-3">Listing</th>
                       <th className="pb-2 pr-3">Duration</th>
                       <th className="pb-2 pr-3">Amount</th>
-                      <th className="pb-2">Status</th>
+                      <th className="pb-2 pr-3">Status</th>
+                      <th className="pb-2">Receipt</th>
                     </tr>
                   </thead>
                   <tbody>
                     {sponsorReceipts.map((s) => (
                       <tr key={s.id} className="border-b border-stone-50 last:border-0">
                         <td className="py-2 pr-3 text-stone-500">{s.createdAt ? new Date(s.createdAt).toLocaleDateString() : "—"}</td>
+                        <td className="py-2 pr-3 text-stone-700">{productNameById[s.productId] || "—"}</td>
                         <td className="py-2 pr-3 text-stone-700">{s.days ? `${s.days} day${s.days === 1 ? "" : "s"}` : "—"}</td>
                         <td className="py-2 pr-3 font-semibold text-stone-800">{formatMoney(Number(s.amount) || 0)}</td>
-                        <td className="py-2 text-stone-500 capitalize">{s.status || "—"}</td>
+                        <td className="py-2 pr-3 text-stone-500 capitalize">{s.status || "—"}</td>
+                        <td className="py-2">
+                          <button
+                            onClick={() =>
+                              setActiveReceipt({
+                                receiptNumber: s.id,
+                                date: s.createdAt || Date.now(),
+                                description: `Sponsored Ads — ${productNameById[s.productId] || "listing"} (${s.days || "?"} day${s.days === 1 ? "" : "s"})`,
+                                amount: Number(s.amount) || 0,
+                                status: s.status,
+                                customerName: userName,
+                                customerEmail: detail?.email,
+                              })
+                            }
+                            className="text-emerald-700 font-semibold inline-flex items-center gap-1"
+                          >
+                            <Download size={12} /> CropSwap receipt
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -13808,6 +14353,7 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
           </div>
         </>
       )}
+      <ReceiptModal receipt={activeReceipt} onClose={() => setActiveReceipt(null)} />
     </div>
   );
 }
@@ -23205,6 +23751,40 @@ function RootShell() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // If an admin locks this account mid-session, Supabase's ban doesn't kill
+  // an already-open browser session by itself — only the NEXT sign-in or
+  // token refresh gets rejected (see api/admin-set-account-lock.js). This
+  // closes that gap from the browser side: periodically, and right before
+  // any navigation (so a real click surfaces it fast rather than waiting
+  // for the next tick), it forces an early token refresh. Per Supabase
+  // Auth's own behavior a banned account's refresh comes back with a
+  // distinct "user_banned" error the moment the ban takes effect — well
+  // before the access token would naturally expire — which is what flips
+  // this flag. The render gate further down turns that into a full-screen
+  // block nothing else renders behind.
+  const [accountLocked, setAccountLocked] = useState(false);
+  const lastLockCheckRef = useRef(0);
+  const checkAccountLock = useCallback(async () => {
+    const now = Date.now();
+    if (now - lastLockCheckRef.current < 15000) return; // don't hammer this on a burst of clicks
+    lastLockCheckRef.current = now;
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData?.session) return; // nothing to check while signed out
+      const { error: refreshErr } = await supabase.auth.refreshSession();
+      if (refreshErr && (refreshErr.code === "user_banned" || /banned/i.test(refreshErr.message || ""))) {
+        setAccountLocked(true);
+      }
+    } catch {
+      // A network hiccup here shouldn't lock anyone out by itself — the
+      // next periodic tick or click will just try again.
+    }
+  }, []);
+  useEffect(() => {
+    checkAccountLock();
+    const id = setInterval(checkAccountLock, 30000);
+    return () => clearInterval(id);
+  }, [checkAccountLock]);
   // Every avatar in the app that represents someone else opens this same
   // small card — pass just {id, name, avatar} and it looks the rest up.
   const [profileCardTarget, setProfileCardTarget] = useState(null);
@@ -23293,9 +23873,13 @@ function RootShell() {
         return false;
       }
       setRoute(r);
+      // Fire-and-forget: throttled internally, so this is cheap on every
+      // click and is exactly the "clicks on a button or page" trigger for
+      // the locked-account check, on top of its own 30s background tick.
+      checkAccountLock();
       return true;
     },
-    [me, requireAuth]
+    [me, requireAuth, checkAccountLock]
   );
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -23592,6 +24176,21 @@ function RootShell() {
   // the loading ones — it doesn't depend on `me` or market data at all, and
   // shouldn't flash the normal app (or a normal sign-in screen) behind it
   // even for a moment.
+  // Ahead of every other gate, including the admin one below — an admin
+  // account can never be locked (admin-set-account-lock.js refuses to lock
+  // itself), so this can only ever fire for a normal account, and once it
+  // does, nothing else on the page should render underneath it.
+  if (accountLocked) {
+    return (
+      <AccountLockedOverlay
+        onDismiss={async () => {
+          await signOut();
+          window.location.href = "/";
+        }}
+      />
+    );
+  }
+
   if (adminLoginRequested && !adminMfaVerified) {
     return (
       <AdminLoginGate
@@ -23654,6 +24253,10 @@ function RootShell() {
             setRecovering(false);
           }}
           initialMode={authFlow?.mode || "signin"}
+          onAdminLogin={() => {
+            setAuthFlow(null);
+            setAdminLoginRequested(true);
+          }}
           onRecoveryStart={() => setRecovering(true)}
           onRecoveryEnd={() => setRecovering(false)}
           // The reset actually finished — also clear authFlow (not just
@@ -23776,6 +24379,7 @@ function RootShell() {
             {route.screen === "bulkMessaging" && <BulkMessagingScreen navigate={navigate} />}
             {route.screen === "ads" && <AdsScreenEntry navigate={navigate} />}
             {route.screen === "adminDashboard" && <AdminScreenEntry navigate={navigate} />}
+            {route.screen === "adminDirectory" && <AdminDirectoryEntry navigate={navigate} />}
             {route.screen === "adminUserDetail" && (
               <AdminUserDetailEntry navigate={navigate} userId={route.userId} userName={route.userName} userAvatar={route.userAvatar} />
             )}

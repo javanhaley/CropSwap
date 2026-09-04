@@ -49,7 +49,7 @@ const RESEND_COOLDOWN_SECONDS = 60;
 // also drop whatever originally opened this screen, so someone resetting
 // their password lands back in normal browsing, not on a "complete your
 // profile" page they never asked for.
-export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "signin", onRecoveryStart, onRecoveryEnd, onRecoveryComplete }) {
+export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "signin", onRecoveryStart, onRecoveryEnd, onRecoveryComplete, onAdminLogin }) {
   const [mode, setMode] = useState(initialMode); // signin | signup | signup-verify | forgot-request | forgot-verify | forgot-newpassword
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -101,8 +101,31 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
         if (data.session) onSignedIn?.();
       }
     } catch (err) {
-      setError(friendlyAuthError(err, "Something went wrong. Try again."));
-      if (/rate limit/i.test(err?.message || "")) setResendCooldown(RESEND_COOLDOWN_SECONDS);
+      // A locked (admin-banned) account fails signInWithPassword the exact
+      // same generic way a wrong password does — Supabase doesn't
+      // distinguish the two here, only on a token refresh, which doesn't
+      // apply since there's no session yet. So on any sign-in failure,
+      // check separately whether this email belongs to a locked account and
+      // say so plainly instead of leaving them thinking they mistyped it.
+      let lockedMessage = null;
+      if (mode === "signin") {
+        try {
+          const res = await fetch("/api/check-email-locked", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email }),
+          });
+          const j = await res.json().catch(() => null);
+          if (j?.locked) {
+            lockedMessage = "This account has been locked by an administrator. Contact support@cropswapmarket.com if you believe this is a mistake.";
+          }
+        } catch {
+          // If this check itself fails, just fall through to the normal
+          // generic message below rather than blocking sign-in feedback.
+        }
+      }
+      setError(lockedMessage || friendlyAuthError(err, "Something went wrong. Try again."));
+      if (!lockedMessage && /rate limit/i.test(err?.message || "")) setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } finally {
       setBusy(false);
     }
@@ -590,6 +613,21 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
           <p className="text-center text-[11px] text-stone-400 mt-4">
             Your name and avatar are set up on the next screen — this just secures your account across devices.
           </p>
+        )}
+
+        {/* Deliberately small and unlabeled beyond "Admin" — this no longer
+            signs anyone in by itself (that was the actual bug). It just opens
+            AdminLoginGate, a completely separate-looking screen that still
+            requires the real cropswapadmin@gmail.com password AND a code
+            emailed to that same address before anything is granted. */}
+        {isMainFlow && onAdminLogin && (
+          <button
+            type="button"
+            onClick={onAdminLogin}
+            className="block mx-auto mt-5 text-[11px] font-semibold text-stone-300 hover:text-stone-500"
+          >
+            Admin
+          </button>
         )}
       </div>
     </div>
