@@ -165,7 +165,15 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
       // password is actually changed — tell the parent so it doesn't mistake
       // that for a completed sign-in and pull this screen away early.
       onRecoveryStart?.();
-      setNotice(`We sent a code to ${email}. Enter it below — it expires shortly, so grab it fresh.`);
+      // Deliberately non-committal about whether an account exists —
+      // Supabase's resetPasswordForEmail already succeeds silently either
+      // way (it just doesn't send anything if there's no account), which is
+      // the right call security-wise: confirming "yes, that email has an
+      // account" here would let anyone use this screen to check who's
+      // registered. A real person who typo'd, or who never actually signed
+      // up, gets pointed at the "New here?" link below instead of a
+      // definitive yes/no.
+      setNotice(`If an account exists for ${email}, we've sent a code to it. Enter it below — it expires shortly, so grab it fresh.`);
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
       setError(friendlyAuthError(err, "Couldn't send a reset code. Check the email and try again."));
@@ -451,6 +459,27 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
               {busy && <Loader2 size={16} className="animate-spin" />}
               {resendCooldown > 0 ? `Try again in ${resendCooldown}s` : "Send reset code"}
             </button>
+            <p className="text-center text-xs text-stone-400 mt-3">
+              New here?{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setNotice("");
+                  setMode("signup");
+                  // Not requested yet at this point (sendResetCode hasn't
+                  // run), so onRecoveryStart never fired for this attempt —
+                  // but a prior attempt on a different email this same visit
+                  // could have left `recovering` true in the parent. Clear
+                  // it either way, same as "Back to sign in" above.
+                  onRecoveryEnd?.();
+                }}
+                className="font-semibold text-emerald-700 hover:text-emerald-800"
+              >
+                Create an account
+              </button>{" "}
+              instead.
+            </p>
           </form>
         )}
 
@@ -500,6 +529,26 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
             >
               {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Didn't get it? Resend code"}
             </button>
+            <p className="text-center text-xs text-stone-400 mt-3">
+              Still nothing after a few minutes? You may not have an account yet.{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setNotice("");
+                  setMode("signup");
+                  // A real session only gets created once a code is actually
+                  // verified (see verifyResetCode) — nobody has reached that
+                  // yet at this step, so there's nothing to undo beyond
+                  // clearing the parent's `recovering` flag.
+                  onRecoveryEnd?.();
+                }}
+                className="font-semibold text-emerald-700 hover:text-emerald-800"
+              >
+                Create an account
+              </button>{" "}
+              instead.
+            </p>
           </form>
         )}
 
