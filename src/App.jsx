@@ -1856,6 +1856,16 @@ function splitCityState(label) {
   const parts = label.split(",").map((s) => s.trim());
   return { city: parts[0] || null, state: parts[1] || null };
 }
+// Turns a 2-letter ISO country code (what Vercel's x-vercel-ip-country
+// header sends) into its flag emoji — regional indicator symbols are just
+// A-Z mapped to a Unicode block starting at U+1F1E6, so "US" becomes 🇺🇸
+// with no lookup table needed. Returns "" for anything that isn't exactly
+// two letters (an unrecognized/missing country) rather than a broken glyph.
+function countryFlagEmoji(code) {
+  if (!code || typeof code !== "string" || code.length !== 2) return "";
+  const points = [...code.toUpperCase()].map((c) => 127397 + c.charCodeAt(0));
+  return String.fromCodePoint(...points);
+}
 // Fire-and-forget analytics logging for the premium dashboard. Never allowed
 // to throw into the caller — a dropped analytics row is a rounding error on a
 // chart, not something that should ever break the feature it's attached to.
@@ -1875,6 +1885,54 @@ async function logAnalyticsEvent(eventType, fields = {}) {
     });
   } catch (e) {
     console.error("analytics log failed", eventType, e);
+  }
+}
+// A random, anonymous per-browser id — NOT tied to any account — so the
+// admin "Website visitors" panel can show an approximate unique-visitor
+// count without cookies or storing IP addresses. Persisted in localStorage
+// so it survives a refresh but stays private to this one browser; a guest
+// who clears site data or switches browsers just looks like a new visitor,
+// which is the right trade-off for something this low-stakes.
+function getOrCreateVisitorId() {
+  try {
+    const existing = localStorage.getItem("cs_visitorId");
+    if (existing) return existing;
+    const fresh = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem("cs_visitorId", fresh);
+    return fresh;
+  } catch {
+    return null; // localStorage unavailable — the visit still gets counted, just not toward "unique"
+  }
+}
+// Fire-and-forget site-visit beacon, called once per in-app screen change
+// (see the effect in RootShell). Uses sendBeacon when available so a visit
+// still gets recorded even if it fires right as someone navigates away or
+// closes the tab — a plain fetch can get cancelled mid-flight in that exact
+// moment, which would quietly under-count the most common kind of "view".
+// Never allowed to throw into the caller, same contract as logAnalyticsEvent.
+function trackVisit(screenPath, userId) {
+  try {
+    const payload = JSON.stringify({
+      path: screenPath,
+      referrerHost: (() => {
+        try {
+          return document.referrer ? new URL(document.referrer).hostname : null;
+        } catch {
+          return null;
+        }
+      })(),
+      device: /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "") ? "mobile" : "desktop",
+      visitorId: getOrCreateVisitorId(),
+      userId: userId || null,
+    });
+    if (navigator.sendBeacon) {
+      const blob = new Blob([payload], { type: "application/json" });
+      navigator.sendBeacon("/api/track-visit", blob);
+    } else {
+      fetch("/api/track-visit", { method: "POST", headers: { "Content-Type": "application/json" }, body: payload, keepalive: true }).catch(() => {});
+    }
+  } catch (e) {
+    console.error("visit tracking failed", e);
   }
 }
 // De-dupes view logging to once per entity per page load — a refresh resets
@@ -13344,6 +13402,102 @@ function AdminDashboardScreen({ navigate }) {
     };
   }, [heatmap]);
 
+  // Real site traffic — every in-app screen view, guests included (see
+  // trackVisit() in RootShell / api/track-visit.js). Separate from the
+  // feature-usage analytics_events above: those log specific ACTIONS
+  // (favorited a listing, sent a message...), this logs raw VIEWS of the
+  // app itself, the same way a classic web-analytics tool would, and works
+  // for anonymous visitors who never touch a feature at all. Reuses the
+  // same growthRangeId selector as Growth & activity above rather than
+  // adding a second Hours/Days/Weeks/Months/Years picker.
+  const [siteVisits, setSiteVisits] = useState([]);
+  const [siteVisitsLoading, setSiteVisitsLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setSiteVisitsLoading(true);
+    const sinceMs = Date.now() - growthRange.ms;
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data?.session?.access_token;
+        if (!token) return;
+        const res = await fetch(`/api/admin-site-visits?sinceMs=${sinceMs}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (!cancelled) setSiteVisits(payload.visits || []);
+      } catch (e) {
+        /* visitor panel just won't render */
+      } finally {
+        if (!cancelled) setSiteVisitsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [growthRangeId]);
+
+  const visitSeries = useMemo(
+    () => bucketSeries(siteVisits, growthRange.granularity, growthSinceMs, Date.now()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [siteVisits, growthRangeId]
+  );
+
+  // visitor_id is a random id a browser makes up for itself (see
+  // getOrCreateVisitorId in src/App.jsx) — an approximation of "unique
+  // visitors", not a durable identity. Missing for the rare beacon that
+  // fired before localStorage was available; those just don't count toward
+  // this number; they still count toward Total views.
+  const uniqueVisitorCount = useMemo(() => {
+    const ids = new Set();
+    siteVisits.forEach((v) => {
+      if (v.visitor_id) ids.add(v.visitor_id);
+    });
+    return ids.size;
+  }, [siteVisits]);
+
+  const mobileSharePct = useMemo(() => {
+    if (siteVisits.length === 0) return null;
+    const mobile = siteVisits.filter((v) => v.device === "mobile").length;
+    return Math.round((mobile / siteVisits.length) * 100);
+  }, [siteVisits]);
+
+  const topCountries = useMemo(() => {
+    const counts = new Map();
+    siteVisits.forEach((v) => {
+      const key = v.country || "—";
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return [...counts.entries()]
+      .map(([code, n]) => ({ id: code, name: code === "—" ? "Unknown" : `${countryFlagEmoji(code)} ${code}`, n }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 8);
+  }, [siteVisits]);
+
+  const topPages = useMemo(() => {
+    const counts = new Map();
+    siteVisits.forEach((v) => {
+      const key = v.path || "/explore";
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return [...counts.entries()]
+      .map(([id, n]) => ({ id, name: id, n }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 8);
+  }, [siteVisits]);
+
+  const topReferrers = useMemo(() => {
+    const counts = new Map();
+    siteVisits.forEach((v) => {
+      const key = v.referrer_host || "Direct / app";
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return [...counts.entries()]
+      .map(([id, n]) => ({ id, name: id, n }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 8);
+  }, [siteVisits]);
+
   const openReports = reports.filter((r) => r.status !== "resolved");
   const activeSponsorships = sponsorships.filter((s) => s.status === "active");
   const totalRevenue = sponsorships.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
@@ -13648,6 +13802,83 @@ function AdminDashboardScreen({ navigate }) {
                 <span className="cs-t10 text-stone-400 font-semibold">Peak</span>
               </div>
             </>
+          )}
+        </DashPanel>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <h2 className="font-bold text-stone-900 flex items-center gap-1.5">
+            <Eye size={16} className="text-emerald-700" /> Website visitors
+          </h2>
+          <p className="text-xs text-stone-400">Same range as Growth &amp; activity above · guests included</p>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+          <div className="rounded-2xl border border-stone-200 bg-white p-4">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-stone-400 uppercase mb-1">
+              <Eye size={13} /> Total views
+            </div>
+            <div className="text-2xl font-bold text-stone-900">{siteVisitsLoading ? "…" : siteVisits.length.toLocaleString()}</div>
+          </div>
+          <div className="rounded-2xl border border-stone-200 bg-white p-4">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-stone-400 uppercase mb-1">
+              <Users size={13} /> Unique visitors
+            </div>
+            <div className="text-2xl font-bold text-stone-900">{siteVisitsLoading ? "…" : uniqueVisitorCount.toLocaleString()}</div>
+          </div>
+          <div className="rounded-2xl border border-stone-200 bg-white p-4">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-stone-400 uppercase mb-1">
+              <Globe size={13} /> Top country
+            </div>
+            <div className="text-2xl font-bold text-stone-900">{siteVisitsLoading ? "…" : topCountries[0]?.name || "—"}</div>
+          </div>
+          <div className="rounded-2xl border border-stone-200 bg-white p-4">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-stone-400 uppercase mb-1">
+              <SlidersHorizontal size={13} /> On mobile
+            </div>
+            <div className="text-2xl font-bold text-stone-900">{siteVisitsLoading || mobileSharePct === null ? "…" : `${mobileSharePct}%`}</div>
+          </div>
+        </div>
+
+        <DashPanel title="Views over time" icon={TrendingUp} className="mb-4" info="Every screen view across the whole site in this range, guests included — not just signed-in accounts. A person browsing five screens counts as five views, same as any standard web-traffic chart.">
+          {siteVisitsLoading ? (
+            <div className="flex items-center justify-center py-8 text-stone-400">
+              <Loader2 size={18} className="animate-spin" />
+            </div>
+          ) : (
+            <DetailTrendChart data={visitSeries} dataKey="count" color="#0d9488" height={180} />
+          )}
+        </DashPanel>
+
+        <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <DashPanel title="Visitors by country" icon={Globe} info="Where visits are physically coming from, by IP — not the account's stated home location, so this includes guests who've never signed up at all.">
+            {siteVisitsLoading ? (
+              <div className="flex items-center justify-center py-8 text-stone-400">
+                <Loader2 size={18} className="animate-spin" />
+              </div>
+            ) : (
+              <RankedList items={topCountries} emptyText="No visits in this range yet." />
+            )}
+          </DashPanel>
+          <DashPanel title="Most-viewed pages" icon={LayoutGrid} info="Which in-app screens got the most views in this range, across every visitor.">
+            {siteVisitsLoading ? (
+              <div className="flex items-center justify-center py-8 text-stone-400">
+                <Loader2 size={18} className="animate-spin" />
+              </div>
+            ) : (
+              <RankedList items={topPages} emptyText="No visits in this range yet." />
+            )}
+          </DashPanel>
+        </div>
+
+        <DashPanel title="Where traffic comes from" icon={ExternalLink} info="The site each visit's browser reported arriving from. 'Direct / app' covers anyone who typed the URL, used a bookmark, opened a saved tab, or is browsing a repeat visit within the app itself — none of those carry a referrer.">
+          {siteVisitsLoading ? (
+            <div className="flex items-center justify-center py-8 text-stone-400">
+              <Loader2 size={18} className="animate-spin" />
+            </div>
+          ) : (
+            <RankedList items={topReferrers} emptyText="No visits in this range yet." />
           )}
         </DashPanel>
       </div>
@@ -24585,27 +24816,6 @@ function RootShell() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // Someone opened cropswapmarket.com/incentives/<code> — an affiliate's
-  // referral link (see AffiliateScreen / ReferralCardModal for where that
-  // gets shared). There's no dedicated landing screen for it: just stash
-  // the code for whenever they actually sign up (createProfile's caller
-  // below reads this and calls /api/affiliate-track-signup once the new
-  // account exists — there's no session yet at this point to record a
-  // referral against), scrub the path back to "/", and drop them into
-  // normal browsing. localStorage rather than a one-render useState like
-  // authCallback/checkoutReturn above, since someone may browse a while
-  // before actually signing up.
-  useEffect(() => {
-    try {
-      const match = window.location.pathname.match(/^\/incentives\/([A-Za-z0-9-]+)\/?$/);
-      if (match) {
-        localStorage.setItem("cs_pendingReferralCode", match[1].toLowerCase());
-        window.history.replaceState(null, "", "/");
-        globalToast?.("Welcome! You were invited by a fellow CropSwap grower 🌱");
-      }
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   // If an admin locks this account mid-session, Supabase's ban doesn't kill
   // an already-open browser session by itself — only the NEXT sign-in or
   // token refresh gets rejected (see api/admin-moderate-account.js). This
@@ -24677,6 +24887,36 @@ function RootShell() {
   // route they were headed to (if any) so a successful sign-up can resume
   // there rather than dumping them back on Explore.
   const [authFlow, setAuthFlow] = useState(null);
+  // Someone opened cropswapmarket.com/incentives/<code> — an affiliate's
+  // referral link (see AffiliateScreen / ReferralCardModal for where that
+  // gets shared). Stash the code for whenever they actually sign up
+  // (createProfile's caller below reads this and calls
+  // /api/affiliate-track-signup once the new account exists — there's no
+  // session yet at this point to record a referral against), scrub the path
+  // back to "/", and — this has to live down here rather than up with the
+  // other one-render URL-flag effects (authCallback/checkoutReturn/
+  // adminLoginRequested above) specifically so it can reach setAuthFlow,
+  // which isn't declared until the line right above this comment — drop
+  // them straight into the sign-up screen instead of just toasting and
+  // leaving them on normal Explore. A silent toast-and-redirect tested
+  // poorly: clicking an invite link and landing on the plain homepage reads
+  // as "did that even do anything?" Going straight to sign-up makes the
+  // invite feel like it actually did something, while "Not now — keep
+  // browsing" on that screen still leaves normal browsing one tap away.
+  // Someone who's already signed in on this browser (`me` truthy) isn't
+  // affected either way — the `authFlow && !me` gate below never shows
+  // AuthGate/Onboarding over an existing session.
+  useEffect(() => {
+    try {
+      const match = window.location.pathname.match(/^\/incentives\/([A-Za-z0-9-]+)\/?$/);
+      if (match) {
+        localStorage.setItem("cs_pendingReferralCode", match[1].toLowerCase());
+        window.history.replaceState(null, "", "/");
+        setAuthFlow({ reason: "claim your invite from a fellow CropSwap grower 🌱", mode: "signup" });
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // True from the moment someone requests a password-reset code until they've
   // actually set a new password (or backs out). Verifying that code signs
   // them in (Supabase hands back a real session so they CAN set a new
@@ -24718,6 +24958,19 @@ function RootShell() {
     },
     [me]
   );
+
+  // Fires once per in-app screen change (including the very first landing
+  // screen) so the admin dashboard's "Website visitors" panel reflects real
+  // traffic — guests included, since most of CropSwap is browsable signed
+  // out. Deliberately keyed on route.screen rather than the whole route
+  // object: switching which shop/product is open within the same screen
+  // (e.g. one product card to another) doesn't fire a second beacon, only
+  // an actual screen change does — same granularity the sidebar/bottom nav
+  // themselves represent.
+  useEffect(() => {
+    trackVisit(`/${route.screen || "explore"}`, me?.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.screen]);
 
   // One handler covers every text field in the app: when something gains focus,
   // centre it in whatever space the keyboard leaves.

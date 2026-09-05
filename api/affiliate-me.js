@@ -79,9 +79,17 @@ export async function GET(request) {
       paidAt: r.paid_at ? new Date(r.paid_at).getTime() : null,
     }));
 
+    // "Pending" covers the whole in-progress lifecycle from the referrer's
+    // point of view: a brand-new signup still counting down to day 31
+    // ("pending"), and one that's already cleared that check and is
+    // waiting on admin approval or an approved-but-not-yet-paid transfer
+    // ("eligible_awaiting_approval" / "approved"). Only the latter two have
+    // a known payout amount (set by the cron sweep once the plan/tier is
+    // confirmed) — a fresh "pending" row's payoutAmountCents is still null,
+    // so it correctly contributes $0 to pendingCents until then.
     const totals = referrals.reduce(
       (acc, r) => {
-        if (r.status === "eligible_awaiting_approval" || r.status === "approved") {
+        if (r.status === "pending" || r.status === "eligible_awaiting_approval" || r.status === "approved") {
           acc.pendingCount += 1;
           acc.pendingCents += r.payoutAmountCents || 0;
         } else if (r.status === "paid") {
