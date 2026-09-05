@@ -3,6 +3,9 @@
     { "path": "/api/cron-affiliate-sweep", "schedule": "0 9 * * *" },
     { "path": "/api/cron-lock-inactivity-sweep", "schedule": "0 9 * * *" }
   ],
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
