@@ -9,7 +9,21 @@
 import { getStripe, PRICE_IDS, listLiveSubscriptions, isUpdatableSubscription, cancelSubscriptions } from "./_stripe.js";
 import { getUserFromRequest, patchProfile, patchShopBillingStatusForUser } from "./_supabaseAdmin.js";
 
+// ===== TEMP CHECKOUT BLOCK =====
+// Real subscription checkout is fully wired up and working — this just
+// pauses it while the account is still being tested end-to-end, so nobody
+// (including a tester) can actually be charged a real card before it's
+// time to go live on Stripe. This is the ONE authoritative gate: it's
+// server-side, so it can't be bypassed by re-enabling the disabled button
+// in the browser. src/App.jsx's CheckoutScreen has a matching flag purely
+// for the on-screen message — search "CHECKOUT_TEMP_DISABLED" in both
+// files and flip both to false (or delete both blocks) to go live.
+const CHECKOUT_TEMP_DISABLED = true;
+
 export async function POST(request) {
+  if (CHECKOUT_TEMP_DISABLED) {
+    return Response.json({ error: "Checkout is temporarily paused for testing — please check back soon." }, { status: 503 });
+  }
   let user;
   try {
     user = await getUserFromRequest(request);

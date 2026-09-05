@@ -12204,6 +12204,14 @@ function digitsOnly(s) {
   return (s || "").replace(/\D/g, "");
 }
 
+// ===== TEMP CHECKOUT BLOCK =====
+// Mirrors the authoritative server-side gate in api/create-checkout-
+// session.js — that one actually stops the charge; this one just keeps the
+// screen from inviting a click that would otherwise fail with a confusing
+// error. Search "CHECKOUT_TEMP_DISABLED" in both files and flip both to
+// false (or delete both blocks) once ready to go live on Stripe.
+const CHECKOUT_TEMP_DISABLED = true;
+
 function CheckoutScreen({ navigate, tier, billing }) {
   const { me, startCheckout, showToast } = useApp();
   const [busy, setBusy] = useState(false);
@@ -12272,6 +12280,10 @@ function CheckoutScreen({ navigate, tier, billing }) {
   };
 
   const confirm = async () => {
+    if (CHECKOUT_TEMP_DISABLED) {
+      showToast("Checkout is paused for testing right now — check back soon!");
+      return;
+    }
     if (!formReady) return;
     setBusy(true);
     try {
