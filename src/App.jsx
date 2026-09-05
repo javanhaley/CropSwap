@@ -14794,6 +14794,42 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
     }
   }
 
+  // TEST ONLY — see api/admin-grant-plan.js. Sets this account's plan
+  // directly, exactly the shape a real Stripe checkout/webhook would write,
+  // without a checkout session, a card, or Stripe ever being involved. This
+  // exists so the rest of a subscription's downstream effects (Premium
+  // dashboard features, and specifically the affiliate payout pipeline —
+  // cron-affiliate-sweep.js needs a referred account to actually be on a
+  // live annual paid plan before it'll move that referral past "pending")
+  // can be tested while real checkout is paused
+  // (CHECKOUT_TEMP_DISABLED in api/create-checkout-session.js). Doesn't
+  // touch affiliate_referrals at all, so a referral tied to this account
+  // still goes through the exact same pending → eligible → approved → paid
+  // lifecycle it would for a real subscriber — this only removes the
+  // Stripe/card step, nothing downstream is shortcut.
+  const [grantBusy, setGrantBusy] = useState(false);
+  async function grantTestPlan(tier, billing) {
+    setGrantBusy(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch("/api/admin-grant-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId, tier, billing }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || `status ${res.status}`);
+      globalToast?.(tier === "free" ? "Reverted to Free (test)" : `Granted ${tier === "premium" ? "Premium" : "Basic"} (${billing}, test) — no card was involved`);
+      await load();
+    } catch (e) {
+      globalToast?.(e?.message || "Couldn't update this account's plan");
+    } finally {
+      setGrantBusy(false);
+    }
+  }
+
   const shopName = detail?.shopName || null;
   const locationLabel = [detail?.city, detail?.state, detail?.country].filter(Boolean).join(", ");
 
@@ -14887,6 +14923,59 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
               <p className="text-xs font-bold text-stone-400 uppercase mb-1">Location</p>
               <p className="text-sm font-semibold text-stone-800">{locationLabel || detail?.homeLabel || "—"}</p>
             </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 sm:col-span-3">
+              <p className="text-xs font-bold text-amber-800 uppercase mb-1 flex items-center gap-1.5">
+                <Gift size={13} /> Grant plan — test only, bypasses Stripe
+              </p>
+              <p className="text-xs text-amber-700 mb-3">
+                Sets this account's plan directly, no checkout session or card involved. Real checkout is paused right now (see CHECKOUT_TEMP_DISABLED) — use
+                this to test anything downstream of "has a paid plan" (Premium features, the affiliate payout pipeline) without needing a real subscription.
+                A referral tied to this account still moves through the normal pending → eligible → paid timeline afterward — this doesn't touch that at all.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  disabled={grantBusy}
+                  onClick={() => grantTestPlan("basic", "monthly")}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-full border border-amber-300 bg-white hover:bg-amber-100 disabled:opacity-50"
+                >
+                  Basic · monthly
+                </button>
+                <button
+                  disabled={grantBusy}
+                  onClick={() => grantTestPlan("basic", "annual")}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-full border border-amber-300 bg-white hover:bg-amber-100 disabled:opacity-50"
+                >
+                  Basic · annual
+                </button>
+                <button
+                  disabled={grantBusy}
+                  onClick={() => grantTestPlan("premium", "monthly")}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-full border border-amber-300 bg-white hover:bg-amber-100 disabled:opacity-50"
+                >
+                  Premium · monthly
+                </button>
+                <button
+                  disabled={grantBusy}
+                  onClick={() => grantTestPlan("premium", "annual")}
+                  className="text-xs font-bold px-3 py-1.5 rounded-full border border-amber-400 bg-amber-800 text-white hover:bg-amber-900 disabled:opacity-50"
+                >
+                  Premium · annual
+                </button>
+                <button
+                  disabled={grantBusy}
+                  onClick={() => grantTestPlan("free")}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-full border border-stone-200 bg-white hover:bg-stone-50 disabled:opacity-50 text-stone-600"
+                >
+                  Revert to Free
+                </button>
+              </div>
+              <p className="text-[11px] text-amber-600 mt-2">
+                Affiliate commissions ($30 Basic / $50 Premium) only pay out for <span className="font-semibold">annual</span> plans — pick annual here if
+                you're testing the referral payout flow specifically.
+              </p>
+            </div>
+
             <div className="bg-white border border-stone-200 rounded-2xl p-4 flex flex-col justify-between sm:col-span-3">
               <p className="text-xs font-bold text-stone-400 uppercase mb-2">Account access</p>
               <div className="flex flex-wrap items-center gap-2">
@@ -23002,7 +23091,13 @@ function VendorDashboard({ navigate }) {
               </span>
               <div className="min-w-0">
                 <p className="text-sm font-bold text-stone-900">This is a sample dashboard</p>
-                <p className="text-xs text-amber-800 truncate">Start selling and go Premium to unlock this for your own shop.</p>
+                <p className="text-xs text-amber-800">
+                  Start selling and{" "}
+                  <button onClick={() => navigate({ screen: "plans" })} className="font-bold underline underline-offset-2">
+                    go Premium
+                  </button>{" "}
+                  to unlock this for your own shop.
+                </p>
               </div>
             </div>
             <button onClick={() => navigate({ screen: "store" })} className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition">
