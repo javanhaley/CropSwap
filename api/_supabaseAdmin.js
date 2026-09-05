@@ -118,3 +118,120 @@ export async function patchShopBillingStatusForUser(userId, isActive) {
     );
   if (writeErr) throw writeErr;
 }
+
+// Sets or clears a shop's `visibilityOverride` — a field completely
+// separate from `billingStatus` above. billingStatus tracks whether a
+// subscription is currently paying for the storefront; visibilityOverride
+// tracks whether a HUMAN decision (the owner pausing their own account, or
+// an admin banning/deleting it) says buyers shouldn't see this shop right
+// now. Keeping them apart means pausing an account doesn't get silently
+// undone by an unrelated billing-status flip, and un-pausing doesn't
+// accidentally resurrect a shop whose subscription lapsed while paused.
+// `override` is "paused" | "banned" | "deleted" | null (null clears it —
+// the buyer-facing visibility check in src/App.jsx treats any non-null
+// value here as hidden, same as inactive billing, except the owner can
+// still see and manage their own shop while merely paused).
+export async function setShopVisibilityOverride(userId, override) {
+  const admin = getSupabaseAdmin();
+  const { data: profileRow } = await admin.from("kv").select("value").eq("owner_id", userId).eq("key", "me:profile").maybeSingle();
+  if (!profileRow?.value) return;
+  const profile = JSON.parse(profileRow.value);
+  const shopId = profile?.shopId;
+  if (!shopId) return;
+  const { data: marketRow, error } = await admin.from("shared_kv").select("value").eq("key", "market:v7").maybeSingle();
+  if (error || !marketRow?.value) return;
+  const marketData = JSON.parse(marketRow.value);
+  const shops = Array.isArray(marketData.shops) ? marketData.shops : [];
+  const idx = shops.findIndex((s) => s.id === shopId);
+  if (idx === -1) return;
+  const current = shops[idx];
+  if ((current.visibilityOverride || null) === (override || null)) return; // already correct
+  const nextShops = shops.slice();
+  nextShops[idx] = { ...current, visibilityOverride: override || null };
+  const { error: writeErr } = await admin
+    .from("shared_kv")
+    .upsert(
+      { key: "market:v7", value: JSON.stringify({ ...marketData, shops: nextShops }), updated_by: userId, updated_at: new Date().toISOString() },
+      { onConflict: "key" }
+    );
+  if (writeErr) throw writeErr;
+}
+
+// Applies or clears a real Supabase Auth ban on an account — the same
+// ~100-year "indefinite" duration admin-set-account-lock.js established,
+// now shared by every moderation action that needs to cut off sign-in
+// (lock, ban, delete) and by reactivate (which clears it). This is what
+// actually stops someone from signing in or refreshing a session — the
+// account_moderation table below is just the human-readable record of
+// status/reason/who/when layered on top of it.
+const INDEFINITE_BAN_DURATION = "876000h";
+export async function setAuthBan(userId, banned) {
+  const admin = getSupabaseAdmin();
+  const { data, error } = await admin.auth.admin.updateUserById(userId, {
+    ban_duration: banned ? INDEFINITE_BAN_DURATION : "none",
+  });
+  if (error) throw error;
+  return data?.user?.banned_until ? new Date(data.user.banned_until).getTime() : null;
+}
+
+// Upserts the current-status row in account_moderation and appends the
+// matching audit-trail row in account_moderation_history. Every admin
+// moderation action (and the two cron sweeps) goes through this single
+// function so the two tables can never drift apart.
+export async function recordModerationAction({ userId, email, action, status, reason, note, actorEmail }) {
+  const admin = getSupabaseAdmin();
+  const nowIso = new Date().toISOString();
+  const { error: upsertErr } = await admin.from("account_moderation").upsert(
+    {
+      user_id: userId,
+      email: (email || "").toLowerCase(),
+      status,
+      reason: reason || null,
+      note: note || null,
+      actor_email: actorEmail || null,
+      locked_at: status === "locked" ? nowIso : null,
+      updated_at: nowIso,
+    },
+    { onConflict: "user_id" }
+  );
+  if (upsertErr) throw upsertErr;
+  const { error: historyErr } = await admin.from("account_moderation_history").insert({
+    user_id: userId,
+    email: (email || "").toLowerCase(),
+    action,
+    reason: reason || null,
+    note: note || null,
+    actor_email: actorEmail || "system",
+  });
+  if (historyErr) throw historyErr;
+}
+
+// Shared gate for the two Vercel Cron routes (cron-affiliate-sweep.js,
+// cron-lock-inactivity-sweep.js). Vercel automatically sends
+// `Authorization: Bearer <CRON_SECRET>` on requests it makes to a
+// cron-configured path when that env var is set — this just checks it
+// matches, so nobody can trigger either sweep (or the payouts it can
+// trigger) by guessing the URL. Returns an error Response to return
+// straight from the route, or null if the check passed.
+export function checkCronAuth(request) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) {
+    console.error("cron route: CRON_SECRET is not set");
+    return Response.json({ error: "Server misconfiguration" }, { status: 500 });
+  }
+  const header = request.headers.get("authorization") || "";
+  if (header !== `Bearer ${secret}`) {
+    return Response.json({ error: "Not authorised" }, { status: 401 });
+  }
+  return null;
+}
+
+// "Real future timestamp within 50 years" — the same guard used across
+// admin-directory.js / admin-user-detail.js / check-email-locked.js to tell
+// an actual ban from Supabase's far-future "not banned" sentinel, which
+// still parses as a valid (huge) date.
+export function isRealBan(bannedUntil) {
+  const ms = bannedUntil ? new Date(bannedUntil).getTime() : null;
+  const now = Date.now();
+  return !!ms && ms > now && ms < now + 50 * 365 * 86400000;
+}

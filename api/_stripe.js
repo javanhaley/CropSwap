@@ -87,3 +87,34 @@ export function tierFromPriceId(priceId) {
   }
   return null;
 }
+
+// Attempts the actual money movement for one approved affiliate referral —
+// shared by admin-affiliate-payouts.js (an admin approving one right now,
+// with payout info already on file) and stripe-webhook.js's account.updated
+// handler (a backlog of already-approved referrals becoming payable the
+// moment an affiliate finishes Connect onboarding). Always ends with the
+// referral in "paid" or "failed" — never left silently "approved" after
+// this was actually attempted, so nothing needs a human to notice a quiet
+// half-done transfer.
+export async function payoutReferral(stripe, admin, referral, connectAccountId) {
+  try {
+    const transfer = await stripe.transfers.create({
+      amount: referral.payout_amount_cents,
+      currency: "usd",
+      destination: connectAccountId,
+      metadata: { referralId: String(referral.id) },
+    });
+    await admin
+      .from("affiliate_referrals")
+      .update({ status: "paid", paid_at: new Date().toISOString(), stripe_transfer_id: transfer.id, updated_at: new Date().toISOString() })
+      .eq("id", referral.id);
+    return { paid: true };
+  } catch (err) {
+    console.error(`payoutReferral: transfer failed for referral ${referral.id}:`, err);
+    await admin
+      .from("affiliate_referrals")
+      .update({ status: "failed", failure_reason: err.message || "Transfer failed", updated_at: new Date().toISOString() })
+      .eq("id", referral.id);
+    return { paid: false, error: err.message };
+  }
+}

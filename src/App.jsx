@@ -10,6 +10,7 @@ import {
   AlertTriangle, Image as ImageIcon, Video, PlayCircle,
   DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark, Rss,
   Folder, MoreVertical, Inbox, Menu, Tag, Flag, ExternalLink, Unlock, Download, SlidersHorizontal,
+  Gift, Copy, Printer, Ban, UserX, PauseCircle, RotateCcw,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend, ComposedChart } from "recharts";
 import { jsPDF } from "jspdf";
@@ -2275,8 +2276,17 @@ function AdminLoginGate({ onVerified, onCancel }) {
 // browser side). Deliberately has exactly one way out: the X, which signs
 // out for real rather than just dismissing — there's nothing behind this
 // worth leaving them able to poke at.
-function AccountLockedOverlay({ onDismiss }) {
+function AccountLockedOverlay({ onDismiss, status, message }) {
   const [signingOut, setSigningOut] = useState(false);
+  // RootShell fetches the specific reason (locked/banned/deleted) from
+  // /api/check-email-locked once it notices this session got banned — this
+  // just falls back to the original generic "locked" wording for the brief
+  // moment before that lookup resolves, or if it fails outright.
+  const heading =
+    status === "banned" ? "This account has been banned" : status === "deleted" ? "This account's access has been removed" : "This account has been locked";
+  const body =
+    message ||
+    "An administrator has locked this account, so it can't be used right now. If you believe this is a mistake, contact cropswapadmin@gmail.com.";
   async function handleDismiss() {
     if (signingOut) return;
     setSigningOut(true);
@@ -2310,12 +2320,9 @@ function AccountLockedOverlay({ onDismiss }) {
           <Lock size={30} className="text-rose-400" />
         </div>
         <h1 className="text-white text-xl font-bold mb-2" style={displayFont}>
-          This account has been locked
+          {heading}
         </h1>
-        <p className="text-stone-300 text-sm mb-6 leading-relaxed">
-          An administrator has locked this account, so it can't be used right now. If you believe this is a
-          mistake, contact <span className="text-white font-semibold">support@cropswapmarket.com</span>.
-        </p>
+        <p className="text-stone-300 text-sm mb-6 leading-relaxed">{body}</p>
         <button
           type="button"
           onClick={handleDismiss}
@@ -6589,6 +6596,7 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
     // A quick jump straight to the Map view of Explore, not the separate
     // saved-Places screen this used to point to.
     { id: "map", label: "Map", icon: MapPin, screen: "explore" },
+    { id: "incentives", label: "Affiliate & Incentives", icon: Gift, screen: "incentives" },
     ...(isAdminUser(me) ? [{ id: "admin", label: "Admin", icon: ShieldAlert, screen: "adminDashboard" }] : []),
   ];
   // Orders/Calendar/Inventory all point at the same "orders" screen and are
@@ -6719,6 +6727,7 @@ const SITE_MAP_ITEMS = [
   { id: "inventory", label: "Inventory", icon: Boxes, screen: "orders", tab: "inventory" },
   { id: "bulkMessaging", label: "Bulk Messaging (Premium)", icon: Megaphone, screen: "bulkMessaging" },
   { id: "ads", label: "Sponsored Ads", icon: Megaphone, screen: "ads" },
+  { id: "incentives", label: "Affiliate & Incentives", icon: Gift, screen: "incentives" },
   { id: "plans", label: "My Plan", icon: Crown, screen: "plans" },
 ];
 function SiteMapModal({ open, onClose, navigate, setExploreView, me, requireAuth }) {
@@ -13658,6 +13667,60 @@ function AdminDashboardScreen({ navigate }) {
         </button>
       </div>
 
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <button
+          onClick={() => navigate?.({ screen: "adminModerated", status: "locked" })}
+          className="bg-white border border-stone-200 rounded-2xl p-4 text-left hover:border-amber-300 transition"
+        >
+          <p className="text-xs font-bold text-amber-700 uppercase mb-1 flex items-center gap-1.5">
+            <Lock size={13} /> Locked accounts
+          </p>
+          <p className="text-xs text-stone-400">Locked by an admin — stays locked until unlocked or auto-deleted after 1 year.</p>
+        </button>
+        <button
+          onClick={() => navigate?.({ screen: "adminModerated", status: "banned" })}
+          className="bg-white border border-stone-200 rounded-2xl p-4 text-left hover:border-rose-300 transition"
+        >
+          <p className="text-xs font-bold text-rose-700 uppercase mb-1 flex items-center gap-1.5">
+            <Ban size={13} /> Banned accounts
+          </p>
+          <p className="text-xs text-stone-400">Permanently blocked — their email can never sign up again.</p>
+        </button>
+        <button
+          onClick={() => navigate?.({ screen: "adminModerated", status: "deleted" })}
+          className="bg-white border border-stone-200 rounded-2xl p-4 text-left hover:border-stone-400 transition"
+        >
+          <p className="text-xs font-bold text-stone-600 uppercase mb-1 flex items-center gap-1.5">
+            <UserX size={13} /> Deleted accounts
+          </p>
+          <p className="text-xs text-stone-400">Access removed. Transaction history kept — can be reactivated.</p>
+        </button>
+        <button
+          onClick={() => navigate?.({ screen: "adminModerated", status: "paused" })}
+          className="bg-white border border-stone-200 rounded-2xl p-4 text-left hover:border-amber-300 transition"
+        >
+          <p className="text-xs font-bold text-amber-700 uppercase mb-1 flex items-center gap-1.5">
+            <PauseCircle size={13} /> Paused accounts
+          </p>
+          <p className="text-xs text-stone-400">Paused by the owner — shop hidden from buyers, login still works.</p>
+        </button>
+      </div>
+
+      <div className="bg-white border border-stone-200 rounded-2xl p-5 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="font-bold text-stone-900 flex items-center gap-1.5">
+            <Gift size={16} className="text-emerald-700" /> Affiliate payouts
+          </h2>
+          <p className="text-sm text-stone-500 mt-0.5">Review referrals that hit day 31, approve payouts, and see who's still waiting on payout info.</p>
+        </div>
+        <button
+          onClick={() => navigate?.({ screen: "adminAffiliatePayouts" })}
+          className="bg-emerald-800 text-white font-semibold text-sm px-4 py-2.5 rounded-xl shrink-0 hover:bg-emerald-900 transition"
+        >
+          Review payouts
+        </button>
+      </div>
+
       <div className="bg-white border border-stone-200 rounded-2xl p-5">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <h2 className="font-bold text-stone-900">
@@ -13986,6 +14049,283 @@ function AdminDirectoryScreen({ navigate }) {
   );
 }
 
+const ADMIN_MODERATED_LABELS = {
+  locked: { title: "Locked accounts", icon: Lock, color: "text-amber-700", badgeBg: "bg-amber-50 text-amber-800" },
+  banned: { title: "Banned accounts", icon: Ban, color: "text-rose-700", badgeBg: "bg-rose-50 text-rose-700" },
+  deleted: { title: "Deleted accounts", icon: UserX, color: "text-stone-700", badgeBg: "bg-stone-100 text-stone-700" },
+  paused: { title: "Paused accounts", icon: PauseCircle, color: "text-amber-700", badgeBg: "bg-amber-50 text-amber-700" },
+};
+
+// One list screen behind all four Admin Dashboard tiles (Locked / Banned /
+// Deleted / Paused) — same data shape from /api/admin-moderated-accounts
+// either way, just filtered server-side by `status`. Locked also reuses
+// this (rather than only living in the full Directory) since it's one of
+// the four moderation states the dashboard tiles link to.
+function AdminModeratedListScreen({ navigate, status }) {
+  const [loading, setLoading] = useState(true);
+  const [accounts, setAccounts] = useState([]);
+  const [error, setError] = useState(false);
+  const meta = ADMIN_MODERATED_LABELS[status] || ADMIN_MODERATED_LABELS.locked;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch(`/api/admin-moderated-accounts?status=${encodeURIComponent(status)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const payload = await res.json();
+      setAccounts(payload.accounts || []);
+    } catch (e) {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [status]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="flex-1 overflow-y-auto max-w-4xl mx-auto p-6 space-y-5">
+      <button onClick={() => navigate({ screen: "adminDashboard" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600">
+        <ArrowLeft size={15} /> Back to Admin Dashboard
+      </button>
+
+      <h1 className={`text-xl font-bold text-stone-900 flex items-center gap-2`} style={displayFont}>
+        <meta.icon size={20} className={meta.color} /> {meta.title} ({accounts.length})
+      </h1>
+
+      <div className="bg-white border border-stone-200 rounded-2xl p-5">
+        {loading ? (
+          <div className="flex items-center justify-center py-12 text-stone-400">
+            <Loader2 size={22} className="animate-spin" />
+          </div>
+        ) : error ? (
+          <p className="text-sm text-stone-400 text-center py-6">Couldn't load this list right now. Try refreshing.</p>
+        ) : accounts.length === 0 ? (
+          <p className="text-sm text-stone-400 text-center py-6">No accounts here right now.</p>
+        ) : (
+          <div className="space-y-2">
+            {accounts.map((a) => (
+              <div
+                key={a.userId}
+                onClick={() => navigate({ screen: "adminUserDetail", userId: a.userId, userName: a.name, userAvatar: a.avatar })}
+                className="border border-stone-100 rounded-xl p-3 cursor-pointer hover:bg-stone-50 flex items-start justify-between gap-3"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-stone-800 flex items-center gap-1.5">
+                    {a.name || "Account"}
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${meta.badgeBg}`}>{meta.title.replace(" accounts", "")}</span>
+                  </p>
+                  <p className="text-xs text-stone-500">{a.email || "—"}</p>
+                  {(a.reason || a.note) && (
+                    <p className="text-xs text-stone-400 mt-1">
+                      {a.reason ? <span className="font-semibold text-stone-500">{a.reason}</span> : null}
+                      {a.note ? ` — ${a.note}` : ""}
+                    </p>
+                  )}
+                  {a.actorEmail && <p className="text-xs text-stone-300 mt-0.5">by {a.actorEmail}</p>}
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-xs text-stone-400">{a.updatedAt ? timeAgo(a.updatedAt) : ""}</p>
+                  <ChevronRight size={15} className="text-stone-300 ml-auto mt-1" />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AdminModeratedEntry({ navigate, status }) {
+  const { me } = useApp();
+  if (!isAdminUser(me)) {
+    return (
+      <EmptyState
+        icon={ShieldAlert}
+        title="Admins only"
+        body="This page is restricted to the CropSwap admin account."
+        action={
+          <button onClick={() => navigate({ screen: "explore" })} className="text-sm font-semibold text-emerald-800">
+            Back to Explore
+          </button>
+        }
+      />
+    );
+  }
+  return <AdminModeratedListScreen navigate={navigate} status={status || "locked"} />;
+}
+
+// The CRM side of the affiliate program — everything that hit day 31 and
+// needs a human decision (api/cron-affiliate-sweep.js only ever decides
+// eligibility, never pays anyone), plus recently approved/paid/failed ones
+// for context. Approving here either pays out immediately (the affiliate
+// already finished Stripe Connect onboarding) or queues it until they do
+// (see api/admin-affiliate-payouts.js and stripe-webhook.js's
+// account.updated handler).
+function AdminAffiliatePayoutsScreen({ navigate }) {
+  const [loading, setLoading] = useState(true);
+  const [referrals, setReferrals] = useState([]);
+  const [error, setError] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch("/api/admin-affiliate-payouts", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const payload = await res.json();
+      setReferrals(payload.referrals || []);
+    } catch (e) {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function approve(referralId) {
+    setBusyId(referralId);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch("/api/admin-affiliate-payouts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ referralId }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      await load();
+    } catch (e) {
+      globalToast?.("Couldn't approve that payout — try again");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const awaiting = referrals.filter((r) => r.status === "eligible_awaiting_approval");
+  const history = referrals.filter((r) => r.status !== "eligible_awaiting_approval");
+
+  const STATUS_BADGE = {
+    approved: "bg-amber-50 text-amber-700",
+    paid: "bg-emerald-50 text-emerald-700",
+    failed: "bg-rose-50 text-rose-700",
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto max-w-4xl mx-auto p-6 space-y-5">
+      <button onClick={() => navigate({ screen: "adminDashboard" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600">
+        <ArrowLeft size={15} /> Back to Admin Dashboard
+      </button>
+
+      <h1 className="text-xl font-bold text-stone-900 flex items-center gap-2" style={displayFont}>
+        <Gift size={20} className="text-emerald-700" /> Affiliate payouts
+      </h1>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12 text-stone-400">
+          <Loader2 size={22} className="animate-spin" />
+        </div>
+      ) : error ? (
+        <p className="text-sm text-stone-400 text-center py-6">Couldn't load payouts right now. Try refreshing.</p>
+      ) : (
+        <>
+          <div className="bg-white border border-stone-200 rounded-2xl p-5">
+            <h2 className="font-bold text-stone-900 mb-3">Awaiting approval ({awaiting.length})</h2>
+            {awaiting.length === 0 ? (
+              <p className="text-sm text-stone-400">Nothing waiting on a decision right now.</p>
+            ) : (
+              <div className="space-y-2">
+                {awaiting.map((r) => (
+                  <div key={r.id} className="border border-stone-100 rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-stone-800">
+                        {r.referrerName || r.referrerEmail || "Affiliate"} <span className="text-stone-400 font-normal">referred</span> {r.referredEmail}
+                      </p>
+                      <p className="text-xs text-stone-500 capitalize mt-0.5">
+                        {r.planTier} annual · {formatMoney((r.payoutAmountCents || 0) / 100)} payout
+                        {!r.payoutsReady && <span className="text-amber-600 font-semibold"> · payout info not set up yet</span>}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => approve(r.id)}
+                      disabled={busyId === r.id}
+                      className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-800 text-white disabled:opacity-50 shrink-0"
+                    >
+                      {busyId === r.id ? "…" : r.payoutsReady ? "Approve & pay" : "Approve"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-stone-200 rounded-2xl p-5">
+            <h2 className="font-bold text-stone-900 mb-3">Recent history</h2>
+            {history.length === 0 ? (
+              <p className="text-sm text-stone-400">No approved, paid, or failed payouts yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {history.map((r) => (
+                  <div key={r.id} className="border border-stone-100 rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-stone-800">
+                        {r.referrerName || r.referrerEmail || "Affiliate"} <span className="text-stone-400 font-normal">referred</span> {r.referredEmail}
+                      </p>
+                      <p className="text-xs text-stone-500 mt-0.5">
+                        {formatMoney((r.payoutAmountCents || 0) / 100)}
+                        {r.failureReason ? ` — ${r.failureReason}` : ""}
+                      </p>
+                    </div>
+                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full capitalize shrink-0 ${STATUS_BADGE[r.status] || "bg-stone-100 text-stone-600"}`}>
+                      {r.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AdminAffiliatePayoutsEntry({ navigate }) {
+  const { me } = useApp();
+  if (!isAdminUser(me)) {
+    return (
+      <EmptyState
+        icon={ShieldAlert}
+        title="Admins only"
+        body="This page is restricted to the CropSwap admin account."
+        action={
+          <button onClick={() => navigate({ screen: "explore" })} className="text-sm font-semibold text-emerald-800">
+            Back to Explore
+          </button>
+        }
+      />
+    );
+  }
+  return <AdminAffiliatePayoutsScreen navigate={navigate} />;
+}
+
 // Per-account "CRM" view behind the Admin Dashboard's Users table — signup
 // date, flags/reports against this account, and payment history (both
 // subscription receipts from Stripe and Sponsored Ads purchases). Same
@@ -14009,6 +14349,85 @@ function AdminUserDetailEntry({ navigate, userId, userName, userAvatar }) {
   return <AdminUserDetailScreen navigate={navigate} userId={userId} userName={userName} userAvatar={userAvatar} />;
 }
 
+// Shared reason list for the Ban and Delete actions below — same wording
+// the user asked for, plus "Other" with a required free-text note.
+const MODERATION_REASONS = [
+  "Spamming",
+  "Posting inappropriate content",
+  "Breaking our rules",
+  "Non-payment",
+  "Requested by user",
+  "Other",
+];
+
+// The confirm step behind Ban / Delete (Lock keeps its own simpler
+// inline confirm — those two are meant to feel heavier, since one adds a
+// permanent email block and the other is meant to be hard to do by
+// accident). Picking "Other" requires typing a note; every other reason
+// makes the note optional extra detail.
+function ModerationReasonModal({ open, title, description, confirmLabel, confirmClassName, busy, onCancel, onConfirm }) {
+  const [reason, setReason] = useState(MODERATION_REASONS[0]);
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    if (open) {
+      setReason(MODERATION_REASONS[0]);
+      setNote("");
+    }
+  }, [open]);
+  const noteRequired = reason === "Other";
+  const canConfirm = !noteRequired || note.trim().length > 0;
+
+  return (
+    <Modal open={open} onClose={onCancel} labelledBy="moderation-reason-title" size="sm">
+      <div className="p-5">
+        <h2 id="moderation-reason-title" className="text-lg font-bold text-stone-900 mb-1" style={displayFont}>
+          {title}
+        </h2>
+        {description && <p className="text-sm text-stone-500 mb-4">{description}</p>}
+        <label className="block text-xs font-bold text-stone-400 uppercase mb-1">Reason</label>
+        <select
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          className="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm mb-3"
+        >
+          {MODERATION_REASONS.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        <label className="block text-xs font-bold text-stone-400 uppercase mb-1">
+          Note {noteRequired ? "(required)" : "(optional)"}
+        </label>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={3}
+          maxLength={500}
+          placeholder={noteRequired ? "What happened?" : "Any extra detail for the record…"}
+          className="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm mb-4"
+        />
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="flex-1 text-sm font-semibold py-2.5 rounded-lg border border-stone-200 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(reason, note.trim())}
+            disabled={busy || !canConfirm}
+            className={`flex-1 text-sm font-bold py-2.5 rounded-lg text-white disabled:opacity-50 ${confirmClassName || "bg-rose-600"}`}
+          >
+            {busy ? "…" : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState(null);
@@ -14019,6 +14438,10 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
   const [lockBusy, setLockBusy] = useState(false);
   const [lockConfirming, setLockConfirming] = useState(false);
   const [activeReceipt, setActiveReceipt] = useState(null);
+  // Ban and Delete both go through the reason modal; which one is open (or
+  // null) lives in one piece of state since only one can be open at a time.
+  const [moderationModal, setModerationModal] = useState(null); // "ban" | "delete" | null
+  const [moderationBusy, setModerationBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!userId) return;
@@ -14070,25 +14493,61 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
     load();
   }, [load]);
 
+  // Shared by Lock/Reactivate (quick inline confirm) and Ban/Delete (the
+  // reason modal) — every one of the four moderation actions goes through
+  // this same endpoint now (see api/admin-moderate-account.js). Re-fetches
+  // the full detail afterward rather than hand-merging the response, so
+  // moderationActorEmail/lockedAt/etc. always come straight from the
+  // server record instead of a guess about what it must now say.
+  async function runModerationAction(action, { reason, note } = {}) {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (!token) throw new Error("no session");
+    const res = await fetch("/api/admin-moderate-account", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ userId, action, reason, note }),
+    });
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(payload?.error || `status ${res.status}`);
+    await load();
+  }
+
+  // Lock and its reverse (reactivate) keep the original lightweight inline
+  // confirm — no reason required, matches the existing UX. Ban and Delete
+  // use the heavier reason-modal flow below instead.
   async function toggleLock() {
     setLockBusy(true);
     try {
-      const { data } = await supabase.auth.getSession();
-      const token = data?.session?.access_token;
-      if (!token) throw new Error("no session");
-      const res = await fetch("/api/admin-set-account-lock", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ userId, locked: !detail?.locked }),
-      });
-      if (!res.ok) throw new Error(`status ${res.status}`);
-      const payload = await res.json();
-      setDetail((d) => (d ? { ...d, locked: payload.locked, bannedUntil: payload.bannedUntil } : d));
+      await runModerationAction(detail?.moderationStatus === "locked" ? "reactivate" : "lock");
     } catch (e) {
       /* the button just goes back to its normal state; nothing changed server-side */
     } finally {
       setLockBusy(false);
       setLockConfirming(false);
+    }
+  }
+
+  async function confirmModeration(action, reason, note) {
+    setModerationBusy(true);
+    try {
+      await runModerationAction(action, { reason, note });
+      setModerationModal(null);
+    } catch (e) {
+      globalToast?.(e?.message || "Couldn't complete that action");
+    } finally {
+      setModerationBusy(false);
+    }
+  }
+
+  async function reactivateAccount() {
+    setModerationBusy(true);
+    try {
+      await runModerationAction("reactivate");
+    } catch (e) {
+      globalToast?.(e?.message || "Couldn't reactivate this account");
+    } finally {
+      setModerationBusy(false);
     }
   }
 
@@ -14104,9 +14563,27 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
         <ArrowLeft size={15} /> Back to Admin Dashboard
       </button>
 
-      {detail?.locked && (
+      {detail?.locked && detail?.moderationStatus === "banned" && (
         <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-sm text-rose-800 flex items-center gap-2">
-          <Lock size={15} className="shrink-0" /> This account is locked — it can't sign in until unlocked.
+          <Ban size={15} className="shrink-0" /> This account is permanently banned{detail?.moderationReason ? ` (${detail.moderationReason})` : ""} —{" "}
+          {detail?.email || "its email"} can never sign up again.
+        </div>
+      )}
+      {detail?.locked && detail?.moderationStatus === "deleted" && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-sm text-rose-800 flex items-center gap-2">
+          <UserX size={15} className="shrink-0" /> This account's access has been removed{detail?.moderationReason ? ` (${detail.moderationReason})` : ""} — its
+          data and transaction history are untouched.
+        </div>
+      )}
+      {detail?.locked && detail?.moderationStatus === "locked" && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-sm text-rose-800 flex items-center gap-2">
+          <Lock size={15} className="shrink-0" /> This account is locked — it can't sign in until unlocked
+          {detail?.lockedAt ? ` (since ${new Date(detail.lockedAt).toLocaleDateString()})` : ""}.
+        </div>
+      )}
+      {!detail?.locked && detail?.accountPaused && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 flex items-center gap-2">
+          <PauseCircle size={15} className="shrink-0" /> This account is paused by its owner — they can still sign in, but their shop is hidden from buyers.
         </div>
       )}
 
@@ -14167,42 +14644,123 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
               <p className="text-xs font-bold text-stone-400 uppercase mb-1">Location</p>
               <p className="text-sm font-semibold text-stone-800">{locationLabel || detail?.homeLabel || "—"}</p>
             </div>
-            <div className="bg-white border border-stone-200 rounded-2xl p-4 flex flex-col justify-between">
-              <p className="text-xs font-bold text-stone-400 uppercase mb-1">Account access</p>
-              {lockConfirming ? (
-                <div className="space-y-1.5">
-                  <p className="text-xs text-stone-500">{detail?.locked ? "Unlock this account?" : "Lock this account? They won't be able to sign in."}</p>
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={toggleLock}
-                      disabled={lockBusy}
-                      className={`flex-1 text-xs font-bold py-1.5 rounded-lg text-white disabled:opacity-50 ${detail?.locked ? "bg-emerald-700" : "bg-rose-600"}`}
-                    >
-                      {lockBusy ? "…" : "Confirm"}
-                    </button>
-                    <button onClick={() => setLockConfirming(false)} disabled={lockBusy} className="flex-1 text-xs font-semibold py-1.5 rounded-lg border border-stone-200">
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setLockConfirming(true)}
-                  className={`text-sm font-semibold flex items-center gap-1.5 ${detail?.locked ? "text-emerald-700" : "text-rose-600"}`}
+            <div className="bg-white border border-stone-200 rounded-2xl p-4 flex flex-col justify-between sm:col-span-3">
+              <p className="text-xs font-bold text-stone-400 uppercase mb-2">Account access</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                    detail?.moderationStatus === "banned"
+                      ? "bg-rose-100 text-rose-700"
+                      : detail?.moderationStatus === "deleted"
+                      ? "bg-stone-200 text-stone-700"
+                      : detail?.moderationStatus === "locked"
+                      ? "bg-amber-100 text-amber-800"
+                      : detail?.accountPaused
+                      ? "bg-amber-50 text-amber-700"
+                      : "bg-emerald-50 text-emerald-700"
+                  }`}
                 >
-                  {detail?.locked ? (
-                    <>
-                      <Unlock size={14} /> Unlock account
-                    </>
+                  {detail?.moderationStatus === "banned"
+                    ? "Banned"
+                    : detail?.moderationStatus === "deleted"
+                    ? "Deleted (access removed)"
+                    : detail?.moderationStatus === "locked"
+                    ? "Locked"
+                    : detail?.accountPaused
+                    ? "Paused by owner"
+                    : "Active"}
+                </span>
+
+                {(!detail?.locked || detail?.moderationStatus === "locked") &&
+                  (lockConfirming ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-stone-500">{detail?.locked ? "Unlock this account?" : "Lock it?"}</span>
+                      <button
+                        onClick={toggleLock}
+                        disabled={lockBusy}
+                        className={`text-xs font-bold px-3 py-1.5 rounded-lg text-white disabled:opacity-50 ${detail?.locked ? "bg-emerald-700" : "bg-amber-600"}`}
+                      >
+                        {lockBusy ? "…" : "Confirm"}
+                      </button>
+                      <button onClick={() => setLockConfirming(false)} disabled={lockBusy} className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-stone-200">
+                        Cancel
+                      </button>
+                    </div>
                   ) : (
-                    <>
-                      <Lock size={14} /> Lock account
-                    </>
-                  )}
-                </button>
+                    <button
+                      onClick={() => setLockConfirming(true)}
+                      className={`text-xs font-semibold px-3 py-1.5 rounded-lg border flex items-center gap-1.5 ${
+                        detail?.locked ? "border-emerald-200 text-emerald-700" : "border-amber-200 text-amber-700"
+                      }`}
+                    >
+                      {detail?.locked ? (
+                        <>
+                          <Unlock size={13} /> Unlock
+                        </>
+                      ) : (
+                        <>
+                          <Lock size={13} /> Lock
+                        </>
+                      )}
+                    </button>
+                  ))}
+
+                {!detail?.locked && (
+                  <button
+                    onClick={() => setModerationModal("ban")}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-rose-200 text-rose-700 flex items-center gap-1.5"
+                  >
+                    <Ban size={13} /> Ban account
+                  </button>
+                )}
+                {!detail?.locked && (
+                  <button
+                    onClick={() => setModerationModal("delete")}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-stone-300 text-stone-700 flex items-center gap-1.5"
+                  >
+                    <UserX size={13} /> Delete account
+                  </button>
+                )}
+                {(detail?.moderationStatus === "banned" || detail?.moderationStatus === "deleted") && (
+                  <button
+                    onClick={reactivateAccount}
+                    disabled={moderationBusy}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-emerald-200 text-emerald-700 flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <RotateCcw size={13} /> {moderationBusy ? "…" : "Reactivate"}
+                  </button>
+                )}
+              </div>
+              {(detail?.moderationStatus === "banned" || detail?.moderationStatus === "deleted") && (detail?.moderationReason || detail?.moderationNote) && (
+                <p className="text-xs text-stone-500 mt-2">
+                  {detail?.moderationReason ? <span className="font-semibold">{detail.moderationReason}</span> : null}
+                  {detail?.moderationNote ? ` — ${detail.moderationNote}` : ""}
+                  {detail?.moderationActorEmail ? ` (by ${detail.moderationActorEmail})` : ""}
+                </p>
               )}
             </div>
           </div>
+
+          <ModerationReasonModal
+            open={moderationModal === "ban"}
+            title="Ban this account"
+            description="Bans the account and permanently blocks its email from ever signing up again."
+            confirmLabel="Ban account"
+            confirmClassName="bg-rose-600"
+            busy={moderationBusy}
+            onCancel={() => setModerationModal(null)}
+            onConfirm={(reason, note) => confirmModeration("ban", reason, note)}
+          />
+          <ModerationReasonModal
+            open={moderationModal === "delete"}
+            title="Delete this account"
+            description="Removes sign-in access. Transaction history and data are kept, and the account can be reactivated later."
+            confirmLabel="Delete account"
+            confirmClassName="bg-stone-700"
+            busy={moderationBusy}
+            onCancel={() => setModerationModal(null)}
+            onConfirm={(reason, note) => confirmModeration("delete", reason, note)}
+          />
 
           <div className="bg-white border border-stone-200 rounded-2xl p-5">
             <h2 className="font-bold text-stone-900 mb-3 flex items-center gap-1.5">
@@ -14825,6 +15383,7 @@ function AccountModal({ open, onClose }) {
     { id: "payment", label: "Payment", icon: CreditCard },
     { id: "blocked", label: "Blocked", icon: AlertCircle },
     { id: "data", label: "Data", icon: Package },
+    { id: "affiliate", label: "Affiliate", icon: Gift, link: true, linkScreen: "incentives" },
   ];
 
   return (
@@ -15006,6 +15565,280 @@ function AccountModal({ open, onClose }) {
     <LegalDocModal open={openLegalDoc === "privacy"} onClose={() => setOpenLegalDoc(null)} title="Privacy Policy" sections={PRIVACY_SECTIONS} />
     <LegalDocModal open={openLegalDoc === "seller"} onClose={() => setOpenLegalDoc(null)} title="Seller Agreement" sections={SELLER_AGREEMENT_SECTIONS} />
     </>
+  );
+}
+
+/* ============================================================================
+   SECTION 22b: AFFILIATE / INCENTIVE PROGRAM
+============================================================================ */
+
+const REFERRAL_STATUS_LABEL = {
+  pending: { label: "Signed up — counting down to day 31", color: "bg-stone-100 text-stone-500" },
+  eligible_awaiting_approval: { label: "Awaiting admin approval", color: "bg-amber-50 text-amber-700" },
+  ineligible: { label: "Not eligible (cancelled by day 30)", color: "bg-stone-100 text-stone-400" },
+  approved: { label: "Approved — payout info pending", color: "bg-amber-50 text-amber-700" },
+  paid: { label: "Paid", color: "bg-emerald-50 text-emerald-700" },
+  failed: { label: "Payout failed — contact support", color: "bg-rose-50 text-rose-700" },
+};
+
+// A printable/shareable card — the same html2canvas + jsPDF snapshot
+// pattern ReceiptModal uses above — with the affiliate's link, a scannable
+// QR code (a plain image from a public QR-image API rather than pulling in
+// a whole QR-generation library for one static code), and a "print me"
+// look.
+function ReferralCardModal({ open, onClose, code, link }) {
+  const nodeRef = useRef(null);
+  const [downloading, setDownloading] = useState(false);
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data=${encodeURIComponent(link)}`;
+
+  async function downloadPdf() {
+    if (!nodeRef.current) return;
+    setDownloading(true);
+    try {
+      const canvas = await html2canvas(nodeRef.current, { scale: 2, backgroundColor: "#ffffff" });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ unit: "px", format: [canvas.width, canvas.height] });
+      pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
+      pdf.save(`cropswap-referral-card-${code}.pdf`);
+    } catch (e) {
+      /* the on-screen card is still right there to screenshot */
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="referral-card-title" size="md">
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 id="referral-card-title" className="text-lg font-bold text-stone-900" style={displayFont}>
+            Your referral card
+          </h2>
+          <button onClick={onClose} aria-label="Close">
+            <X size={20} className="text-stone-400" />
+          </button>
+        </div>
+
+        <div ref={nodeRef} className="bg-gradient-to-br from-emerald-800 to-emerald-900 rounded-2xl p-6 text-center text-white">
+          <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-7 w-auto mx-auto mb-4" crossOrigin="anonymous" />
+          <p className="text-sm text-emerald-100 mb-1">Grow your own farmers market community</p>
+          <p className="font-bold mb-4" style={displayFont}>
+            Join CropSwap with my link!
+          </p>
+          <div className="bg-white rounded-xl p-3 inline-block mb-4">
+            <img src={qrUrl} alt="QR code to your affiliate link" width={180} height={180} crossOrigin="anonymous" />
+          </div>
+          <p className="text-sm font-semibold break-all">{link}</p>
+        </div>
+
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={() => navigator.clipboard?.writeText(link).catch(() => {})}
+            className="flex-1 text-sm font-semibold py-2.5 rounded-lg border border-stone-200 flex items-center justify-center gap-1.5"
+          >
+            <Copy size={14} /> Copy link
+          </button>
+          <button
+            onClick={downloadPdf}
+            disabled={downloading}
+            className="flex-1 text-sm font-bold py-2.5 rounded-lg bg-emerald-800 text-white disabled:opacity-60 flex items-center justify-center gap-1.5"
+          >
+            {downloading ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />} Save / print
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// The full "Your Affiliate Link" page — reachable from the Sidebar, the
+// Site map, and the Account modal's Affiliate tab (all three just navigate
+// here rather than duplicating this UI). Gated by AUTH_REQUIRED_SCREENS
+// (see that Set above) so `me` can be assumed present.
+function AffiliateScreen({ navigate }) {
+  const { me, showToast } = useApp();
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(false);
+  const [cardOpen, setCardOpen] = useState(false);
+  const [connectBusy, setConnectBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch("/api/affiliate-me", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      setData(await res.json());
+    } catch (e) {
+      setError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Returning from Stripe Connect onboarding (see
+  // api/affiliate-connect-onboarding.js's return_url) — re-fetch so
+  // payoutsEnabled reflects whatever just happened, and let them know
+  // there might be a short delay before Stripe's webhook flips it.
+  useEffect(() => {
+    try {
+      const connect = new URLSearchParams(window.location.search || "").get("connect");
+      if (connect) {
+        window.history.replaceState(null, "", window.location.pathname);
+        if (connect === "return") showToast("Payout setup received — this can take a minute to finish verifying");
+        load();
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function startPayoutSetup() {
+    setConnectBusy(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch("/api/affiliate-connect-onboarding", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload?.url) throw new Error(payload?.error || "Couldn't start setup");
+      window.location.href = payload.url;
+    } catch (e) {
+      showToast(e?.message || "Couldn't start payout setup — try again");
+      setConnectBusy(false);
+    }
+  }
+
+  function copyLink() {
+    navigator.clipboard?.writeText(data?.link || "").then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-2xl mx-auto p-4 space-y-5">
+        <div>
+          <h1 className="text-xl font-bold text-stone-900 flex items-center gap-2" style={displayFont}>
+            <Gift size={20} className="text-emerald-700" /> Affiliate & Incentives
+          </h1>
+          <p className="text-sm text-stone-500 mt-1">
+            Share your link — when someone signs up and stays subscribed to an annual plan past day 30, you earn a payout.
+          </p>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-16 text-stone-400">
+            <Loader2 size={24} className="animate-spin" />
+          </div>
+        ) : error || !data ? (
+          <div className="bg-white border border-stone-200 rounded-2xl p-6 text-center">
+            <p className="text-sm text-stone-400 mb-3">Couldn't load your affiliate info right now.</p>
+            <button onClick={load} className="text-sm font-semibold text-emerald-800">
+              Try again
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="bg-white border border-stone-200 rounded-2xl p-5">
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Your affiliate link</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <code className="text-sm font-semibold text-emerald-800 bg-emerald-50 rounded-lg px-3 py-2 break-all flex-1 min-w-[200px]">{data.link}</code>
+                <button onClick={copyLink} className="text-xs font-bold px-3 py-2 rounded-lg border border-stone-200 flex items-center gap-1.5 shrink-0">
+                  <Copy size={13} /> {copied ? "Copied!" : "Copy"}
+                </button>
+              </div>
+              <button
+                onClick={() => setCardOpen(true)}
+                className="mt-3 text-sm font-semibold text-emerald-800 flex items-center gap-1.5"
+              >
+                <Printer size={14} /> Get a printable card with QR code
+              </button>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="bg-white border border-stone-200 rounded-2xl p-4">
+                <p className="text-xs font-bold text-stone-400 uppercase mb-1">Pending</p>
+                <p className="text-lg font-bold text-amber-700">{formatMoney((data.totals?.pendingCents || 0) / 100)}</p>
+                <p className="text-xs text-stone-400">{data.totals?.pendingCount || 0} referral{data.totals?.pendingCount === 1 ? "" : "s"}</p>
+              </div>
+              <div className="bg-white border border-stone-200 rounded-2xl p-4">
+                <p className="text-xs font-bold text-stone-400 uppercase mb-1">Paid out</p>
+                <p className="text-lg font-bold text-emerald-700">{formatMoney((data.totals?.paidCents || 0) / 100)}</p>
+                <p className="text-xs text-stone-400">{data.totals?.paidCount || 0} referral{data.totals?.paidCount === 1 ? "" : "s"}</p>
+              </div>
+            </div>
+
+            <div className="bg-white border border-stone-200 rounded-2xl p-5">
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Payout rates</p>
+              <p className="text-sm text-stone-600">
+                {formatMoney(data.payoutRates?.basic || 30)} for a Basic annual signup · {formatMoney(data.payoutRates?.premium || 50)} for a Premium annual
+                signup — paid on day 31, only if they're still subscribed then.
+              </p>
+            </div>
+
+            <div className="bg-white border border-stone-200 rounded-2xl p-5">
+              <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Payout info</p>
+              {data.payoutsEnabled ? (
+                <p className="text-sm text-emerald-700 flex items-center gap-1.5">
+                  <BadgeCheck size={15} /> Ready to receive payouts.
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm text-stone-500 mb-3">
+                    {data.hasConnectAccount
+                      ? "Payout setup was started but isn't finished yet — you may still need to complete Stripe's verification steps."
+                      : "Set up how you'll get paid before your first approved payout can go out. This uses Stripe (bank transfer, not a saved card) and asks a few quick verification questions."}
+                  </p>
+                  <button
+                    onClick={startPayoutSetup}
+                    disabled={connectBusy}
+                    className="text-sm font-bold px-4 py-2.5 rounded-lg bg-emerald-800 text-white disabled:opacity-60"
+                  >
+                    {connectBusy ? "Starting…" : data.hasConnectAccount ? "Finish payout setup" : "Set up payout info"}
+                  </button>
+                </>
+              )}
+            </div>
+
+            <div className="bg-white border border-stone-200 rounded-2xl p-5">
+              <h2 className="font-bold text-stone-900 mb-3">Your referrals ({data.referrals?.length || 0})</h2>
+              {(!data.referrals || data.referrals.length === 0) ? (
+                <p className="text-sm text-stone-400">Nobody's signed up with your link yet — share it to get started!</p>
+              ) : (
+                <div className="space-y-2">
+                  {data.referrals.map((r) => {
+                    const statusMeta = REFERRAL_STATUS_LABEL[r.status] || { label: r.status, color: "bg-stone-100 text-stone-500" };
+                    return (
+                      <div key={r.id} className="border border-stone-100 rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap">
+                        <div>
+                          <p className="text-sm font-semibold text-stone-800">{r.email}</p>
+                          <p className="text-xs text-stone-400">Signed up {r.signedUpAt ? timeAgo(r.signedUpAt) : "—"}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${statusMeta.color}`}>{statusMeta.label}</span>
+                          {r.payoutAmountCents ? <p className="text-xs text-stone-500 mt-1">{formatMoney(r.payoutAmountCents / 100)}</p> : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+      <ReferralCardModal open={cardOpen} onClose={() => setCardOpen(false)} code={data?.code} link={data?.link} />
+    </div>
   );
 }
 
@@ -23531,7 +24364,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
 // falls through to the real screen the moment `me` exists. "storeEditor",
 // "places", and "checkout" stay gated — there's nothing to preview there
 // that isn't already covered by one of the screens above.
-const AUTH_REQUIRED_SCREENS = new Set(["storeEditor", "places", "checkout"]);
+const AUTH_REQUIRED_SCREENS = new Set(["storeEditor", "places", "checkout", "incentives"]);
 // Only screens still in AUTH_REQUIRED_SCREENS need an entry here — favorites/
 // messages/store/ads moved to their own guest-preview wrappers above and
 // call requireAuth with their own inline reason strings instead.
@@ -23539,6 +24372,7 @@ const AUTH_REASON_BY_SCREEN = {
   storeEditor: "edit your storefront",
   places: "save your places",
   checkout: "subscribe to a plan",
+  incentives: "get your affiliate link",
 };
 
 // A small card next to whatever the guest just tapped — "Create a free
@@ -23751,9 +24585,30 @@ function RootShell() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Someone opened cropswapmarket.com/incentives/<code> — an affiliate's
+  // referral link (see AffiliateScreen / ReferralCardModal for where that
+  // gets shared). There's no dedicated landing screen for it: just stash
+  // the code for whenever they actually sign up (createProfile's caller
+  // below reads this and calls /api/affiliate-track-signup once the new
+  // account exists — there's no session yet at this point to record a
+  // referral against), scrub the path back to "/", and drop them into
+  // normal browsing. localStorage rather than a one-render useState like
+  // authCallback/checkoutReturn above, since someone may browse a while
+  // before actually signing up.
+  useEffect(() => {
+    try {
+      const match = window.location.pathname.match(/^\/incentives\/([A-Za-z0-9-]+)\/?$/);
+      if (match) {
+        localStorage.setItem("cs_pendingReferralCode", match[1].toLowerCase());
+        window.history.replaceState(null, "", "/");
+        globalToast?.("Welcome! You were invited by a fellow CropSwap grower 🌱");
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // If an admin locks this account mid-session, Supabase's ban doesn't kill
   // an already-open browser session by itself — only the NEXT sign-in or
-  // token refresh gets rejected (see api/admin-set-account-lock.js). This
+  // token refresh gets rejected (see api/admin-moderate-account.js). This
   // closes that gap from the browser side: periodically, and right before
   // any navigation (so a real click surfaces it fast rather than waiting
   // for the next tick), it forces an early token refresh. Per Supabase
@@ -23763,6 +24618,13 @@ function RootShell() {
   // this flag. The render gate further down turns that into a full-screen
   // block nothing else renders behind.
   const [accountLocked, setAccountLocked] = useState(false);
+  // Once accountLocked flips true, this is filled in with the specific
+  // status ("locked" | "banned" | "deleted") and tailored message from
+  // /api/check-email-locked, the same public lookup AuthGate's sign-in
+  // screen uses — that route already knows how to tell the three apart via
+  // account_moderation. Starts null so the overlay's generic fallback copy
+  // shows for the brief moment before this resolves.
+  const [lockDetail, setLockDetail] = useState(null);
   const lastLockCheckRef = useRef(0);
   const checkAccountLock = useCallback(async () => {
     const now = Date.now();
@@ -23774,6 +24636,20 @@ function RootShell() {
       const { error: refreshErr } = await supabase.auth.refreshSession();
       if (refreshErr && (refreshErr.code === "user_banned" || /banned/i.test(refreshErr.message || ""))) {
         setAccountLocked(true);
+        const email = authSessionEmail || sessionData.session.user?.email;
+        if (email) {
+          try {
+            const res = await fetch("/api/check-email-locked", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email }),
+            });
+            const j = await res.json().catch(() => null);
+            if (j?.locked) setLockDetail({ status: j.status, message: j.message });
+          } catch {
+            // The overlay's generic fallback copy covers this.
+          }
+        }
       }
     } catch {
       // A network hiccup here shouldn't lock anyone out by itself — the
@@ -24177,12 +25053,14 @@ function RootShell() {
   // shouldn't flash the normal app (or a normal sign-in screen) behind it
   // even for a moment.
   // Ahead of every other gate, including the admin one below — an admin
-  // account can never be locked (admin-set-account-lock.js refuses to lock
-  // itself), so this can only ever fire for a normal account, and once it
-  // does, nothing else on the page should render underneath it.
+  // account can never be moderated (admin-moderate-account.js refuses to
+  // touch itself), so this can only ever fire for a normal account, and
+  // once it does, nothing else on the page should render underneath it.
   if (accountLocked) {
     return (
       <AccountLockedOverlay
+        status={lockDetail?.status}
+        message={lockDetail?.message}
         onDismiss={async () => {
           await signOut();
           window.location.href = "/";
@@ -24287,6 +25165,27 @@ function RootShell() {
               updatedAt: Date.now(),
             },
           });
+          // If they arrived via someone's cropswapmarket.com/incentives/<code>
+          // link (captured into localStorage above, before there was any
+          // session to record a referral against), this is the first moment
+          // a session actually exists — record it now. Best-effort: a
+          // missing/invalid code, or this call failing outright, should
+          // never block a signup that already succeeded.
+          try {
+            const pendingCode = localStorage.getItem("cs_pendingReferralCode");
+            if (pendingCode) {
+              const { data: sessionData } = await supabase.auth.getSession();
+              const token = sessionData?.session?.access_token;
+              if (token) {
+                await fetch("/api/affiliate-track-signup", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                  body: JSON.stringify({ code: pendingCode }),
+                }).catch(() => {});
+              }
+              localStorage.removeItem("cs_pendingReferralCode");
+            }
+          } catch {}
           const pending = authFlow?.pendingRoute;
           setAuthFlow(null);
           // setRoute, not navigate — navigate would re-run the auth check
@@ -24380,9 +25279,12 @@ function RootShell() {
             {route.screen === "ads" && <AdsScreenEntry navigate={navigate} />}
             {route.screen === "adminDashboard" && <AdminScreenEntry navigate={navigate} />}
             {route.screen === "adminDirectory" && <AdminDirectoryEntry navigate={navigate} />}
+            {route.screen === "adminModerated" && <AdminModeratedEntry navigate={navigate} status={route.status} />}
+            {route.screen === "adminAffiliatePayouts" && <AdminAffiliatePayoutsEntry navigate={navigate} />}
             {route.screen === "adminUserDetail" && (
               <AdminUserDetailEntry navigate={navigate} userId={route.userId} userName={route.userName} userAvatar={route.userAvatar} />
             )}
+            {route.screen === "incentives" && <AffiliateScreen navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} route={route} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}

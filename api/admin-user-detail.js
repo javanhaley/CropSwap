@@ -70,11 +70,19 @@ export async function GET(request) {
       }
     }
 
-    // Lock status lives on the Supabase Auth user itself (see
-    // admin-set-account-lock.js) — a real ban, not a flag on the profile.
+    // Lock/ban/delete status lives on the Supabase Auth user itself (see
+    // admin-moderate-account.js) — a real ban, not a flag on the profile.
+    // account_moderation says WHICH of the three it is, plus the reason and
+    // who did it, for the CRM detail page.
     const bannedUntilMs = authUser.banned_until ? new Date(authUser.banned_until).getTime() : null;
     const now = Date.now();
     const locked = !!bannedUntilMs && bannedUntilMs > now && bannedUntilMs < now + 50 * 365 * 86400000;
+    const { data: modRow } = await admin
+      .from("account_moderation")
+      .select("status, reason, note, actor_email, locked_at, updated_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const moderationStatus = locked ? modRow?.status || "locked" : "active";
 
     // Real receipts, straight from Stripe — nothing here is reconstructed
     // from our own storage, so it can't drift out of sync with what was
@@ -120,6 +128,13 @@ export async function GET(request) {
       country: shop?.country || null,
       locked,
       bannedUntil: bannedUntilMs,
+      moderationStatus,
+      moderationReason: modRow?.reason || null,
+      moderationNote: modRow?.note || null,
+      moderationActorEmail: modRow?.actor_email || null,
+      lockedAt: modRow?.locked_at ? new Date(modRow.locked_at).getTime() : null,
+      accountPaused: !!profile?.accountPaused,
+      accountPausedAt: profile?.accountPausedAt || null,
       hasStripeCustomer: !!stripeCustomerId,
       invoices,
     });

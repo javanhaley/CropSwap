@@ -117,7 +117,11 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
           });
           const j = await res.json().catch(() => null);
           if (j?.locked) {
-            lockedMessage = "This account has been locked by an administrator. Contact support@cropswapmarket.com if you believe this is a mistake.";
+            // The server picks the right wording for locked vs banned vs
+            // deleted (see api/check-email-locked.js) — this generic
+            // fallback only matters if that response is ever missing the
+            // field for some reason.
+            lockedMessage = j.message || "This account has been locked by an administrator. Contact cropswapadmin@gmail.com if you believe this is a mistake.";
           }
         } catch {
           // If this check itself fails, just fall through to the normal
