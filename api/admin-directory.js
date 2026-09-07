@@ -3,8 +3,10 @@
 // The full account directory behind the Admin Dashboard's CRM — every real
 // account in one call, enriched with everything a filterable/sortable
 // directory needs: name, shop, email, phone, city/state/country, plan,
-// join date, and lock status. The app's own storage has no "list all X with
-// a filter" query (see storage.js — kv only supports exact-key get/set), so
+// join date, and moderation status (active/paused/locked/banned/deleted) so
+// the Accounts page can show and filter by it, the same way the Shops table
+// shows each shop's status. The app's own storage has no "list all X with a
+// filter" query (see storage.js — kv only supports exact-key get/set), so
 // this reads straight from Postgres with the service-role key instead of
 // trying to retrofit that into the shared_kv blobs the client uses. Same
 // admin gate as /api/admin-users.
@@ -70,6 +72,14 @@ export async function GET(request) {
     }
     const shopByOwner = new Map(shops.map((s) => [s.ownerId, s]));
 
+    // One row per account (if any) in account_moderation — same table
+    // admin-moderate-account.js writes to. Fetched in bulk so this stays a
+    // single extra query no matter how many accounts there are, rather than
+    // one lookup per user.
+    const { data: modRows, error: modErr } = await admin.from("account_moderation").select("user_id, status");
+    if (modErr) throw modErr;
+    const modStatusByUser = new Map((modRows || []).map((r) => [r.user_id, r.status]));
+
     const users = authUsers.map((u) => {
       const profile = profileByOwner.get(u.id) || null;
       const shop = shopByOwner.get(u.id) || null;
@@ -78,6 +88,13 @@ export async function GET(request) {
       // far-future "not banned" sentinel, which still parses as a valid
       // (huge) date.
       const locked = isRealBan(u.banned_until);
+      // Same fallback as admin-user-detail.js's moderationStatus: a real ban
+      // with no account_moderation row (applied outside the normal
+      // lock/ban/delete flow) still counts as "locked" rather than quietly
+      // showing as active. Self-service pause (profile.accountPaused, set
+      // by the owner, no Auth ban involved) only applies when the account
+      // isn't otherwise locked/banned/deleted.
+      const status = locked ? modStatusByUser.get(u.id) || "locked" : profile?.accountPaused ? "paused" : "active";
       return {
         id: u.id,
         email: u.email || null,
@@ -94,6 +111,7 @@ export async function GET(request) {
         phone: profile?.billingProfile?.phone || null,
         planTier: profile?.plan?.tier || "free",
         locked,
+        status,
       };
     });
 

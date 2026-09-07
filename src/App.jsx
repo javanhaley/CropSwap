@@ -1966,16 +1966,38 @@ function safeParseModeration(raw) {
 // A shop whose plan lapsed (cancelled/expired) goes offline to everyone but
 // its own owner — it stays on the platform, inactive, until the ABANDON_DAYS
 // sweep in useMarketData.loadAll() removes it, or the owner re-subscribes.
+//
+// visibilityOverride (see setShopVisibilityOverride in api/_supabaseAdmin.js)
+// is a separate, human-decided hide: "paused" is the owner pausing their own
+// account (still shown to themselves, same as a lapsed plan), while
+// "banned"/"deleted" is an admin moderation action on the account — that
+// stays hidden even to the owner, since it isn't their call to reverse.
 function isShopVisible(shop, viewerId) {
   if (!shop) return false;
-  return shop.billingStatus !== "inactive" || shop.ownerId === viewerId;
+  if (shop.ownerId === viewerId) {
+    return shop.visibilityOverride !== "banned" && shop.visibilityOverride !== "deleted";
+  }
+  return shop.billingStatus !== "inactive" && !shop.visibilityOverride;
 }
 // Stricter than isShopVisible — used for general browse/search/map results,
-// where an inactive shop shouldn't appear at all, even to its own owner
-// (they manage/reactivate it from Account > Selling, not by finding it mixed
-// into normal listings).
+// where an inactive or admin-hidden shop shouldn't appear at all, even to
+// its own owner (they manage/reactivate it from Account > Selling, not by
+// finding it mixed into normal listings).
 function isShopBrowsable(shop) {
-  return !!shop && shop.billingStatus !== "inactive";
+  return !!shop && shop.billingStatus !== "inactive" && !shop.visibilityOverride;
+}
+
+// Real, live shops Javan uses himself to test features end-to-end (orders,
+// reviews, messages, etc.) — not actual businesses selling anything. Flagged
+// here by shop id so their storefront and listings carry a visible
+// "test account" notice, rather than looking like real farms to a shopper
+// who stumbles onto them while browsing.
+const TEST_ACCOUNT_SHOP_IDS = new Set([
+  "shop_mt63gwqz_wscj5t", // Buzzy Bee Farm
+  "shop_mtgq4fsp_7qzv2w", // The Long Beach Peach
+]);
+function isTestAccountShop(shop) {
+  return !!shop && TEST_ACCOUNT_SHOP_IDS.has(shop.id);
 }
 function applyFilters(products, { search, categories, maxDistance, minRating, minPrice, maxPrice, inSeasonOnly, verifiedOnly, shopsById, userLoc }) {
   const term = (search || "").trim().toLowerCase();
@@ -6234,6 +6256,11 @@ function ProductCard({ product, onEdit, onDelete, sponsored }) {
       <div className="p-3.5 flex flex-col flex-1">
         <h3 className="font-semibold text-stone-900 leading-snug truncate" style={displayFont}>{product.name}</h3>
         {shop && <p className="cs-t11 text-stone-500 mt-0.5 truncate tracking-wide">{shop.name} · {shop.city}, {shop.state}</p>}
+        {isTestAccountShop(shop) && (
+          <p className="cs-t10 font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 inline-flex items-center gap-1 w-fit mt-1.5">
+            <FlaskConical size={10} /> Test account
+          </p>
+        )}
         <div className="mt-2.5 pt-2.5 border-t border-stone-100 flex items-baseline justify-between">
           {product.hidePrice ? (
             <span className="cs-t11 font-semibold text-stone-400 italic">See listing for price</span>
@@ -6315,6 +6342,11 @@ function ShopCard({ shop }) {
         </div>
         <p className="text-xs text-stone-500 mt-0.5">{shop.city}, {shop.state}{dist != null ? ` · ${formatDistance(dist)}` : ""}</p>
         <p className="text-sm text-stone-600 mt-2 line-clamp-2">{shop.bio}</p>
+        {isTestAccountShop(shop) && (
+          <p className="cs-t10 font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 inline-flex items-center gap-1 w-fit mt-1.5">
+            <FlaskConical size={10} /> Test account
+          </p>
+        )}
         <div className="mt-2 flex items-center gap-1.5">
           {shop.reviewCount > 0 ? (
             <>
@@ -8552,6 +8584,13 @@ function ProductDetailModal({ product, open, onClose, navigate, focusReviews }) 
             <span className="text-xl font-semibold text-stone-900 shrink-0" style={displayFont}>{formatPrice(product.price, product.priceUnit)}</span>
           </div>
 
+          {isTestAccountShop(shop) && (
+            <div className="mt-3 bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 flex items-center gap-2">
+              <FlaskConical size={14} className="text-amber-700 shrink-0" />
+              <p className="text-xs font-semibold text-amber-900">This is a test account used to try out CropSwap features — not a real business.</p>
+            </div>
+          )}
+
           {/* Full-width so a long shop name wraps instead of being clipped, and
               visibly a control rather than a line of grey text. */}
           {shop && (
@@ -8796,6 +8835,12 @@ function ShopProfileView({ shopId, navigate }) {
           </div>
         )}
       </div>
+      {isTestAccountShop(shop) && (
+        <div className="bg-amber-400 text-amber-950 px-5 py-2.5 flex items-center justify-center gap-2 text-center">
+          <FlaskConical size={15} className="shrink-0" />
+          <p className="text-sm font-bold">Test Account — this storefront is used to test CropSwap features and isn't a real business.</p>
+        </div>
+      )}
       <div className="max-w-3xl mx-auto px-5">
         {/* relative + z-10: the banner above is positioned, so a static avatar
             would paint underneath it and lose its top half. */}
@@ -10225,7 +10270,11 @@ function ShopFaq({ shop }) {
 
 function NearbyShops({ shop }) {
   const { shops, navigate } = useApp();
-  const near = useMemo(() => nearbyShops(shop, shops), [shop, shops]);
+  // "shops" from context is the unfiltered list (the shop's own owner still
+  // needs it elsewhere) — this rail is buyer-facing, so it filters out
+  // lapsed/paused/banned/deleted shops the same way ExploreView does.
+  const browsableShops = useMemo(() => shops.filter(isShopBrowsable), [shops]);
+  const near = useMemo(() => nearbyShops(shop, browsableShops), [shop, browsableShops]);
   if (!near.length) return null;
   return (
     <div className="mt-7">
@@ -10648,7 +10697,14 @@ function FavoritesView() {
   const [filters, setFilters] = useState({ ...DEFAULT_FILTERS, sortBy: "name" });
   const [filterOpen, setFilterOpen] = useState(false);
 
-  const favProductsRaw = useMemo(() => products.filter((p) => favProducts[p.id]), [products, favProducts]);
+  // A shop can be favorited and later lapse, get paused, or get banned/
+  // deleted by an admin — same buyer-facing hide as ExploreView/StoreScreen,
+  // so a moderated shop's items and storefront quietly drop out of a
+  // shopper's own Favorites instead of continuing to show up there.
+  const favProductsRaw = useMemo(
+    () => products.filter((p) => favProducts[p.id] && isShopBrowsable(shopsById[p.shopId])),
+    [products, favProducts, shopsById]
+  );
   const filteredProducts = useMemo(
     () =>
       sortProducts(
@@ -10668,7 +10724,7 @@ function FavoritesView() {
   }, [products]);
 
   const favShopList = useMemo(() => {
-    const saved = shops.filter((sh) => favShops[sh.id]);
+    const saved = shops.filter((sh) => favShops[sh.id] && isShopBrowsable(sh));
     const filtered = applyShopFilters(saved, {
       search,
       categories: filters.categories,
@@ -14094,15 +14150,15 @@ function AdminDashboardScreen({ navigate }) {
       <div className="bg-emerald-800 rounded-2xl p-5 flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="font-bold text-white flex items-center gap-1.5">
-            <SlidersHorizontal size={16} /> Full account directory
+            <SlidersHorizontal size={16} /> Accounts
           </h2>
-          <p className="text-sm text-emerald-100 mt-0.5">Search and filter by state, country, city, or join date — see shop name, phone, and lock any account.</p>
+          <p className="text-sm text-emerald-100 mt-0.5">Every account, same as the Shops list below — see who's active, paused, locked, banned, or deleted, filter to just the statuses you want, search by name/email/shop/phone/city, and export to CSV.</p>
         </div>
         <button
           onClick={() => navigate?.({ screen: "adminDirectory" })}
           className="bg-white text-emerald-800 font-semibold text-sm px-4 py-2.5 rounded-xl shrink-0 hover:bg-emerald-50 transition"
         >
-          Open Directory
+          Open Accounts
         </button>
       </div>
 
@@ -14279,6 +14335,19 @@ const ADMIN_DIRECTORY_SORTS = [
   { id: "city", label: "City" },
 ];
 
+// Shared status styling for the Accounts page — chip (the filter toggle,
+// shown "on" when that status is included) and badge (the table's Status
+// column) colors, plus the icon used in both. Kept in one map so a status's
+// look only has to be decided once.
+const ACCOUNT_STATUS_META = {
+  active: { label: "Active", icon: BadgeCheck, chipOn: "bg-emerald-800 text-white border-emerald-800", badge: "bg-emerald-50 text-emerald-700" },
+  paused: { label: "Paused", icon: PauseCircle, chipOn: "bg-amber-600 text-white border-amber-600", badge: "bg-amber-50 text-amber-700" },
+  locked: { label: "Locked", icon: Lock, chipOn: "bg-amber-800 text-white border-amber-800", badge: "bg-amber-50 text-amber-800" },
+  banned: { label: "Banned", icon: Ban, chipOn: "bg-rose-700 text-white border-rose-700", badge: "bg-rose-50 text-rose-700" },
+  deleted: { label: "Deleted", icon: UserX, chipOn: "bg-stone-700 text-white border-stone-700", badge: "bg-stone-100 text-stone-700" },
+};
+const ACCOUNT_STATUS_ORDER = ["active", "paused", "locked", "banned", "deleted"];
+
 function AdminDirectoryScreen({ navigate }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -14287,6 +14356,17 @@ function AdminDirectoryScreen({ navigate }) {
   const [countryFilter, setCountryFilter] = useState("");
   const [stateFilter, setStateFilter] = useState("");
   const [sortBy, setSortBy] = useState("newest");
+  // Every status shown by default — this is what lets an admin UNCHECK
+  // "Banned"/"Deleted" etc. to leave only the accounts they actually want to
+  // see, rather than starting from an empty list they have to build up.
+  const [statusFilter, setStatusFilter] = useState(() => new Set(ACCOUNT_STATUS_ORDER));
+  const toggleStatus = (id) =>
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -14313,9 +14393,22 @@ function AdminDirectoryScreen({ navigate }) {
   const countries = useMemo(() => [...new Set(users.map((u) => u.country).filter(Boolean))].sort(), [users]);
   const states = useMemo(() => [...new Set(users.map((u) => u.state).filter(Boolean))].sort(), [users]);
 
+  // Counts against the FULL unfiltered list, so a chip's number doesn't
+  // shrink as other chips get toggled off — it always answers "how many
+  // accounts are in this status platform-wide."
+  const statusCounts = useMemo(() => {
+    const counts = { active: 0, paused: 0, locked: 0, banned: 0, deleted: 0 };
+    users.forEach((u) => {
+      const s = u.status || "active";
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    return counts;
+  }, [users]);
+
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = users.filter((u) => {
+      if (!statusFilter.has(u.status || "active")) return false;
       if (countryFilter && u.country !== countryFilter) return false;
       if (stateFilter && u.state !== stateFilter) return false;
       if (!q) return true;
@@ -14339,10 +14432,10 @@ function AdminDirectoryScreen({ navigate }) {
       }
     });
     return list;
-  }, [users, search, countryFilter, stateFilter, sortBy]);
+  }, [users, search, countryFilter, stateFilter, sortBy, statusFilter]);
 
   const exportCsv = () => {
-    const header = ["Name", "Email", "Shop", "Phone", "City", "State", "Country", "Plan", "Joined", "Locked"];
+    const header = ["Name", "Email", "Shop", "Phone", "City", "State", "Country", "Plan", "Status", "Joined"];
     const dataRows = rows.map((u) => [
       u.name || "",
       u.email || "",
@@ -14352,10 +14445,10 @@ function AdminDirectoryScreen({ navigate }) {
       u.state || "",
       u.country || "",
       u.planTier || "",
+      ACCOUNT_STATUS_META[u.status || "active"]?.label || u.status || "Active",
       u.createdAt ? new Date(u.createdAt).toISOString().slice(0, 10) : "",
-      u.locked ? "Locked" : "",
     ]);
-    downloadCsv(`cropswap-directory-${new Date().toISOString().slice(0, 10)}.csv`, [header, ...dataRows]);
+    downloadCsv(`cropswap-accounts-${new Date().toISOString().slice(0, 10)}.csv`, [header, ...dataRows]);
   };
 
   return (
@@ -14367,7 +14460,7 @@ function AdminDirectoryScreen({ navigate }) {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold text-stone-900 flex items-center gap-2" style={displayFont}>
-            <SlidersHorizontal size={20} className="text-emerald-700" /> Account Directory
+            <SlidersHorizontal size={20} className="text-emerald-700" /> Accounts
           </h1>
           <p className="text-sm text-stone-500 mt-1">{rows.length} of {users.length} account{users.length === 1 ? "" : "s"}</p>
         </div>
@@ -14378,6 +14471,31 @@ function AdminDirectoryScreen({ navigate }) {
           <button onClick={exportCsv} disabled={rows.length === 0} className="text-xs font-semibold text-white bg-emerald-800 hover:bg-emerald-700 flex items-center gap-1.5 rounded-lg px-3 py-1.5 disabled:opacity-50">
             <Download size={13} /> Export CSV
           </button>
+        </div>
+      </div>
+
+      <div className="bg-white border border-stone-200 rounded-2xl p-4">
+        <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Show accounts that are…</p>
+        <div className="flex flex-wrap gap-2">
+          {ACCOUNT_STATUS_ORDER.map((id) => {
+            const meta = ACCOUNT_STATUS_META[id];
+            const on = statusFilter.has(id);
+            const Icon = meta.icon;
+            return (
+              <button
+                key={id}
+                onClick={() => toggleStatus(id)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition flex items-center gap-1.5 ${on ? meta.chipOn : "bg-white text-stone-400 border-stone-200"}`}
+              >
+                <Icon size={12} /> {meta.label} ({statusCounts[id] || 0})
+              </button>
+            );
+          })}
+          {statusFilter.size < ACCOUNT_STATUS_ORDER.length && (
+            <button onClick={() => setStatusFilter(new Set(ACCOUNT_STATUS_ORDER))} className="text-xs font-semibold text-stone-500 hover:text-stone-700 px-2">
+              Show all statuses
+            </button>
+          )}
         </div>
       </div>
 
@@ -14408,12 +14526,13 @@ function AdminDirectoryScreen({ navigate }) {
             <option key={s.id} value={s.id}>Sort: {s.label}</option>
           ))}
         </select>
-        {(search || countryFilter || stateFilter) && (
+        {(search || countryFilter || stateFilter || statusFilter.size < ACCOUNT_STATUS_ORDER.length) && (
           <button
             onClick={() => {
               setSearch("");
               setCountryFilter("");
               setStateFilter("");
+              setStatusFilter(new Set(ACCOUNT_STATUS_ORDER));
             }}
             className="text-xs font-semibold text-stone-500 hover:text-stone-700"
           >
@@ -14440,41 +14559,42 @@ function AdminDirectoryScreen({ navigate }) {
                   <th className="pb-2 pr-3">Phone</th>
                   <th className="pb-2 pr-3">Location</th>
                   <th className="pb-2 pr-3">Plan</th>
+                  <th className="pb-2 pr-3">Status</th>
                   <th className="pb-2 pr-3">Joined</th>
                   <th className="pb-2 w-6" />
                 </tr>
               </thead>
               <tbody>
-                {rows.map((u) => (
-                  <tr
-                    key={u.id}
-                    onClick={() => navigate({ screen: "adminUserDetail", userId: u.id, userName: u.name, userAvatar: u.avatar })}
-                    className="border-b border-stone-50 last:border-0 cursor-pointer hover:bg-stone-50"
-                  >
-                    <td className="py-2 pr-3 font-medium text-stone-800">
-                      <span className="flex items-center gap-1.5">
-                        {u.name || "—"}
-                        {u.locked && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-700 flex items-center gap-0.5">
-                            <Lock size={9} /> Locked
-                          </span>
-                        )}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-3 text-stone-500">{u.shopName || "—"}</td>
-                    <td className="py-2 pr-3 text-stone-500">{u.email || "—"}</td>
-                    <td className="py-2 pr-3 text-stone-500">{u.phone || "—"}</td>
-                    <td className="py-2 pr-3 text-stone-500">{[u.city, u.state, u.country].filter(Boolean).join(", ") || "—"}</td>
-                    <td className="py-2 pr-3 text-stone-500 capitalize">{u.planTier || "free"}</td>
-                    <td className="py-2 pr-3 text-stone-400">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}</td>
-                    <td className="py-2 text-stone-300">
-                      <ChevronRight size={15} />
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((u) => {
+                  const statusMeta = ACCOUNT_STATUS_META[u.status || "active"] || ACCOUNT_STATUS_META.active;
+                  const StatusIcon = statusMeta.icon;
+                  return (
+                    <tr
+                      key={u.id}
+                      onClick={() => navigate({ screen: "adminUserDetail", userId: u.id, userName: u.name, userAvatar: u.avatar })}
+                      className="border-b border-stone-50 last:border-0 cursor-pointer hover:bg-stone-50"
+                    >
+                      <td className="py-2 pr-3 font-medium text-stone-800">{u.name || "—"}</td>
+                      <td className="py-2 pr-3 text-stone-500">{u.shopName || "—"}</td>
+                      <td className="py-2 pr-3 text-stone-500">{u.email || "—"}</td>
+                      <td className="py-2 pr-3 text-stone-500">{u.phone || "—"}</td>
+                      <td className="py-2 pr-3 text-stone-500">{[u.city, u.state, u.country].filter(Boolean).join(", ") || "—"}</td>
+                      <td className="py-2 pr-3 text-stone-500 capitalize">{u.planTier || "free"}</td>
+                      <td className="py-2 pr-3">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-flex items-center gap-1 ${statusMeta.badge}`}>
+                          <StatusIcon size={9} /> {statusMeta.label}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3 text-stone-400">{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}</td>
+                      <td className="py-2 text-stone-300">
+                        <ChevronRight size={15} />
+                      </td>
+                    </tr>
+                  );
+                })}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="py-6 text-stone-400 text-center">
+                    <td colSpan={9} className="py-6 text-stone-400 text-center">
                       No accounts match these filters.
                     </td>
                   </tr>
