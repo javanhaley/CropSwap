@@ -6586,7 +6586,12 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
         <button onClick={onOpenFilters} className="relative shrink-0 w-8 h-8 rounded-full bg-stone-100 hover:bg-stone-200 flex items-center justify-center text-stone-600 transition" aria-label="Filters">
           <Filter size={16} />
           {filterCount > 0 && (
-            <span className="absolute -top-1 -right-1 bg-amber-500 text-stone-900 cs-t9 font-bold w-4 h-4 rounded-full flex items-center justify-center">{filterCount}</span>
+            // Matches the notifications badge's real green — bg-amber-500
+            // is remapped to the true-neutral gray scale in
+            // tailwind.config.js along with every other non-brand color,
+            // which is why this rendered as a dull gray circle instead of
+            // standing out.
+            <span className="absolute -top-1 -right-1 bg-emerald-700 text-white cs-t9 font-bold w-4 h-4 rounded-full flex items-center justify-center">{filterCount}</span>
           )}
         </button>
 
@@ -10255,6 +10260,12 @@ function VendorUpdatesTab({ shop }) {
   const { updateShop, showToast } = useApp();
   const [body, setBody] = useState("");
   const [kind, setKind] = useState("fresh");
+  // Editing an already-posted update reuses the same kind-picker + textarea
+  // pattern as posting a new one, just inline over that update's own card
+  // instead of in the composer up top.
+  const [editingId, setEditingId] = useState(null);
+  const [editBody, setEditBody] = useState("");
+  const [editKind, setEditKind] = useState("fresh");
   const updates = [...(shop.updates || [])].sort((a, b) => b.createdAt - a.createdAt);
 
   const post = async () => {
@@ -10263,6 +10274,24 @@ function VendorUpdatesTab({ shop }) {
     await updateShop(shop.id, { updates: next });
     setBody("");
     showToast("Update posted — followers will see it");
+  };
+
+  const startEdit = (u) => {
+    setEditingId(u.id);
+    setEditBody(u.body);
+    setEditKind(u.kind);
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditBody("");
+  };
+  const saveEdit = async (id) => {
+    if (!editBody.trim()) return;
+    const next = (shop.updates || []).map((x) => (x.id === id ? { ...x, body: editBody.trim(), kind: editKind, editedAt: Date.now() } : x));
+    await updateShop(shop.id, { updates: next });
+    setEditingId(null);
+    setEditBody("");
+    showToast("Update saved");
   };
 
   return (
@@ -10300,26 +10329,75 @@ function VendorUpdatesTab({ shop }) {
 
       <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Posted ({updates.length})</p>
       <div className="flex flex-col gap-2">
-        {updates.map((u) => (
-          <div key={u.id} className="flex items-start gap-2 border border-stone-200 rounded-xl p-3">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="cs-t10 font-bold uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: updateKind(u.kind).bg, color: updateKind(u.kind).tint }}>
-                  {updateKind(u.kind).label}
-                </span>
-                <span className="cs-t10 text-stone-400">{timeAgo(u.createdAt)}</span>
+        {updates.map((u) =>
+          editingId === u.id ? (
+            <div key={u.id} className="border-2 border-emerald-700 rounded-xl p-3 bg-white">
+              <div className="flex flex-wrap gap-1.5 mb-2.5">
+                {UPDATE_KINDS.map((k) => (
+                  <button
+                    key={k.id}
+                    onClick={() => setEditKind(k.id)}
+                    className="px-2.5 py-1 rounded-full cs-t11 font-semibold border transition"
+                    style={
+                      editKind === k.id
+                        ? { background: k.tint, color: "#fff", borderColor: k.tint }
+                        : { background: "#fff", color: "#57534e", borderColor: "#e7e5e4" }
+                    }
+                  >
+                    {k.label}
+                  </button>
+                ))}
               </div>
-              <p className="text-sm text-stone-700">{u.body}</p>
+              <TextField
+                value={editBody}
+                onChange={setEditBody}
+                label="Edit update"
+                multiline
+                rows={3}
+                className="w-full border border-stone-200 rounded-xl px-3 py-2.5 text-sm mb-2 outline-none focus:border-emerald-700"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => saveEdit(u.id)}
+                  disabled={!editBody.trim()}
+                  className="flex-1 bg-emerald-800 text-white font-semibold py-2 rounded-lg text-sm disabled:opacity-40"
+                >
+                  Save
+                </button>
+                <button onClick={cancelEdit} className="flex-1 border border-stone-200 text-stone-600 font-semibold py-2 rounded-lg text-sm">
+                  Cancel
+                </button>
+              </div>
             </div>
-            <button
-              onClick={() => updateShop(shop.id, { updates: (shop.updates || []).filter((x) => x.id !== u.id) })}
-              className="text-stone-300 hover:text-rose-600 shrink-0 p-1"
-              aria-label="Delete update"
-            >
-              <Trash2 size={14} />
-            </button>
-          </div>
-        ))}
+          ) : (
+            <div key={u.id} className="flex items-start gap-2 border border-stone-200 rounded-xl p-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="cs-t10 font-bold uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: updateKind(u.kind).bg, color: updateKind(u.kind).tint }}>
+                    {updateKind(u.kind).label}
+                  </span>
+                  <span className="cs-t10 text-stone-400">
+                    {timeAgo(u.createdAt)}
+                    {u.editedAt ? " · edited" : ""}
+                  </span>
+                </div>
+                <p className="text-sm text-stone-700">{u.body}</p>
+              </div>
+              <span className="flex items-center gap-0.5 shrink-0">
+                <button onClick={() => startEdit(u)} className="text-stone-300 hover:text-emerald-700 p-1" aria-label="Edit update">
+                  <Pencil size={14} />
+                </button>
+                <button
+                  onClick={() => updateShop(shop.id, { updates: (shop.updates || []).filter((x) => x.id !== u.id) })}
+                  className="text-stone-300 hover:text-rose-600 p-1"
+                  aria-label="Delete update"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </span>
+            </div>
+          )
+        )}
         {!updates.length && <p className="text-sm text-stone-400">Nothing posted yet.</p>}
       </div>
     </div>
@@ -14775,6 +14853,40 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
   // null) lives in one piece of state since only one can be open at a time.
   const [moderationModal, setModerationModal] = useState(null); // "ban" | "delete" | null
   const [moderationBusy, setModerationBusy] = useState(false);
+  // Reaching an account directly by email — the one channel that still
+  // works for someone who's locked/banned/deleted and can never see an
+  // in-app notification.
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailMessage, setEmailMessage] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+
+  async function sendUserEmail() {
+    if (!emailSubject.trim() || !emailMessage.trim()) return;
+    setEmailSending(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch("/api/admin-send-user-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId, subject: emailSubject.trim(), message: emailMessage.trim() }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || `status ${res.status}`);
+      setEmailSent(true);
+      setEmailSubject("");
+      setEmailMessage("");
+      globalToast?.(`Email sent to ${detail?.email || "this account"}`);
+      setTimeout(() => setEmailSent(false), 4000);
+    } catch (e) {
+      globalToast?.(e?.message || "Couldn't send that email");
+    } finally {
+      setEmailSending(false);
+    }
+  }
 
   const load = useCallback(async () => {
     if (!userId) return;
@@ -15183,6 +15295,68 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
             onCancel={() => setModerationModal(null)}
             onConfirm={(reason, note) => confirmModeration("delete", reason, note)}
           />
+
+          {/* Reaches this account by real email, independent of sign-in
+              access — the only channel left for a locked/banned/deleted
+              account, which can never see an in-app notification. */}
+          <div className="bg-white border border-stone-200 rounded-2xl p-5">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <h2 className="font-bold text-stone-900 flex items-center gap-1.5">
+                <Mail size={16} className="text-emerald-700" /> Email this account
+              </h2>
+              {!emailOpen && (
+                <button
+                  onClick={() => setEmailOpen(true)}
+                  disabled={!detail?.email}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-stone-200 text-stone-700 flex items-center gap-1.5 disabled:opacity-40"
+                >
+                  <Send size={13} /> Compose
+                </button>
+              )}
+            </div>
+            <p className="text-sm text-stone-400 mb-3">
+              Sends straight to {detail?.email || "this account's email"} — useful for a locked/banned account that can't sign in to see anything in-app.
+            </p>
+            {emailOpen && (
+              <div className="space-y-2.5">
+                <input
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
+                  placeholder="Subject"
+                  maxLength={200}
+                  className="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-emerald-700"
+                />
+                <textarea
+                  value={emailMessage}
+                  onChange={(e) => setEmailMessage(e.target.value)}
+                  rows={5}
+                  maxLength={4000}
+                  placeholder="What do you want to tell them?"
+                  className="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-emerald-700"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setEmailOpen(false);
+                      setEmailSubject("");
+                      setEmailMessage("");
+                    }}
+                    disabled={emailSending}
+                    className="flex-1 text-sm font-semibold py-2.5 rounded-lg border border-stone-200 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={sendUserEmail}
+                    disabled={emailSending || !emailSubject.trim() || !emailMessage.trim()}
+                    className="flex-1 text-sm font-bold py-2.5 rounded-lg bg-emerald-800 text-white disabled:opacity-50 flex items-center justify-center gap-1.5"
+                  >
+                    {emailSending ? "Sending…" : emailSent ? <><Check size={14} /> Sent</> : <><Send size={14} /> Send email</>}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="bg-white border border-stone-200 rounded-2xl p-5">
             <h2 className="font-bold text-stone-900 mb-3 flex items-center gap-1.5">

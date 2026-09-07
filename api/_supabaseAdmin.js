@@ -269,12 +269,27 @@ export async function notifyUserServer(userId, type, title, body, route) {
   if (writeErr) throw writeErr;
 }
 
-// "Real future timestamp within 50 years" — the same guard used across
-// admin-directory.js / admin-user-detail.js / check-email-locked.js to tell
-// an actual ban from Supabase's far-future "not banned" sentinel, which
-// still parses as a valid (huge) date.
+// "Real future timestamp, comfortably within our own ban horizon" — the
+// shared guard used everywhere (admin-directory.js, admin-user-detail.js,
+// check-email-locked.js) to tell an actual ban from Supabase's own
+// far-future "not banned" sentinel, which still parses as a valid (huge)
+// date.
+//
+// This cutoff MUST stay well above INDEFINITE_BAN_DURATION above (currently
+// ~100 years) — every lock/ban/delete this app issues sets banned_until
+// that far out. A previous version of this check used a 50-year cutoff,
+// which is BELOW that 100-year duration, so it silently treated every
+// single account this app ever locked/banned/deleted as "not really
+// banned": Supabase Auth kept correctly refusing those accounts' sign-ins
+// the whole time, but admin-directory.js, admin-user-detail.js, and
+// check-email-locked.js all concluded `locked: false` and showed the
+// account as perfectly active (plan, name, everything) with no indication
+// it had ever been moderated. 200 years leaves generous headroom above our
+// own 100-year duration while still safely excluding Supabase's real
+// "never banned" sentinel.
+const REAL_BAN_HORIZON_MS = 200 * 365 * 86400000;
 export function isRealBan(bannedUntil) {
   const ms = bannedUntil ? new Date(bannedUntil).getTime() : null;
   const now = Date.now();
-  return !!ms && ms > now && ms < now + 50 * 365 * 86400000;
+  return !!ms && ms > now && ms < now + REAL_BAN_HORIZON_MS;
 }

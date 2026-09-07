@@ -8,7 +8,7 @@
 // this reads straight from Postgres with the service-role key instead of
 // trying to retrofit that into the shared_kv blobs the client uses. Same
 // admin gate as /api/admin-users.
-import { getSupabaseAdmin, getUserFromRequest } from "./_supabaseAdmin.js";
+import { getSupabaseAdmin, getUserFromRequest, isRealBan } from "./_supabaseAdmin.js";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "cropswapadmin@gmail.com";
 const PAGE_SIZE = 1000;
@@ -70,17 +70,14 @@ export async function GET(request) {
     }
     const shopByOwner = new Map(shops.map((s) => [s.ownerId, s]));
 
-    const now = Date.now();
     const users = authUsers.map((u) => {
       const profile = profileByOwner.get(u.id) || null;
       const shop = shopByOwner.get(u.id) || null;
-      const bannedUntil = u.banned_until ? new Date(u.banned_until).getTime() : null;
-      // Supabase represents "not banned" with a far-future sentinel
-      // ("none") that still parses as a valid (huge) date — only trust it
-      // as a lock if that date is in the future AND not implausibly distant
-      // the way "none" would be after Date parsing quirks; simplest robust
-      // check is just: is it a real future timestamp within, say, 50 years.
-      const locked = !!bannedUntil && bannedUntil > now && bannedUntil < now + 50 * 365 * 86400000;
+      // isRealBan() (shared with admin-user-detail.js and
+      // check-email-locked.js) tells an actual ban from Supabase's own
+      // far-future "not banned" sentinel, which still parses as a valid
+      // (huge) date.
+      const locked = isRealBan(u.banned_until);
       return {
         id: u.id,
         email: u.email || null,

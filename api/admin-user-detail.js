@@ -8,7 +8,7 @@
 // when." Same admin gate as /api/admin-users: the caller's verified token
 // email must match ADMIN_EMAIL before anything about another account is
 // returned.
-import { getSupabaseAdmin, getUserFromRequest } from "./_supabaseAdmin.js";
+import { getSupabaseAdmin, getUserFromRequest, isRealBan } from "./_supabaseAdmin.js";
 import { getStripe } from "./_stripe.js";
 
 // Keep in sync with ADMIN_EMAIL in src/App.jsx.
@@ -75,8 +75,10 @@ export async function GET(request) {
     // account_moderation says WHICH of the three it is, plus the reason and
     // who did it, for the CRM detail page.
     const bannedUntilMs = authUser.banned_until ? new Date(authUser.banned_until).getTime() : null;
-    const now = Date.now();
-    const locked = !!bannedUntilMs && bannedUntilMs > now && bannedUntilMs < now + 50 * 365 * 86400000;
+    // isRealBan() (shared with admin-directory.js and check-email-locked.js)
+    // tells an actual ban from Supabase's own far-future "not banned"
+    // sentinel, which still parses as a valid (huge) date.
+    const locked = isRealBan(authUser.banned_until);
     const { data: modRow } = await admin
       .from("account_moderation")
       .select("status, reason, note, actor_email, locked_at, updated_at")
