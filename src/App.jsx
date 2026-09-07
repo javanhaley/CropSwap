@@ -7067,35 +7067,38 @@ function ToggleSwitch({ checked, onChange }) {
   );
 }
 
-// Shown at the top of Shops, Listings, Map (all three are this same
-// ExploreView, told apart only by `exploreView`) and Start Selling — the
-// four pages this was asked to appear on. Crop-green fill (the bright leaf
-// green from the wordmark) with Swap-green (the wordmark's dark forest
-// green) text/pill for contrast. An existing account goes straight to their
+// Shown alongside the Shops/Listings/Map/Start Selling row (all three
+// Explore views are this same row, told apart only by `exploreView`) and at
+// the top of the Start Selling preview — the four pages this was asked to
+// appear on. Crop-green fill (the bright leaf green from the wordmark) with
+// Swap-green (the wordmark's dark forest green) text for contrast, a white
+// circle + green $ for the icon. An existing account goes straight to their
 // own affiliate link; a guest gets the sign-up prompt first (same
 // requireAuth + pendingRoute pattern every other guest-gated action in the
 // app uses), then lands on that same page once they're in.
-function ReferralBanner() {
+function ReferralBanner({ className = "" }) {
   const { me, requireAuth, navigate } = useApp();
+  // "incentives" is ungated (see AUTH_REQUIRED_SCREENS / AffiliateScreenEntry)
+  // so a guest tapping the main pill lands on AffiliateSamplePreviewScreen —
+  // a real look at the program — instead of being stopped before seeing it.
+  // The secondary pill is a direct-to-signup shortcut for anyone already sold.
+  const seeProgram = () => navigate({ screen: "incentives" });
+  const signUpNow = () => requireAuth("get your affiliate link and start earning");
   return (
-    <button
-      onClick={() => {
-        if (requireAuth("get your affiliate link and start earning", { screen: "incentives" })) navigate({ screen: "incentives" });
-      }}
-      className="w-full flex items-center justify-between gap-3 bg-brand-crop hover:brightness-95 rounded-2xl px-4 sm:px-5 py-3.5 mb-4 shadow-sm transition text-left"
-    >
-      <div className="flex items-center gap-2.5 min-w-0">
-        <span className="w-9 h-9 rounded-full bg-brand-swap text-white flex items-center justify-center shrink-0">
-          <Gift size={17} />
+    <div className={`flex items-center gap-2 shrink-0 ${className}`}>
+      <button
+        onClick={seeProgram}
+        className="flex items-center gap-2 bg-brand-crop hover:brightness-95 rounded-full pl-2 pr-4 py-2 shadow-sm transition shrink-0"
+      >
+        <span className="w-7 h-7 rounded-full bg-white text-brand-swap flex items-center justify-center shrink-0">
+          <DollarSign size={16} strokeWidth={3} />
         </span>
-        <p className="text-sm sm:text-lg font-extrabold text-brand-swap leading-tight">
-          Refer a friend to earn $!!!
-        </p>
-      </div>
-      <span className="shrink-0 bg-brand-swap text-white text-xs font-bold px-3.5 py-2 rounded-full whitespace-nowrap">
+        <span className="text-sm font-extrabold text-brand-swap whitespace-nowrap">Refer a friend to earn!</span>
+      </button>
+      <button onClick={me ? seeProgram : signUpNow} className="bg-brand-swap text-white text-xs font-bold px-3.5 py-2 rounded-full whitespace-nowrap shrink-0">
         {me ? "Get my link" : "Sign up free"}
-      </span>
-    </button>
+      </button>
+    </div>
   );
 }
 
@@ -7282,9 +7285,8 @@ function ExploreView({ navigate }) {
               </button>
             );
           })}
+          <ReferralBanner className="ml-3" />
         </div>
-
-        <ReferralBanner />
 
         {sponsoredNow.length > 0 && view === "grid" && (
           <div className="mb-6">
@@ -16023,10 +16025,210 @@ function ReferralCardModal({ open, onClose, code, link }) {
   );
 }
 
+function AffiliateScreenEntry({ navigate }) {
+  const { me } = useApp();
+  if (!me) return <AffiliateSamplePreviewScreen navigate={navigate} />;
+  return <AffiliateScreen navigate={navigate} />;
+}
+
+// Same "sample data preview" treatment as StartSellingPreviewScreen /
+// AdsPreviewScreen / VendorDashboard's demo mode — a guest can see exactly
+// what the affiliate program looks like (their link, running totals, payout
+// rates, a couple of example referrals) before ever creating an account,
+// instead of the program being invisible until they sign up. Every number
+// here is made up; nothing on this screen reads or writes real data.
+const AFFILIATE_SAMPLE_REFERRALS = [
+  { id: "sample-1", email: "j••••@gmail.com", status: "paid", signedUpAt: Date.now() - 86400000 * 46, payoutAmountCents: 5000 },
+  { id: "sample-2", email: "m••••@yahoo.com", status: "pending", signedUpAt: Date.now() - 86400000 * 12, payoutAmountCents: null },
+  { id: "sample-3", email: "s••••@icloud.com", status: "eligible_awaiting_approval", signedUpAt: Date.now() - 86400000 * 33, payoutAmountCents: null },
+];
+function AffiliateSamplePreviewScreen({ navigate }) {
+  const { requireAuth } = useApp();
+  const [cardOpen, setCardOpen] = useState(false);
+  const sampleCode = "sunnyacres";
+  const siteOrigin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "https://cropswapmarket.com";
+  const sampleLink = `${siteOrigin}/incentives/${sampleCode}`;
+  const signUp = () => requireAuth("get your affiliate link and start earning");
+
+  const whyItWorks = [
+    { icon: Zap, text: "No inventory, no shipping, no customers to manage" },
+    { icon: Users, text: "Just people you already know who'd love fresh, local food" },
+    { icon: Landmark, text: "Real cash, paid straight to your bank via Stripe" },
+  ];
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-2xl mx-auto p-4 space-y-5">
+        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-2xl px-4 py-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0 shadow-sm">
+              <Crown size={16} />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-stone-900">This is a sample affiliate page</p>
+              <p className="text-xs text-amber-800">
+                <button onClick={signUp} className="font-bold underline underline-offset-2">
+                  Sign up free
+                </button>{" "}
+                to get your own real link.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={signUp}
+            className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition"
+          >
+            Sign up free
+          </button>
+        </div>
+
+        {/* Hero — big, colorful, and unmistakably about earning money */}
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-swap via-emerald-800 to-emerald-950 text-white px-6 py-9 text-center shadow-lg">
+          <DollarSign size={100} strokeWidth={1.5} className="absolute -top-6 -left-8 text-white/10 rotate-[-18deg] pointer-events-none" />
+          <DollarSign size={72} strokeWidth={1.5} className="absolute top-6 right-3 text-white/10 rotate-[14deg] pointer-events-none" />
+          <DollarSign size={64} strokeWidth={1.5} className="absolute -bottom-3 left-12 text-white/10 rotate-[9deg] pointer-events-none" />
+          <DollarSign size={120} strokeWidth={1.5} className="absolute -bottom-10 -right-10 text-white/10 rotate-[-10deg] pointer-events-none" />
+          <span className="relative inline-flex w-16 h-16 rounded-full bg-brand-crop items-center justify-center shadow-lg mb-4">
+            <DollarSign size={32} className="text-brand-swap" strokeWidth={3} />
+          </span>
+          <h1 className="relative text-2xl sm:text-3xl font-extrabold mb-2 leading-tight" style={displayFont}>
+            Get Paid to Share CropSwap
+          </h1>
+          <p className="relative text-sm sm:text-base text-emerald-50 max-w-md mx-auto mb-5">
+            Every friend who joins and sticks around earns you real cash. No selling, no inventory — just your link.
+          </p>
+          <button
+            onClick={signUp}
+            className="relative bg-brand-crop hover:brightness-95 text-brand-swap font-extrabold text-sm sm:text-base px-7 py-3 rounded-full shadow-md transition"
+          >
+            Get My Free Link →
+          </button>
+        </div>
+
+        {/* How it works — 3 big, simple steps */}
+        <div className="grid sm:grid-cols-3 gap-3">
+          <div className="bg-white border-2 border-emerald-100 rounded-2xl p-4 text-center">
+            <span className="w-11 h-11 mx-auto rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mb-2">
+              <Share2 size={20} />
+            </span>
+            <p className="font-extrabold text-stone-900 text-sm">1. Share your link</p>
+            <p className="text-xs text-stone-500 mt-1">Text it, post it, or hand out a printed card.</p>
+          </div>
+          <div className="bg-white border-2 border-emerald-100 rounded-2xl p-4 text-center">
+            <span className="w-11 h-11 mx-auto rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mb-2">
+              <Users size={20} />
+            </span>
+            <p className="font-extrabold text-stone-900 text-sm">2. They join & subscribe</p>
+            <p className="text-xs text-stone-500 mt-1">A friend signs up for a Basic or Premium annual plan.</p>
+          </div>
+          <div className="bg-gradient-to-br from-brand-crop to-emerald-500 border-2 border-emerald-200 rounded-2xl p-4 text-center text-white">
+            <span className="w-11 h-11 mx-auto rounded-full bg-white text-emerald-700 flex items-center justify-center mb-2">
+              <DollarSign size={20} strokeWidth={3} />
+            </span>
+            <p className="font-extrabold text-sm">3. You get paid!</p>
+            <p className="text-xs text-emerald-50 mt-1">$30–$50 lands in your account on day 31.</p>
+          </div>
+        </div>
+
+        {/* Payout rates — the number, front and center */}
+        <div className="relative overflow-hidden bg-gradient-to-r from-amber-400 to-yellow-500 rounded-2xl p-5 text-center shadow-sm">
+          <p className="text-xs font-extrabold uppercase tracking-wide text-amber-900/80 mb-1">Earn per referral</p>
+          <p className="text-3xl sm:text-4xl font-extrabold text-stone-900" style={displayFont}>
+            {formatMoney(30)} – {formatMoney(50)}
+          </p>
+          <p className="text-sm font-semibold text-amber-900/90 mt-1">
+            {formatMoney(30)} for Basic annual · {formatMoney(50)} for Premium annual — paid on day 31, guaranteed by then.
+          </p>
+        </div>
+
+        {/* Why it works — big bullet points */}
+        <div className="bg-white border border-stone-200 rounded-2xl p-5">
+          <h2 className="font-extrabold text-stone-900 mb-3 text-lg" style={displayFont}>
+            Why growers &amp; shoppers love this
+          </h2>
+          <div className="space-y-3">
+            {whyItWorks.map(({ icon: Icon, text }, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="w-9 h-9 rounded-full bg-brand-crop/20 text-brand-swap flex items-center justify-center shrink-0">
+                  <Icon size={18} strokeWidth={2.5} />
+                </span>
+                <p className="text-sm sm:text-base font-bold text-stone-800">{text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white border border-stone-200 rounded-2xl p-5">
+          <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Your affiliate link (sample)</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <code className="text-sm font-semibold text-emerald-800 bg-emerald-50 rounded-lg px-3 py-2 break-all flex-1 min-w-[200px]">{sampleLink}</code>
+            <button onClick={signUp} className="text-xs font-bold px-3 py-2 rounded-lg border border-stone-200 flex items-center gap-1.5 shrink-0">
+              <Copy size={13} /> Copy
+            </button>
+          </div>
+          <button onClick={() => setCardOpen(true)} className="mt-3 text-sm font-semibold text-emerald-800 flex items-center gap-1.5">
+            <Printer size={14} /> See a printable card with QR code
+          </button>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div className="bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 rounded-2xl p-4">
+            <p className="text-xs font-bold text-amber-800/70 uppercase mb-1">Pending</p>
+            <p className="text-2xl font-extrabold text-amber-700">{formatMoney(30)}</p>
+            <p className="text-xs text-amber-800/70">2 referrals</p>
+          </div>
+          <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 border border-emerald-200 rounded-2xl p-4">
+            <p className="text-xs font-bold text-emerald-800/70 uppercase mb-1">Paid out</p>
+            <p className="text-2xl font-extrabold text-emerald-700">{formatMoney(50)}</p>
+            <p className="text-xs text-emerald-800/70">1 referral</p>
+          </div>
+        </div>
+
+        <div className="bg-white border border-stone-200 rounded-2xl p-5">
+          <h2 className="font-bold text-stone-900 mb-3">Real referrals, real payouts (sample)</h2>
+          <div className="space-y-2">
+            {AFFILIATE_SAMPLE_REFERRALS.map((r) => {
+              const statusMeta = REFERRAL_STATUS_LABEL[r.status] || { label: r.status, color: "bg-stone-100 text-stone-500" };
+              return (
+                <div key={r.id} className="border border-stone-100 rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="text-sm font-semibold text-stone-800">{r.email}</p>
+                    <p className="text-xs text-stone-400">Signed up {timeAgo(r.signedUpAt)}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${statusMeta.color}`}>{statusMeta.label}</span>
+                    {r.payoutAmountCents ? <p className="text-xs text-stone-500 mt-1">{formatMoney(r.payoutAmountCents / 100)}</p> : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Closing CTA */}
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-crop to-emerald-500 text-center px-6 py-7 shadow-lg">
+          <DollarSign size={80} strokeWidth={1.5} className="absolute -top-5 right-4 text-white/15 rotate-[10deg] pointer-events-none" />
+          <p className="relative text-lg sm:text-xl font-extrabold text-brand-swap mb-3" style={displayFont}>
+            Ready to start earning?
+          </p>
+          <button
+            onClick={signUp}
+            className="relative bg-white hover:bg-emerald-50 text-brand-swap font-extrabold text-sm sm:text-base px-7 py-3 rounded-full shadow-md transition"
+          >
+            Sign up free — it takes 30 seconds
+          </button>
+        </div>
+      </div>
+      <ReferralCardModal open={cardOpen} onClose={() => setCardOpen(false)} code={sampleCode} link={sampleLink} />
+    </div>
+  );
+}
+
 // The full "Your Affiliate Link" page — reachable from the Sidebar, the
 // Site map, and the Account modal's Affiliate tab (all three just navigate
-// here rather than duplicating this UI). Gated by AUTH_REQUIRED_SCREENS
-// (see that Set above) so `me` can be assumed present.
+// here rather than duplicating this UI). Gated by `me` via
+// AffiliateScreenEntry above (a guest sees AffiliateSamplePreviewScreen
+// instead), so `me` can be assumed present here.
 function AffiliateScreen({ navigate }) {
   const { me, showToast } = useApp();
   const [loading, setLoading] = useState(true);
@@ -24775,15 +24977,14 @@ function Onboarding({ onCreate, reason, onCancel }) {
 // falls through to the real screen the moment `me` exists. "storeEditor",
 // "places", and "checkout" stay gated — there's nothing to preview there
 // that isn't already covered by one of the screens above.
-const AUTH_REQUIRED_SCREENS = new Set(["storeEditor", "places", "checkout", "incentives"]);
+const AUTH_REQUIRED_SCREENS = new Set(["storeEditor", "places", "checkout"]);
 // Only screens still in AUTH_REQUIRED_SCREENS need an entry here — favorites/
-// messages/store/ads moved to their own guest-preview wrappers above and
-// call requireAuth with their own inline reason strings instead.
+// messages/store/ads/incentives moved to their own guest-preview wrappers
+// above and call requireAuth with their own inline reason strings instead.
 const AUTH_REASON_BY_SCREEN = {
   storeEditor: "edit your storefront",
   places: "save your places",
   checkout: "subscribe to a plan",
-  incentives: "get your affiliate link",
 };
 
 // A small card next to whatever the guest just tapped — "Create a free
@@ -25859,7 +26060,7 @@ function RootShell() {
             {route.screen === "adminUserDetail" && (
               <AdminUserDetailEntry navigate={navigate} userId={route.userId} userName={route.userName} userAvatar={route.userAvatar} />
             )}
-            {route.screen === "incentives" && <AffiliateScreen navigate={navigate} />}
+            {route.screen === "incentives" && <AffiliateScreenEntry navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} route={route} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
