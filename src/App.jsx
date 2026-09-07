@@ -7260,6 +7260,18 @@ function ExploreView({ navigate }) {
               </button>
             );
           })}
+          {/* The affiliate program's own banner, off to the right of the view
+              tabs in the same scroll row — white pill, dark Swap-green text/
+              border, and a DollarSign icon standing in for the "$" rather
+              than a plain character. Points guests at the guest-visible
+              sample page (AffiliateSampleScreen) and signed-in accounts at
+              their real link. */}
+          <button
+            onClick={() => navigate({ screen: "incentives" })}
+            className="whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold border-2 border-emerald-900 bg-white text-emerald-900 shrink-0 flex items-center gap-1.5 shadow-sm hover:shadow-md transition"
+          >
+            Share to Earn <DollarSign size={16} className="text-emerald-500" />
+          </button>
         </div>
 
         {sponsoredNow.length > 0 && view === "grid" && (
@@ -16016,6 +16028,27 @@ function AffiliateScreenEntry({ navigate }) {
 // guest-preview pattern used for Sponsored Ads.
 function AffiliateSampleScreen({ navigate }) {
   const { requireAuth } = useApp();
+  const [copied, setCopied] = useState(false);
+  // Genuinely functional even for a guest — there's nothing sensitive about
+  // the sample text, and letting the share/copy button actually work is
+  // part of what makes this page feel like a real preview rather than a
+  // picture of one. navigator.share opens the native share sheet (email,
+  // text, whatever's installed) on a phone; the clipboard fallback covers
+  // desktop, where there usually isn't a share sheet to open.
+  function shareSampleCard() {
+    const shareText = "Join CropSwap with my link! https://cropswapmarket.com/incentives/yourname";
+    if (navigator.share) {
+      navigator.share({ title: "CropSwap", text: shareText }).catch(() => {});
+      return;
+    }
+    navigator.clipboard
+      ?.writeText(shareText)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2500);
+      })
+      .catch(() => {});
+  }
   const sampleReferrals = [
     { id: "prev-ref1", email: "j***@gmail.com", status: "paid", amountCents: 5000, signedUpAt: Date.now() - 40 * 86400000 },
     { id: "prev-ref2", email: "m***@yahoo.com", status: "eligible_awaiting_approval", amountCents: 3000, signedUpAt: Date.now() - 33 * 86400000 },
@@ -16083,19 +16116,40 @@ function AffiliateSampleScreen({ navigate }) {
         </div>
 
         {/* Same printable-card design real affiliates get from
-            ReferralCardModal (dark-green card, wordmark, QR code, link) —
-            shown inline and always-on here rather than behind a button and
-            a modal, so a guest actually sees it instead of having to know
-            to look for it. */}
+            ReferralCardModal, but livelier — a two-green diagonal gradient
+            (not one flat dark tone), soft light blobs, and a few produce
+            emoji echoing the app's own botanical illustrations elsewhere,
+            so it reads as alive rather than a plain color field. Shown
+            inline and always-on rather than behind a button and a modal,
+            so a guest actually sees it instead of having to know to look
+            for it. */}
         <div>
-          <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Your printable card</p>
-          <div className="bg-gradient-to-br from-emerald-800 to-emerald-900 rounded-2xl p-6 text-center text-white">
-            <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-7 w-auto mx-auto mb-4" />
-            <p className="text-sm text-emerald-100 mb-1">Discover Local. Buy, Sell &amp; Swap.</p>
-            <p className="font-bold mb-4" style={displayFont}>
+          <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Your Sharable Affiliate Card EXAMPLE</p>
+          <div className="relative overflow-hidden rounded-3xl p-6 text-center text-white bg-gradient-to-br from-emerald-400 via-emerald-600 to-emerald-900 shadow-xl">
+            <div className="absolute -right-10 -top-14 w-52 h-52 rounded-full bg-white/10" />
+            <div className="absolute -left-14 -bottom-16 w-44 h-44 rounded-full bg-white/10" />
+            <div className="absolute right-5 top-6 text-4xl opacity-25 rotate-12 select-none" aria-hidden="true">🍅</div>
+            <div className="absolute left-5 top-10 text-3xl opacity-20 -rotate-12 select-none" aria-hidden="true">🥕</div>
+            <div className="absolute right-8 bottom-8 text-3xl opacity-20 rotate-6 select-none" aria-hidden="true">🌿</div>
+
+            <button
+              onClick={shareSampleCard}
+              aria-label="Copy card to share"
+              title="Copy to share via email, text, etc."
+              className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-white text-emerald-800 shadow-md flex items-center justify-center hover:scale-105 active:scale-95 transition"
+            >
+              {copied ? <Check size={16} /> : <Copy size={16} />}
+            </button>
+
+            <span className="relative inline-block text-[10px] font-bold tracking-wide uppercase bg-white/20 rounded-full px-3 py-1 mb-3">
+              Affiliate Card
+            </span>
+            <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="relative h-7 w-auto mx-auto mb-4" />
+            <p className="relative text-sm text-emerald-50 mb-1">Discover Local. Buy, Sell &amp; Swap.</p>
+            <p className="relative font-bold mb-4 text-lg" style={displayFont}>
               Join CropSwap with my link!
             </p>
-            <div className="bg-white rounded-xl p-3 inline-block mb-4">
+            <div className="relative bg-white rounded-2xl p-3 inline-block mb-4 shadow-lg ring-4 ring-white/25">
               <img
                 src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=8&data=https%3A%2F%2Fcropswapmarket.com%2Fincentives%2Fyourname"
                 alt="Sample QR code"
@@ -16103,8 +16157,9 @@ function AffiliateSampleScreen({ navigate }) {
                 height={180}
               />
             </div>
-            <p className="text-sm font-semibold break-all">cropswapmarket.com/incentives/yourname</p>
+            <p className="relative text-sm font-semibold break-all">cropswapmarket.com/incentives/yourname</p>
           </div>
+          {copied && <p className="text-center text-xs font-semibold text-emerald-700 mt-2">Copied! Paste it into an email, text, or DM.</p>}
           <button
             onClick={() => requireAuth("get your own printable referral card")}
             className="w-full mt-2 text-sm font-bold py-2.5 rounded-lg bg-emerald-800 hover:bg-emerald-700 text-white flex items-center justify-center gap-1.5 transition"
