@@ -7354,6 +7354,29 @@ function worldYToLat(y, z) {
   const n = Math.PI - (2 * Math.PI * y) / (Math.pow(2, z) * TILE_SIZE);
   return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
 }
+// Keeps a longitude within [-180, 180) after any amount of eastward/westward
+// panning — without this, repeatedly dragging the map around the world lets
+// center.lng grow without bound (e.g. -540, 900...), which is harmless for
+// the base tiles (tile x already wraps via modulo in computeTiles) but was
+// silently breaking every pin/label placed relative to that drifted center.
+function normalizeLng(lng) {
+  return ((((lng + 180) % 360) + 360) % 360) - 180;
+}
+// A shop/label's longitude is always stored in the normal -180..180 range,
+// but the map's current origin can be many world-widths away from that after
+// repeated panning around the globe. Rather than positioning a pin against
+// whatever single "copy" of the world lngToWorldX(lng) happens to fall in,
+// this shifts it by whole world-widths to land in the copy nearest the
+// current viewport — so pins/labels stay put no matter how many times the
+// map has been swiped around, instead of drifting off-screen and getting
+// filtered out by the visible-bounds check.
+function wrappedWorldX(lng, z, originX, viewportWidth) {
+  const worldWidth = Math.pow(2, z) * TILE_SIZE;
+  const raw = lngToWorldX(lng, z);
+  const target = originX + viewportWidth / 2;
+  const k = Math.round((target - raw) / worldWidth);
+  return raw + k * worldWidth;
+}
 function computeTiles(centerLat, centerLng, z, width, height) {
   const originX = lngToWorldX(centerLng, z) - width / 2;
   const originY = latToWorldY(centerLat, z) - height / 2;
@@ -7557,7 +7580,7 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
         key: `${kind}:${p.code}`,
         text: p.name,
         kind,
-        left: lngToWorldX(p.lng, zoom) - originX,
+        left: wrappedWorldX(p.lng, zoom, originX, size.width) - originX,
         top: latToWorldY(p.lat, zoom) - originY,
       }))
       .filter((l) => l.left > -80 && l.top > -40 && l.left < size.width + 80 && l.top < size.height + 40);
@@ -7567,14 +7590,14 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
     () =>
       shops.map((shop) => ({
         shop,
-        left: lngToWorldX(shop.lng, zoom) - originX,
+        left: wrappedWorldX(shop.lng, zoom, originX, size.width) - originX,
         top: latToWorldY(shop.lat, zoom) - originY,
         dist: userLoc ? haversineMiles(userLoc.lat, userLoc.lng, shop.lat, shop.lng) : null,
       })),
-    [shops, zoom, originX, originY, userLoc]
+    [shops, zoom, originX, originY, size.width, userLoc]
   );
   const mePin = userLoc
-    ? { left: lngToWorldX(userLoc.lng, zoom) - originX, top: latToWorldY(userLoc.lat, zoom) - originY }
+    ? { left: wrappedWorldX(userLoc.lng, zoom, originX, size.width) - originX, top: latToWorldY(userLoc.lat, zoom) - originY }
     : null;
 
   // Re-derived from `pins` every render (not captured once at click time) so
@@ -7601,7 +7624,7 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
     setCenter((c) => {
       const nx = lngToWorldX(c.lng, zoom) - dx;
       const ny = latToWorldY(c.lat, zoom) - dy;
-      return { lat: worldYToLat(ny, zoom), lng: worldXToLng(nx, zoom) };
+      return { lat: worldYToLat(ny, zoom), lng: normalizeLng(worldXToLng(nx, zoom)) };
     });
   };
   const endPan = (e) => {
@@ -7666,7 +7689,7 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
     const anchor = screenToLngLat(screenX, screenY);
     const nx = lngToWorldX(anchor.lng, targetZoom) - screenX + size.width / 2;
     const ny = latToWorldY(anchor.lat, targetZoom) - screenY + size.height / 2;
-    setCenter({ lat: worldYToLat(ny, targetZoom), lng: worldXToLng(nx, targetZoom) });
+    setCenter({ lat: worldYToLat(ny, targetZoom), lng: normalizeLng(worldXToLng(nx, targetZoom)) });
     setZoom(targetZoom);
   };
 
