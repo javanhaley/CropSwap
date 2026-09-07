@@ -20,8 +20,6 @@ import html2canvas from "html2canvas";
 import "./storage";
 import { supabase } from "./supabaseClient";
 import AuthGate from "./AuthGate";
-import LandingPage from "./LandingPage";
-import { extractReferralCodeFromLocation, isIncentivesLinkPath, captureReferralCode, refreshReferralWindow, getPendingReferralCode, clearPendingReferralCode } from "./referral";
 
 /* ============================================================================
    SECTION 1: DESIGN TOKENS
@@ -744,13 +742,13 @@ const IMG = {
 // Muted paper-and-produce tones. A missing photo should read as considered
 // stationery, not as a bright cartoon tile.
 const CATEGORY_TEXTURE = {
-  Fruit: "linear-gradient(160deg,#f6efe9 0%,#e8d5cb 100%)",
-  Veggie: "linear-gradient(160deg,#f1f2e9 0%,#d8ddc9 100%)",
-  Tree: "linear-gradient(160deg,#eef1ec 0%,#cfd9cd 100%)",
-  Bug: "linear-gradient(160deg,#f7f1e4 0%,#e5d7bd 100%)",
-  Dairy: "linear-gradient(160deg,#f9f4e8 0%,#ece0c8 100%)",
-  Baked: "linear-gradient(160deg,#f8f0e6 0%,#e8d2b8 100%)",
-  Other: "linear-gradient(160deg,#f2f2f0 0%,#dcdcd8 100%)",
+  Fruit: "linear-gradient(160deg,#f7f7f7 0%,#e2e2e2 100%)",
+  Veggie: "linear-gradient(160deg,#f5f5f5 0%,#dcdcdc 100%)",
+  Tree: "linear-gradient(160deg,#f6f6f6 0%,#dedede 100%)",
+  Bug: "linear-gradient(160deg,#f4f4f4 0%,#d8d8d8 100%)",
+  Dairy: "linear-gradient(160deg,#f8f8f8 0%,#e4e4e4 100%)",
+  Baked: "linear-gradient(160deg,#f3f3f3 0%,#d6d6d6 100%)",
+  Other: "linear-gradient(160deg,#f2f2f2 0%,#d4d4d4 100%)",
 };
 
 /* ============================================================================
@@ -1926,10 +1924,6 @@ function trackVisit(screenPath, userId) {
       device: /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "") ? "mobile" : "desktop",
       visitorId: getOrCreateVisitorId(),
       userId: userId || null,
-      // Rides along on this same beacon so the server can keep a
-      // Safari-ITP-proof mirror of the referral cookie alive — see
-      // src/referral.js and api/track-visit.js's Set-Cookie response.
-      ref: getPendingReferralCode() || null,
     });
     if (navigator.sendBeacon) {
       const blob = new Blob([payload], { type: "application/json" });
@@ -2521,7 +2515,24 @@ function useViewportHeight() {
     let raf = null;
     const apply = () => {
       if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => setHeight(Math.round(vv.height)));
+      raf = requestAnimationFrame(() => {
+        // A pinch-zoom shrinks visualViewport.height the exact same way an
+        // on-screen keyboard does — either way, less of the page fits on
+        // screen. vv.scale is what tells the two apart: it stays 1 when a
+        // keyboard opens, and rises above 1 when someone's pinch-zoomed in.
+        // Without this check, zooming in on a touch device forced the whole
+        // app shell's real CSS height down to the shrunken, zoomed-in
+        // number — not just a visual magnification, an actual layout
+        // shrink — which left everything below that tiny box blank. Fall
+        // back to null (→ 100dvh, scale-independent) while zoomed so
+        // pinch-zoom behaves like it does on any ordinary page; normal
+        // keyboard tracking resumes the moment scale returns to 1.
+        if (vv.scale && vv.scale > 1.01) {
+          setHeight(null);
+          return;
+        }
+        setHeight(Math.round(vv.height));
+      });
     };
     vv.addEventListener("resize", apply);
     vv.addEventListener("scroll", apply);
@@ -3332,7 +3343,7 @@ function useCurrentUser() {
       shopId: null,
       homeLocation: homeLocation || null,
       plan: { tier: "free", billing: null, status: null, startedAt: null, periodEnd: null, cancelledAt: null, refundPct: null },
-      notificationPrefs: { master: true, sound: true, messages: true, reviews: true, favorites: true },
+      notificationPrefs: { master: true, sound: true, messages: true, reviews: true, favorites: true, affiliate_signups: true },
       blockedUserIds: [],
       // Onboarding's submit button is disabled until the Terms/Privacy
       // checkbox is checked (see LegalAgreeCheckbox in Onboarding), so
@@ -5197,13 +5208,11 @@ function GlobalStyles() {
         50% { box-shadow: 0 0 0 5px rgba(153,27,27,0); }
       }
       .cs-heat-peak { animation: cs-heat-pulse 1.8s ease-out infinite; }
-      /* Faint paper grain: gives surfaces the tooth of good stock rather than
-         flat digital white. Pure CSS, no image request. */
+      /* Clean, cool off-white base — no cream/parchment cast. Kept as a
+         near-white rather than pure #fff so large flat areas still have a
+         hair of depth against white cards/surfaces. */
       .cs-paper {
-        background-color: #faf7f2;
-        background-image:
-          radial-gradient(circle at 20% 15%, rgba(180,160,130,0.05) 0%, transparent 45%),
-          radial-gradient(circle at 80% 70%, rgba(150,140,120,0.05) 0%, transparent 40%);
+        background-color: #fafafa;
       }
       /* The artifact runtime ships a prebuilt Tailwind stylesheet with no JIT
          compiler, so arbitrary values like h-[420px] silently do nothing.
@@ -6225,7 +6234,7 @@ function ProductCard({ product, onEdit, onDelete, sponsored }) {
         >
           <span
             className="inline-flex pointer-events-none"
-            style={product.reviewCount > 0 ? { filter: "drop-shadow(0 0 3px rgba(251,191,36,0.65))" } : undefined}
+            style={product.reviewCount > 0 ? { filter: "drop-shadow(0 0 2px rgba(0,0,0,0.35))" } : undefined}
           >
             <StarRating value={product.avgRating || 0} size="sm" />
           </span>
@@ -6319,7 +6328,7 @@ function SproutGrowVisual({ size = "clamp(160px, 33vmin, 420px)" }) {
       >
         <div
           className="absolute inset-0 rounded-full"
-          style={{ background: "radial-gradient(circle, rgba(16,185,129,0.24) 0%, rgba(16,185,129,0) 70%)" }}
+          style={{ background: "radial-gradient(circle, rgba(44,216,39,0.24) 0%, rgba(44,216,39,0) 70%)" }}
         />
         <svg viewBox="0 0 100 100" width="80%" height="80%" className="relative">
           <defs>
@@ -6717,7 +6726,7 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
                 navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen });
                 onClose?.();
               }}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-white text-brand-swap shadow-sm ring-1 ring-stone-200" : "text-stone-500 hover:bg-stone-50"}`}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
             >
               <it.icon size={18} className={it.gold ? "text-amber-500 shrink-0" : "shrink-0"} />
               {it.label}
@@ -7067,41 +7076,6 @@ function ToggleSwitch({ checked, onChange }) {
   );
 }
 
-// Shown alongside the Shops/Listings/Map/Start Selling row (all three
-// Explore views are this same row, told apart only by `exploreView`) and at
-// the top of the Start Selling preview — the four pages this was asked to
-// appear on. Crop-green fill (the bright leaf green from the wordmark) with
-// Swap-green (the wordmark's dark forest green) text for contrast, a white
-// circle + green $ for the icon. An existing account goes straight to their
-// own affiliate link; a guest gets the sign-up prompt first (same
-// requireAuth + pendingRoute pattern every other guest-gated action in the
-// app uses), then lands on that same page once they're in.
-function ReferralBanner({ className = "" }) {
-  const { me, requireAuth, navigate } = useApp();
-  // "incentives" is ungated (see AUTH_REQUIRED_SCREENS / AffiliateScreenEntry)
-  // so a guest tapping the main pill lands on AffiliateSamplePreviewScreen —
-  // a real look at the program — instead of being stopped before seeing it.
-  // The secondary pill is a direct-to-signup shortcut for anyone already sold.
-  const seeProgram = () => navigate({ screen: "incentives" });
-  const signUpNow = () => requireAuth("get your affiliate link and start earning");
-  return (
-    <div className={`flex items-center gap-2 shrink-0 ${className}`}>
-      <button
-        onClick={seeProgram}
-        className="flex items-center gap-2 bg-brand-crop hover:brightness-95 rounded-full pl-2 pr-4 py-2 shadow-sm transition shrink-0"
-      >
-        <span className="w-7 h-7 rounded-full bg-white text-brand-swap flex items-center justify-center shrink-0">
-          <DollarSign size={16} strokeWidth={3} />
-        </span>
-        <span className="text-sm font-extrabold text-brand-swap whitespace-nowrap">Refer a friend to earn!</span>
-      </button>
-      <button onClick={me ? seeProgram : signUpNow} className="bg-brand-swap text-white text-xs font-bold px-3.5 py-2 rounded-full whitespace-nowrap shrink-0">
-        {me ? "Get my link" : "Sign up free"}
-      </button>
-    </div>
-  );
-}
-
 /* ============================================================================
    SECTION 15: EXPLORE VIEW
 ============================================================================ */
@@ -7279,13 +7253,12 @@ function ExploreView({ navigate }) {
               <button
                 key={btn.id}
                 onClick={handleClick}
-                className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-brand-swap text-white border-brand-swap" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
+                className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-700 bg-opacity-50 text-white border-emerald-600" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
               >
                 {btn.label}
               </button>
             );
           })}
-          <ReferralBanner className="ml-3" />
         </div>
 
         {sponsoredNow.length > 0 && view === "grid" && (
@@ -7795,11 +7768,11 @@ function VendorMap({ shops, userLoc, onOpenShop }) {
               <span className="flex flex-col items-center">
                 <span
                   className={`block w-10 h-10 rounded-full overflow-hidden bg-white shadow-lg ${selected?.shop.id === shop.id ? "ring-4 ring-emerald-600" : ""}`}
-                  style={{ border: `2px solid ${shop.status === "open" ? "#047857" : "#a8a29e"}` }}
+                  style={{ border: `2px solid ${shop.status === "open" ? "#146824" : "#a3a3a3"}` }}
                 >
                   <ShopThumb shop={shop} />
                 </span>
-                <span className="cs-pin-tail" style={{ color: shop.status === "open" ? "#047857" : "#a8a29e" }} />
+                <span className="cs-pin-tail" style={{ color: shop.status === "open" ? "#146824" : "#a3a3a3" }} />
               </span>
             </button>
           );
@@ -8679,7 +8652,7 @@ function ShopProfileView({ shopId, navigate }) {
                   key={btn.id}
                   onClick={handleClick}
                   disabled={isActive}
-                  className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-brand-swap text-white border-brand-swap cursor-default" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
+                  className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-700 bg-opacity-50 text-white border-emerald-600 cursor-default" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
                 >
                   {btn.label}
                 </button>
@@ -13256,7 +13229,7 @@ function ReceiptModal({ receipt, onClose }) {
               <p className="font-bold text-emerald-800 text-lg">{formatMoney(receipt.amount)}</p>
             </div>
             <p className="text-xs text-stone-400 capitalize">Status: {receipt.status || "paid"}</p>
-            <p className="text-xs text-stone-400 mt-6 text-center">CropSwap · Local growers, nationwide · Thank you for your support 🌱</p>
+            <p className="text-xs text-stone-400 mt-6 text-center">CropSwap · Discover Local. Buy, Sell &amp; Swap. · Thank you for your support 🌱</p>
           </div>
 
           <button
@@ -13765,8 +13738,8 @@ function AdminDashboardScreen({ navigate }) {
               <div style={{ width: "100%", height: 160 }}>
                 <ResponsiveContainer>
                   <BarChart data={usersByState.map((x) => ({ name: x.state, n: x.n }))}>
-                    <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
+                    <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a3a3a3" />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={28} />
                     <Tooltip />
                     <Bar dataKey="n" fill="#0d9488" radius={[3, 3, 0, 0]} />
                   </BarChart>
@@ -13781,10 +13754,10 @@ function AdminDashboardScreen({ navigate }) {
               <div style={{ width: "100%", height: 160 }}>
                 <ResponsiveContainer>
                   <BarChart data={newShopsByState.map((x) => ({ name: x.state, n: x.n }))}>
-                    <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
+                    <XAxis dataKey="name" tick={{ fontSize: 9 }} stroke="#a3a3a3" />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={28} />
                     <Tooltip />
-                    <Bar dataKey="n" fill="#7c3aed" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="n" fill="#525252" radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -15843,6 +15816,7 @@ function AccountModal({ open, onClose }) {
               { key: "messages", label: "New messages" },
               { key: "reviews", label: "New reviews on your shop" },
               { key: "favorites", label: "New favorites on your shop" },
+              { key: "affiliate_signups", label: "New referral signups" },
             ].map((row, i, arr) => (
               <div key={row.key} className={`flex items-center justify-between py-2.5 ${i < arr.length - 1 ? "border-b border-stone-100" : ""}`}>
                 <span className="text-sm font-medium flex items-center gap-1.5">
@@ -15995,7 +15969,7 @@ function ReferralCardModal({ open, onClose, code, link }) {
 
         <div ref={nodeRef} className="bg-gradient-to-br from-emerald-800 to-emerald-900 rounded-2xl p-6 text-center text-white">
           <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-7 w-auto mx-auto mb-4" crossOrigin="anonymous" />
-          <p className="text-sm text-emerald-100 mb-1">Grow your own farmers market community</p>
+          <p className="text-sm text-emerald-100 mb-1">Discover Local. Buy, Sell &amp; Swap.</p>
           <p className="font-bold mb-4" style={displayFont}>
             Join CropSwap with my link!
           </p>
@@ -16025,210 +15999,10 @@ function ReferralCardModal({ open, onClose, code, link }) {
   );
 }
 
-function AffiliateScreenEntry({ navigate }) {
-  const { me } = useApp();
-  if (!me) return <AffiliateSamplePreviewScreen navigate={navigate} />;
-  return <AffiliateScreen navigate={navigate} />;
-}
-
-// Same "sample data preview" treatment as StartSellingPreviewScreen /
-// AdsPreviewScreen / VendorDashboard's demo mode — a guest can see exactly
-// what the affiliate program looks like (their link, running totals, payout
-// rates, a couple of example referrals) before ever creating an account,
-// instead of the program being invisible until they sign up. Every number
-// here is made up; nothing on this screen reads or writes real data.
-const AFFILIATE_SAMPLE_REFERRALS = [
-  { id: "sample-1", email: "j••••@gmail.com", status: "paid", signedUpAt: Date.now() - 86400000 * 46, payoutAmountCents: 5000 },
-  { id: "sample-2", email: "m••••@yahoo.com", status: "pending", signedUpAt: Date.now() - 86400000 * 12, payoutAmountCents: null },
-  { id: "sample-3", email: "s••••@icloud.com", status: "eligible_awaiting_approval", signedUpAt: Date.now() - 86400000 * 33, payoutAmountCents: null },
-];
-function AffiliateSamplePreviewScreen({ navigate }) {
-  const { requireAuth } = useApp();
-  const [cardOpen, setCardOpen] = useState(false);
-  const sampleCode = "sunnyacres";
-  const siteOrigin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "https://cropswapmarket.com";
-  const sampleLink = `${siteOrigin}/incentives/${sampleCode}`;
-  const signUp = () => requireAuth("get your affiliate link and start earning");
-
-  const whyItWorks = [
-    { icon: Zap, text: "No inventory, no shipping, no customers to manage" },
-    { icon: Users, text: "Just people you already know who'd love fresh, local food" },
-    { icon: Landmark, text: "Real cash, paid straight to your bank via Stripe" },
-  ];
-
-  return (
-    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-      <div className="max-w-2xl mx-auto p-4 space-y-5">
-        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-2xl px-4 py-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0 shadow-sm">
-              <Crown size={16} />
-            </span>
-            <div className="min-w-0">
-              <p className="text-sm font-bold text-stone-900">This is a sample affiliate page</p>
-              <p className="text-xs text-amber-800">
-                <button onClick={signUp} className="font-bold underline underline-offset-2">
-                  Sign up free
-                </button>{" "}
-                to get your own real link.
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={signUp}
-            className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition"
-          >
-            Sign up free
-          </button>
-        </div>
-
-        {/* Hero — big, colorful, and unmistakably about earning money */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-swap via-emerald-800 to-emerald-950 text-white px-6 py-9 text-center shadow-lg">
-          <DollarSign size={100} strokeWidth={1.5} className="absolute -top-6 -left-8 text-white/10 rotate-[-18deg] pointer-events-none" />
-          <DollarSign size={72} strokeWidth={1.5} className="absolute top-6 right-3 text-white/10 rotate-[14deg] pointer-events-none" />
-          <DollarSign size={64} strokeWidth={1.5} className="absolute -bottom-3 left-12 text-white/10 rotate-[9deg] pointer-events-none" />
-          <DollarSign size={120} strokeWidth={1.5} className="absolute -bottom-10 -right-10 text-white/10 rotate-[-10deg] pointer-events-none" />
-          <span className="relative inline-flex w-16 h-16 rounded-full bg-brand-crop items-center justify-center shadow-lg mb-4">
-            <DollarSign size={32} className="text-brand-swap" strokeWidth={3} />
-          </span>
-          <h1 className="relative text-2xl sm:text-3xl font-extrabold mb-2 leading-tight" style={displayFont}>
-            Get Paid to Share CropSwap
-          </h1>
-          <p className="relative text-sm sm:text-base text-emerald-50 max-w-md mx-auto mb-5">
-            Every friend who joins and sticks around earns you real cash. No selling, no inventory — just your link.
-          </p>
-          <button
-            onClick={signUp}
-            className="relative bg-brand-crop hover:brightness-95 text-brand-swap font-extrabold text-sm sm:text-base px-7 py-3 rounded-full shadow-md transition"
-          >
-            Get My Free Link →
-          </button>
-        </div>
-
-        {/* How it works — 3 big, simple steps */}
-        <div className="grid sm:grid-cols-3 gap-3">
-          <div className="bg-white border-2 border-emerald-100 rounded-2xl p-4 text-center">
-            <span className="w-11 h-11 mx-auto rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mb-2">
-              <Share2 size={20} />
-            </span>
-            <p className="font-extrabold text-stone-900 text-sm">1. Share your link</p>
-            <p className="text-xs text-stone-500 mt-1">Text it, post it, or hand out a printed card.</p>
-          </div>
-          <div className="bg-white border-2 border-emerald-100 rounded-2xl p-4 text-center">
-            <span className="w-11 h-11 mx-auto rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mb-2">
-              <Users size={20} />
-            </span>
-            <p className="font-extrabold text-stone-900 text-sm">2. They join & subscribe</p>
-            <p className="text-xs text-stone-500 mt-1">A friend signs up for a Basic or Premium annual plan.</p>
-          </div>
-          <div className="bg-gradient-to-br from-brand-crop to-emerald-500 border-2 border-emerald-200 rounded-2xl p-4 text-center text-white">
-            <span className="w-11 h-11 mx-auto rounded-full bg-white text-emerald-700 flex items-center justify-center mb-2">
-              <DollarSign size={20} strokeWidth={3} />
-            </span>
-            <p className="font-extrabold text-sm">3. You get paid!</p>
-            <p className="text-xs text-emerald-50 mt-1">$30–$50 lands in your account on day 31.</p>
-          </div>
-        </div>
-
-        {/* Payout rates — the number, front and center */}
-        <div className="relative overflow-hidden bg-gradient-to-r from-amber-400 to-yellow-500 rounded-2xl p-5 text-center shadow-sm">
-          <p className="text-xs font-extrabold uppercase tracking-wide text-amber-900/80 mb-1">Earn per referral</p>
-          <p className="text-3xl sm:text-4xl font-extrabold text-stone-900" style={displayFont}>
-            {formatMoney(30)} – {formatMoney(50)}
-          </p>
-          <p className="text-sm font-semibold text-amber-900/90 mt-1">
-            {formatMoney(30)} for Basic annual · {formatMoney(50)} for Premium annual — paid on day 31, guaranteed by then.
-          </p>
-        </div>
-
-        {/* Why it works — big bullet points */}
-        <div className="bg-white border border-stone-200 rounded-2xl p-5">
-          <h2 className="font-extrabold text-stone-900 mb-3 text-lg" style={displayFont}>
-            Why growers &amp; shoppers love this
-          </h2>
-          <div className="space-y-3">
-            {whyItWorks.map(({ icon: Icon, text }, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <span className="w-9 h-9 rounded-full bg-brand-crop/20 text-brand-swap flex items-center justify-center shrink-0">
-                  <Icon size={18} strokeWidth={2.5} />
-                </span>
-                <p className="text-sm sm:text-base font-bold text-stone-800">{text}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="bg-white border border-stone-200 rounded-2xl p-5">
-          <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Your affiliate link (sample)</p>
-          <div className="flex items-center gap-2 flex-wrap">
-            <code className="text-sm font-semibold text-emerald-800 bg-emerald-50 rounded-lg px-3 py-2 break-all flex-1 min-w-[200px]">{sampleLink}</code>
-            <button onClick={signUp} className="text-xs font-bold px-3 py-2 rounded-lg border border-stone-200 flex items-center gap-1.5 shrink-0">
-              <Copy size={13} /> Copy
-            </button>
-          </div>
-          <button onClick={() => setCardOpen(true)} className="mt-3 text-sm font-semibold text-emerald-800 flex items-center gap-1.5">
-            <Printer size={14} /> See a printable card with QR code
-          </button>
-        </div>
-
-        <div className="grid sm:grid-cols-2 gap-3">
-          <div className="bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 rounded-2xl p-4">
-            <p className="text-xs font-bold text-amber-800/70 uppercase mb-1">Pending</p>
-            <p className="text-2xl font-extrabold text-amber-700">{formatMoney(30)}</p>
-            <p className="text-xs text-amber-800/70">2 referrals</p>
-          </div>
-          <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 border border-emerald-200 rounded-2xl p-4">
-            <p className="text-xs font-bold text-emerald-800/70 uppercase mb-1">Paid out</p>
-            <p className="text-2xl font-extrabold text-emerald-700">{formatMoney(50)}</p>
-            <p className="text-xs text-emerald-800/70">1 referral</p>
-          </div>
-        </div>
-
-        <div className="bg-white border border-stone-200 rounded-2xl p-5">
-          <h2 className="font-bold text-stone-900 mb-3">Real referrals, real payouts (sample)</h2>
-          <div className="space-y-2">
-            {AFFILIATE_SAMPLE_REFERRALS.map((r) => {
-              const statusMeta = REFERRAL_STATUS_LABEL[r.status] || { label: r.status, color: "bg-stone-100 text-stone-500" };
-              return (
-                <div key={r.id} className="border border-stone-100 rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap">
-                  <div>
-                    <p className="text-sm font-semibold text-stone-800">{r.email}</p>
-                    <p className="text-xs text-stone-400">Signed up {timeAgo(r.signedUpAt)}</p>
-                  </div>
-                  <div className="text-right">
-                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${statusMeta.color}`}>{statusMeta.label}</span>
-                    {r.payoutAmountCents ? <p className="text-xs text-stone-500 mt-1">{formatMoney(r.payoutAmountCents / 100)}</p> : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Closing CTA */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-crop to-emerald-500 text-center px-6 py-7 shadow-lg">
-          <DollarSign size={80} strokeWidth={1.5} className="absolute -top-5 right-4 text-white/15 rotate-[10deg] pointer-events-none" />
-          <p className="relative text-lg sm:text-xl font-extrabold text-brand-swap mb-3" style={displayFont}>
-            Ready to start earning?
-          </p>
-          <button
-            onClick={signUp}
-            className="relative bg-white hover:bg-emerald-50 text-brand-swap font-extrabold text-sm sm:text-base px-7 py-3 rounded-full shadow-md transition"
-          >
-            Sign up free — it takes 30 seconds
-          </button>
-        </div>
-      </div>
-      <ReferralCardModal open={cardOpen} onClose={() => setCardOpen(false)} code={sampleCode} link={sampleLink} />
-    </div>
-  );
-}
-
 // The full "Your Affiliate Link" page — reachable from the Sidebar, the
 // Site map, and the Account modal's Affiliate tab (all three just navigate
-// here rather than duplicating this UI). Gated by `me` via
-// AffiliateScreenEntry above (a guest sees AffiliateSamplePreviewScreen
-// instead), so `me` can be assumed present here.
+// here rather than duplicating this UI). Gated by AUTH_REQUIRED_SCREENS
+// (see that Set above) so `me` can be assumed present.
 function AffiliateScreen({ navigate }) {
   const { me, showToast } = useApp();
   const [loading, setLoading] = useState(true);
@@ -16300,14 +16074,12 @@ function AffiliateScreen({ navigate }) {
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-      <div className="max-w-2xl mx-auto p-4 space-y-5">
+      <div className="max-w-2xl mx-auto p-4 space-y-4">
         <div>
           <h1 className="text-xl font-bold text-stone-900 flex items-center gap-2" style={displayFont}>
             <Gift size={20} className="text-emerald-700" /> Affiliate & Incentives
           </h1>
-          <p className="text-sm text-stone-500 mt-1">
-            Share your link — when someone signs up and stays subscribed to an annual plan past day 30, you earn a payout.
-          </p>
+          <p className="text-sm text-stone-500 mt-1">Share it. They subscribe. You get paid.</p>
         </div>
 
         {loading ? (
@@ -16323,41 +16095,58 @@ function AffiliateScreen({ navigate }) {
           </div>
         ) : (
           <>
-            <div className="bg-white border border-stone-200 rounded-2xl p-5">
-              <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Your affiliate link</p>
-              <div className="flex items-center gap-2 flex-wrap">
-                <code className="text-sm font-semibold text-emerald-800 bg-emerald-50 rounded-lg px-3 py-2 break-all flex-1 min-w-[200px]">{data.link}</code>
-                <button onClick={copyLink} className="text-xs font-bold px-3 py-2 rounded-lg border border-stone-200 flex items-center gap-1.5 shrink-0">
+            {/* The hero: your link, front and center on the CropSwap green,
+                same gradient the vendor dashboard's own header uses — this
+                page's one job is getting this link into someone's hands. */}
+            <div className="rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-500 p-5 shadow-sm relative overflow-hidden">
+              <div className="absolute -right-8 -top-10 w-40 h-40 rounded-full bg-white/10" />
+              <div className="absolute -left-10 -bottom-12 w-32 h-32 rounded-full bg-white/10" />
+              <p className="text-[11px] font-bold text-emerald-50 uppercase tracking-wide mb-1.5 relative">Your link</p>
+              <div className="flex items-center gap-2 flex-wrap relative">
+                <code className="text-sm font-bold text-emerald-900 bg-white rounded-lg px-3 py-2 break-all flex-1 min-w-[200px]">{data.link}</code>
+                <button
+                  onClick={copyLink}
+                  className="text-xs font-bold px-3.5 py-2 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center gap-1.5 shrink-0 backdrop-blur-sm transition"
+                >
                   <Copy size={13} /> {copied ? "Copied!" : "Copy"}
                 </button>
               </div>
-              <button
-                onClick={() => setCardOpen(true)}
-                className="mt-3 text-sm font-semibold text-emerald-800 flex items-center gap-1.5"
-              >
-                <Printer size={14} /> Get a printable card with QR code
+              <button onClick={() => setCardOpen(true)} className="mt-3 text-xs font-bold text-white/90 hover:text-white flex items-center gap-1.5 relative">
+                <Printer size={13} /> Printable card with QR code
               </button>
             </div>
 
-            <div className="grid sm:grid-cols-2 gap-3">
-              <div className="bg-white border border-stone-200 rounded-2xl p-4">
-                <p className="text-xs font-bold text-stone-400 uppercase mb-1">Pending</p>
-                <p className="text-lg font-bold text-amber-700">{formatMoney((data.totals?.pendingCents || 0) / 100)}</p>
-                <p className="text-xs text-stone-400">{data.totals?.pendingCount || 0} referral{data.totals?.pendingCount === 1 ? "" : "s"}</p>
-              </div>
-              <div className="bg-white border border-stone-200 rounded-2xl p-4">
-                <p className="text-xs font-bold text-stone-400 uppercase mb-1">Paid out</p>
-                <p className="text-lg font-bold text-emerald-700">{formatMoney((data.totals?.paidCents || 0) / 100)}</p>
-                <p className="text-xs text-stone-400">{data.totals?.paidCount || 0} referral{data.totals?.paidCount === 1 ? "" : "s"}</p>
-              </div>
+            {/* 1-2-3, no paragraphs — the whole program in three glanceable
+                steps instead of the old wall of explanatory text. */}
+            <div className="grid gap-2.5">
+              <AffiliateStep
+                number={1}
+                icon={Share2}
+                tint="emerald"
+                title="Share your link"
+                text="Text it, post it, hand out the card — however you reach people."
+              />
+              <AffiliateStep number={2} icon={UserPlus} tint="teal" title="They subscribe" text="Basic or Premium, billed annually." />
+              <AffiliateStep
+                number={3}
+                icon={DollarSign}
+                tint="amber"
+                title="Payday"
+                text={`${formatMoney(data.payoutRates?.basic || 30)} Basic · ${formatMoney(data.payoutRates?.premium || 50)} Premium — paid on day 31.`}
+              />
             </div>
 
-            <div className="bg-white border border-stone-200 rounded-2xl p-5">
-              <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Payout rates</p>
-              <p className="text-sm text-stone-600">
-                {formatMoney(data.payoutRates?.basic || 30)} for a Basic annual signup · {formatMoney(data.payoutRates?.premium || 50)} for a Premium annual
-                signup — paid on day 31, only if they're still subscribed then.
-              </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                <p className="text-[11px] font-bold text-amber-700 uppercase mb-1">Pending</p>
+                <p className="text-2xl font-bold text-amber-800">{formatMoney((data.totals?.pendingCents || 0) / 100)}</p>
+                <p className="text-xs text-amber-700/80">{data.totals?.pendingCount || 0} referral{data.totals?.pendingCount === 1 ? "" : "s"}</p>
+              </div>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+                <p className="text-[11px] font-bold text-emerald-700 uppercase mb-1">Paid out</p>
+                <p className="text-2xl font-bold text-emerald-800">{formatMoney((data.totals?.paidCents || 0) / 100)}</p>
+                <p className="text-xs text-emerald-700/80">{data.totals?.paidCount || 0} referral{data.totals?.paidCount === 1 ? "" : "s"}</p>
+              </div>
             </div>
 
             <div className="bg-white border border-stone-200 rounded-2xl p-5">
@@ -16370,13 +16159,13 @@ function AffiliateScreen({ navigate }) {
                 <>
                   <p className="text-sm text-stone-500 mb-3">
                     {data.hasConnectAccount
-                      ? "Payout setup was started but isn't finished yet — you may still need to complete Stripe's verification steps."
-                      : "Set up how you'll get paid before your first approved payout can go out. This uses Stripe (bank transfer, not a saved card) and asks a few quick verification questions."}
+                      ? "Setup was started but isn't finished — you may still need to complete Stripe's verification steps."
+                      : "One quick setup (bank transfer via Stripe, not a saved card) before your first payout can go out."}
                   </p>
                   <button
                     onClick={startPayoutSetup}
                     disabled={connectBusy}
-                    className="text-sm font-bold px-4 py-2.5 rounded-lg bg-emerald-800 text-white disabled:opacity-60"
+                    className="text-sm font-bold px-4 py-2.5 rounded-lg bg-emerald-800 hover:bg-emerald-700 text-white disabled:opacity-60 transition"
                   >
                     {connectBusy ? "Starting…" : data.hasConnectAccount ? "Finish payout setup" : "Set up payout info"}
                   </button>
@@ -16415,11 +16204,35 @@ function AffiliateScreen({ navigate }) {
     </div>
   );
 }
+// One row of the "1-2-3, get paid" explainer on the Affiliate & Incentives
+// page — a big numbered icon medallion plus a title and ONE short line,
+// deliberately no more than that. Three tints (emerald/teal/amber) so the
+// steps read as distinct at a glance without needing to read the numbers,
+// and amber on the payday step specifically ties it to the same
+// money/crown amber used everywhere else in the app (Pending stat, Crown
+// badges) — green means "go do this", amber means "cash".
+function AffiliateStep({ number, icon: Icon, tint, title, text }) {
+  const t = DASH_TINTS[tint] || DASH_TINTS.emerald;
+  return (
+    <div className={`flex items-center gap-3.5 rounded-2xl border border-stone-100 ${t.bg} px-4 py-3.5`}>
+      <div className={`relative shrink-0 w-11 h-11 rounded-full bg-white shadow-sm flex items-center justify-center ${t.text}`}>
+        <Icon size={19} />
+        <span className={`absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full text-white text-[10px] font-bold flex items-center justify-center ${tint === "amber" ? "bg-amber-500" : tint === "teal" ? "bg-teal-600" : "bg-emerald-600"}`}>
+          {number}
+        </span>
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm font-bold text-stone-900">{title}</p>
+        <p className={`text-xs ${t.text}`}>{text}</p>
+      </div>
+    </div>
+  );
+}
 
 /* ============================================================================
    SECTION 23: NOTIFICATIONS MODAL
 ============================================================================ */
-const NOTIF_ICON = { message: MessageCircle, review: Star, favorite: Heart };
+const NOTIF_ICON = { message: MessageCircle, review: Star, favorite: Heart, affiliate_signup: Gift };
 function NotificationsModal({ open, onClose, navigate, onOpenProduct }) {
   const { notifications, markAllRead, unreadCount, removeNotification, clearNotifications, openProfileCard } = useApp();
   const [confirmClear, setConfirmClear] = useState(false);
@@ -16947,12 +16760,12 @@ function InfoTip({ text, align = "center" }) {
 // whole page reads as one coherent, colorful system instead of a wall of
 // identical green cards.
 const DASH_TINTS = {
-  emerald: { bg: "bg-emerald-50", text: "text-emerald-700", bar: "#059669", soft: "bg-emerald-50" },
-  rose: { bg: "bg-rose-50", text: "text-rose-700", bar: "#e11d48", soft: "bg-rose-50" },
-  blue: { bg: "bg-blue-50", text: "text-blue-700", bar: "#2563eb", soft: "bg-blue-50" },
-  violet: { bg: "bg-violet-50", text: "text-violet-700", bar: "#7c3aed", soft: "bg-violet-50" },
-  amber: { bg: "bg-amber-50", text: "text-amber-700", bar: "#d97706", soft: "bg-amber-50" },
-  teal: { bg: "bg-teal-50", text: "text-teal-700", bar: "#0d9488", soft: "bg-teal-50" },
+  emerald: { bg: "bg-emerald-50", text: "text-emerald-700", bar: "#1c9025", soft: "bg-emerald-50" },
+  rose: { bg: "bg-rose-50", text: "text-rose-700", bar: "#525252", soft: "bg-rose-50" },
+  blue: { bg: "bg-blue-50", text: "text-blue-700", bar: "#737373", soft: "bg-blue-50" },
+  violet: { bg: "bg-violet-50", text: "text-violet-700", bar: "#404040", soft: "bg-violet-50" },
+  amber: { bg: "bg-amber-50", text: "text-amber-700", bar: "#a3a3a3", soft: "bg-amber-50" },
+  teal: { bg: "bg-teal-50", text: "text-teal-700", bar: "#146824", soft: "bg-teal-50" },
 };
 // Multi-stop "traffic map" gradient (cold blue -> green -> yellow -> orange
 // -> dark red) for the peak-activity heatmap — classic aggregate-heatmap
@@ -16991,7 +16804,7 @@ function dashHeatColor(t) {
 // Minimal inline trend sparkline — a handful of numbers rendered as a
 // filled area path, no axes/labels. Cheap enough to drop into every stat
 // card without the overhead of a full Recharts chart per card.
-function Sparkline({ data, color = "#059669", height = 26 }) {
+function Sparkline({ data, color = "#25b926", height = 26 }) {
   if (!data || data.length < 2 || data.every((v) => !v)) return null;
   const w = 100;
   const h = height;
@@ -21858,8 +21671,8 @@ function DetailTrendChart({ data, dataKey, color, height = 160, formatY }) {
     <div style={{ width: "100%", height }}>
       <ResponsiveContainer>
         <AreaChart data={data}>
-          <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(data.length / 8))} />
-          <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={36} tickFormatter={formatY} />
+          <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(data.length / 8))} />
+          <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={36} tickFormatter={formatY} />
           <Tooltip formatter={formatY ? (v) => formatY(v) : undefined} />
           <Area type="monotone" dataKey={dataKey} stroke={color} fill={color} fillOpacity={0.15} strokeWidth={2} />
         </AreaChart>
@@ -22110,8 +21923,8 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
               <div style={{ width: "100%", height: 140 }}>
                 <ResponsiveContainer>
                   <BarChart data={data.revenueByWeekday}>
-                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                    <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={36} tickFormatter={(v) => `$${v}`} />
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" />
+                    <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={36} tickFormatter={(v) => `$${v}`} />
                     <Tooltip formatter={(v) => `$${Math.round(v)}`} />
                     <Bar dataKey="revenue" fill={t.bar} radius={[3, 3, 0, 0]} />
                   </BarChart>
@@ -23622,10 +23435,10 @@ function VendorDashboard({ navigate }) {
             <div style={{ width: "100%", height: 190 }}>
               <ResponsiveContainer>
                 <BarChart data={salesSeries2}>
-                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(salesSeries2.length / 8))} />
-                  <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={40} tickFormatter={(v) => `$${v}`} />
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(salesSeries2.length / 8))} />
+                  <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={40} tickFormatter={(v) => `$${v}`} />
                   <Tooltip formatter={(v) => formatMoney(v)} />
-                  <Bar dataKey="value" fill="#059669" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="value" fill="#25b926" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -23645,8 +23458,8 @@ function VendorDashboard({ navigate }) {
             <div style={{ width: "100%", height: 160 }}>
               <ResponsiveContainer>
                 <BarChart data={revenueByWeekday}>
-                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" />
-                  <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={40} tickFormatter={(v) => `$${v}`} />
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" />
+                  <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={40} tickFormatter={(v) => `$${v}`} />
                   <Tooltip formatter={(v) => formatMoney(v)} />
                   <Bar dataKey="revenue" fill={DASH_TINTS.emerald.bar} radius={[3, 3, 0, 0]} />
                 </BarChart>
@@ -23761,9 +23574,9 @@ function VendorDashboard({ navigate }) {
                 <div style={{ width: "100%", height: 190 }}>
                   <ResponsiveContainer>
                     <ComposedChart data={sponsoredComboSeries}>
-                      <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(sponsoredComboSeries.length / 8))} />
-                      <YAxis yAxisId="left" tick={{ fontSize: 10 }} stroke="#a8a29e" width={30} allowDecimals={false} />
-                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} stroke="#a8a29e" width={40} tickFormatter={(v) => `$${v}`} />
+                      <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(sponsoredComboSeries.length / 8))} />
+                      <YAxis yAxisId="left" tick={{ fontSize: 10 }} stroke="#a3a3a3" width={30} allowDecimals={false} />
+                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} stroke="#a3a3a3" width={40} tickFormatter={(v) => `$${v}`} />
                       <Tooltip formatter={(v, name) => (name === "Spend" ? formatMoney(v) : v)} />
                       <Bar yAxisId="left" dataKey="clicks" name="Clicks" fill={DASH_TINTS.blue.bar} radius={[3, 3, 0, 0]} />
                       {/* "linear" instead of "monotone": a smoothed curve visually
@@ -23823,10 +23636,10 @@ function VendorDashboard({ navigate }) {
           <div style={{ width: "100%", height: 190 }}>
             <ResponsiveContainer>
               <AreaChart data={viewsSeries2}>
-                <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(viewsSeries2.length / 8))} />
-                <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={32} />
+                <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(viewsSeries2.length / 8))} />
+                <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={32} />
                 <Tooltip />
-                <Area type="monotone" dataKey="count" stroke="#065f46" fill="#a7f3d0" strokeWidth={2} />
+                <Area type="monotone" dataKey="count" stroke="#146824" fill="#c0f3be" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -23855,8 +23668,8 @@ function VendorDashboard({ navigate }) {
             <div style={{ width: "100%", height: 150 }}>
               <ResponsiveContainer>
                 <LineChart data={favoriteSeries2}>
-                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a8a29e" interval={Math.max(0, Math.floor(favoriteSeries2.length / 6))} />
-                  <YAxis tick={{ fontSize: 10 }} stroke="#a8a29e" width={28} />
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(favoriteSeries2.length / 6))} />
+                  <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={28} />
                   <Tooltip />
                   <Line type="monotone" dataKey="count" stroke={DASH_TINTS.rose.bar} strokeWidth={2} dot={false} />
                 </LineChart>
@@ -24053,39 +23866,6 @@ function StartSellingPreviewScreen({ navigate, me }) {
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-      <div className="max-w-3xl mx-auto px-5 pt-4">
-        {/* Same "This is a sample ___" treatment the Dashboard/Orders/
-            Calendar/Inventory demo screens already use for a guest or
-            free-tier account, so every one of these preview pages reads the
-            same way — sample data, with a clear, direct link to actually
-            sign up rather than just an upgrade nudge. */}
-        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-2xl px-4 py-3 mb-4">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0 shadow-sm">
-              <Crown size={16} />
-            </span>
-            <div className="min-w-0">
-              <p className="text-sm font-bold text-stone-900">This is a sample storefront</p>
-              <p className="text-xs text-amber-800">
-                {me ? (
-                  <>Upgrade to Basic or Premium to start selling for real.</>
-                ) : (
-                  <>
-                    <button onClick={() => requireAuth("build your own storefront")} className="font-bold underline underline-offset-2">
-                      Sign up free
-                    </button>{" "}
-                    to start selling for real.
-                  </>
-                )}
-              </p>
-            </div>
-          </div>
-          <button onClick={() => gateUpgrade("build your own storefront")} className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition">
-            Start selling
-          </button>
-        </div>
-        <ReferralBanner />
-      </div>
       <div className="relative h-40 md:h-52 overflow-hidden">
         <button onClick={() => navigate({ screen: "explore" })} className="absolute top-3 left-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-stone-700">
           <ArrowLeft size={15} /> Back
@@ -24856,7 +24636,7 @@ function Onboarding({ onCreate, reason, onCancel }) {
         {reason ? (
           <p className="text-center text-stone-600 mb-4 text-sm">One more step to {reason}.</p>
         ) : (
-          <p className="text-center text-stone-600 mb-4 text-sm">A hyper-local, nationwide hub connecting growers and buyers.</p>
+          <p className="text-center text-stone-600 mb-4 text-sm">Discover Local. Buy, Sell &amp; Swap.</p>
         )}
         {onCancel && (
           <button
@@ -24977,14 +24757,15 @@ function Onboarding({ onCreate, reason, onCancel }) {
 // falls through to the real screen the moment `me` exists. "storeEditor",
 // "places", and "checkout" stay gated — there's nothing to preview there
 // that isn't already covered by one of the screens above.
-const AUTH_REQUIRED_SCREENS = new Set(["storeEditor", "places", "checkout"]);
+const AUTH_REQUIRED_SCREENS = new Set(["storeEditor", "places", "checkout", "incentives"]);
 // Only screens still in AUTH_REQUIRED_SCREENS need an entry here — favorites/
-// messages/store/ads/incentives moved to their own guest-preview wrappers
-// above and call requireAuth with their own inline reason strings instead.
+// messages/store/ads moved to their own guest-preview wrappers above and
+// call requireAuth with their own inline reason strings instead.
 const AUTH_REASON_BY_SCREEN = {
   storeEditor: "edit your storefront",
   places: "save your places",
   checkout: "subscribe to a plan",
+  incentives: "get your affiliate link",
 };
 
 // A small card next to whatever the guest just tapped — "Create a free
@@ -25114,28 +24895,6 @@ function RootShell() {
     saveSearchRef.current = fn ? fn() : null;
   }, []);
   const [route, setRoute] = useState({ screen: "explore" });
-  // Guests see the marketing LandingPage instead of Explore exactly once per
-  // browser, on a true first visit to the bare homepage. `cs_seenLanding`
-  // (set by dismissLanding, called from navigate() below and from the
-  // landing page's own CTAs) makes that permanent for this browser; the
-  // pathname check covers this same visit before that flag exists yet — any
-  // deep link (a shared shop, an /incentives/<code> invite, anything other
-  // than "/") skips straight to what was actually clicked, never a detour
-  // through marketing copy first.
-  const [landingDismissed, setLandingDismissedState] = useState(() => {
-    try {
-      if (localStorage.getItem("cs_seenLanding")) return true;
-      return window.location.pathname !== "/";
-    } catch {
-      return true;
-    }
-  });
-  const dismissLanding = useCallback(() => {
-    try {
-      localStorage.setItem("cs_seenLanding", "1");
-    } catch {}
-    setLandingDismissedState(true);
-  }, []);
   const [userLoc, setUserLoc] = useState({ label: "Rathdrum, ID", lat: 47.8121, lng: -116.8974 });
   const [locPickerOpen, setLocPickerOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -25311,73 +25070,15 @@ function RootShell() {
   // AuthGate/Onboarding over an existing session.
   useEffect(() => {
     try {
-      const code = extractReferralCodeFromLocation();
-      if (!code) return;
-      // Belt-and-suspenders capture across localStorage + a real cookie (and,
-      // via the next screen-view beacon, a server-set one too) — see
-      // src/referral.js for why any single one of those can drop the code
-      // before someone actually signs up.
-      captureReferralCode(code);
-      if (isIncentivesLinkPath()) {
-        // The dedicated cropswapmarket.com/incentives/<code> share link —
-        // jump straight into sign-up.
+      const match = window.location.pathname.match(/^\/incentives\/([A-Za-z0-9-]+)\/?$/);
+      if (match) {
+        localStorage.setItem("cs_pendingReferralCode", match[1].toLowerCase());
         window.history.replaceState(null, "", "/");
         setAuthFlow({ reason: "claim your invite from a fellow CropSwap grower 🌱", mode: "signup" });
-      } else {
-        // A bare ?ref=/?aff= fallback (in case a link ever loses its path —
-        // see extractReferralCodeFromLocation) just gets remembered quietly;
-        // scrub it out of the visible URL without disturbing whatever page
-        // they actually landed on.
-        try {
-          const url = new URL(window.location.href);
-          if (url.searchParams.has("ref") || url.searchParams.has("aff")) {
-            url.searchParams.delete("ref");
-            url.searchParams.delete("aff");
-            const qs = url.searchParams.toString();
-            window.history.replaceState(null, "", url.pathname + (qs ? `?${qs}` : "") + url.hash);
-          }
-        } catch {}
       }
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // Closes the gap where the tab above's inline retry-3x attempt above still
-  // isn't enough — e.g. the tab gets closed/backgrounded right after the
-  // verification code is entered, before any attempt there could complete.
-  // Supabase persists the session in localStorage, so the next time this
-  // exact account loads on this browser, `me` resolves without ever going
-  // through Onboarding again — this is what gets the referral recorded even
-  // then. Scoped to the one account `cs_pendingReferralRetryUid` names (set
-  // right before the first attempt above) so it can only ever fire for the
-  // account that was actually just created with a pending code on file,
-  // never for some unrelated existing account that happens to sign in while
-  // an old ?ref= is still sitting in storage.
-  useEffect(() => {
-    if (!me?.id) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const retryUid = localStorage.getItem("cs_pendingReferralRetryUid");
-        const pendingCode = getPendingReferralCode();
-        if (!retryUid || retryUid !== me.id || !pendingCode) return;
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData?.session?.access_token;
-        if (!token || cancelled) return;
-        const res = await fetch("/api/affiliate-track-signup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ code: pendingCode }),
-        }).catch(() => null);
-        if (!cancelled && res && res.ok) {
-          clearPendingReferralCode();
-          localStorage.removeItem("cs_pendingReferralRetryUid");
-        }
-      } catch {}
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [me?.id]);
   // True from the moment someone requests a password-reset code until they've
   // actually set a new password (or backs out). Verifying that code signs
   // them in (Supabase hands back a real session so they CAN set a new
@@ -25430,10 +25131,6 @@ function RootShell() {
   // themselves represent.
   useEffect(() => {
     trackVisit(`/${route.screen || "explore"}`, me?.id);
-    // Keeps a pending referral's 30-day window rolling forward on every
-    // screen an active visitor looks at, instead of it silently expiring
-    // partway through a long browsing session — see src/referral.js.
-    refreshReferralWindow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.screen]);
 
@@ -25462,11 +25159,6 @@ function RootShell() {
   // card would vanish out from under the popover the instant it's tapped.
   const navigate = useCallback(
     (r) => {
-      // Any real navigation retires the landing page for the rest of this
-      // browser's visits — otherwise going Explore -> Start Selling ->
-      // back to Explore mid-session would dredge the marketing page back up
-      // in front of someone who's clearly already using the app.
-      dismissLanding();
       if (AUTH_REQUIRED_SCREENS.has(r.screen) && !me) {
         requireAuth(AUTH_REASON_BY_SCREEN[r.screen] || "continue", r);
         return false;
@@ -25478,7 +25170,7 @@ function RootShell() {
       checkAccountLock();
       return true;
     },
-    [me, requireAuth, checkAccountLock, dismissLanding]
+    [me, requireAuth, checkAccountLock]
   );
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -25805,37 +25497,6 @@ function RootShell() {
   }
 
   if (meLoading && !recovering) return <LoadingScreen />;
-
-  // First-time guests who opened the plain homepage — not a deep link, not
-  // mid sign-up, not returning from a password reset (those are the
-  // authFlow/recovering branches below, which is why this also has to wait
-  // for `meLoading` to resolve — no flash of the landing page in front of
-  // someone AuthGate is about to take over for anyway) — see the marketing
-  // LandingPage instead of a loading spinner for market data no static
-  // marketing page needs, and instead of being dropped straight into the
-  // Explore grid. `dismissLanding` (wired into every navigate() call, and
-  // into this page's own two CTAs) makes sure this never shows again once
-  // they've actually started using the app, this visit or any later one.
-  if (!me && !authFlow && !recovering && route.screen === "explore" && exploreView === "grid" && !landingDismissed) {
-    return (
-      <>
-        <link rel="stylesheet" href={FONT_LINK_HREF} />
-        <GlobalStyles />
-        <LandingPage
-          onExplore={() => dismissLanding()}
-          onSell={() => {
-            dismissLanding();
-            setAuthFlow({ reason: "start your own storefront on CropSwap 🌱", pendingRoute: { screen: "store" }, mode: "signup" });
-          }}
-          onSignIn={() => {
-            dismissLanding();
-            setAuthFlow({ reason: null, mode: "signin" });
-          }}
-        />
-      </>
-    );
-  }
-
   if (market.loading && !recovering) return <LoadingScreen />;
 
   // An account can end up owning more than one shop — see removeShop's
@@ -25920,46 +25581,24 @@ function RootShell() {
             },
           });
           // If they arrived via someone's cropswapmarket.com/incentives/<code>
-          // link (captured into cookies/localStorage above, before there was
-          // any session to record a referral against — see src/referral.js),
-          // this is the first moment a session actually exists — record it
-          // now. Best-effort, with a couple of retries: a brand-new
-          // session's access token isn't always ready on the very first
-          // tick. A missing/invalid code, or every attempt here failing
-          // outright, should never block a signup that already succeeded —
-          // and the code is only cleared once the server actually confirms
-          // it one way or the other, so a network hiccup right at signup
-          // doesn't just lose the referral. `cs_pendingReferralRetryUid`
-          // marks exactly this account as still owing a retry, so the
-          // effect below can pick it back up on a later load if this tab
-          // gets closed before that happens — without it, an unrelated
-          // existing user who happens to still have some old ?ref= sitting
-          // in storage could get wrongly attributed just by signing in.
+          // link (captured into localStorage above, before there was any
+          // session to record a referral against), this is the first moment
+          // a session actually exists — record it now. Best-effort: a
+          // missing/invalid code, or this call failing outright, should
+          // never block a signup that already succeeded.
           try {
-            const pendingCode = getPendingReferralCode();
+            const pendingCode = localStorage.getItem("cs_pendingReferralCode");
             if (pendingCode) {
-              let token = null;
-              let uid = null;
-              for (let attempt = 0; attempt < 3 && !token; attempt++) {
-                if (attempt > 0) await new Promise((r) => setTimeout(r, 500));
-                const { data: sessionData } = await supabase.auth.getSession();
-                token = sessionData?.session?.access_token || null;
-                uid = sessionData?.session?.user?.id || uid;
-              }
-              if (uid) {
-                try { localStorage.setItem("cs_pendingReferralRetryUid", uid); } catch {}
-              }
+              const { data: sessionData } = await supabase.auth.getSession();
+              const token = sessionData?.session?.access_token;
               if (token) {
-                const res = await fetch("/api/affiliate-track-signup", {
+                await fetch("/api/affiliate-track-signup", {
                   method: "POST",
                   headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                   body: JSON.stringify({ code: pendingCode }),
-                }).catch(() => null);
-                if (res && res.ok) {
-                  clearPendingReferralCode();
-                  try { localStorage.removeItem("cs_pendingReferralRetryUid"); } catch {}
-                }
+                }).catch(() => {});
               }
+              localStorage.removeItem("cs_pendingReferralCode");
             }
           } catch {}
           const pending = authFlow?.pendingRoute;
@@ -26060,7 +25699,7 @@ function RootShell() {
             {route.screen === "adminUserDetail" && (
               <AdminUserDetailEntry navigate={navigate} userId={route.userId} userName={route.userName} userAvatar={route.userAvatar} />
             )}
-            {route.screen === "incentives" && <AffiliateScreenEntry navigate={navigate} />}
+            {route.screen === "incentives" && <AffiliateScreen navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} route={route} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
@@ -26153,7 +25792,8 @@ function RootShell() {
                   <BadgeCheck size={28} />
                 </div>
                 <h2 className="text-lg font-bold text-stone-900 mb-1">Your email is verified!</h2>
-                <p className="text-sm text-stone-500 mb-5">You're all set — welcome to CropSwap.</p>
+                <p className="text-sm text-stone-500 mb-1">You're all set — welcome to CropSwap.</p>
+                <p className="text-xs text-emerald-700 font-semibold mb-5">Discover Local. Buy, Sell &amp; Swap.</p>
               </>
             ) : (
               <>

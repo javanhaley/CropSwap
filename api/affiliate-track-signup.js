@@ -12,7 +12,7 @@
 // Deliberately quiet about failures: a bad/stale code, a self-referral
 // attempt, or a double-call (unique constraint on referred_user_id) should
 // never block or error out a signup that already succeeded.
-import { getSupabaseAdmin, getUserFromRequest } from "./_supabaseAdmin.js";
+import { getSupabaseAdmin, getUserFromRequest, notifyUserServer } from "./_supabaseAdmin.js";
 
 const ELIGIBILITY_WINDOW_DAYS = 31;
 
@@ -30,23 +30,9 @@ export async function POST(request) {
   try {
     body = await request.json();
   } catch {
-    body = {};
+    return Response.json({ ok: false }, { status: 200 });
   }
-  let code = (body?.code || "").trim().toLowerCase();
-  // Fallback for the case the client-side stores (localStorage + the plain
-  // JS-set cookie — see src/referral.js) both got wiped between the click
-  // and the signup: cs_ref_srv is set by api/track-visit.js via a real
-  // Set-Cookie response header, which survives things client-set storage
-  // doesn't (Safari's 7-day cap on script-set cookies, "clear site data" in
-  // some browsers' privacy modes). Read straight off the request here since
-  // it's HttpOnly-equivalent in practice — no client JS ever touches it.
-  if (!code) {
-    try {
-      const cookieHeader = request.headers.get("cookie") || "";
-      const match = cookieHeader.match(/(?:^|;\s*)cs_ref_srv=([^;]+)/);
-      if (match) code = decodeURIComponent(match[1]).trim().toLowerCase();
-    } catch {}
-  }
+  const code = (body?.code || "").trim().toLowerCase();
   if (!code) return Response.json({ ok: false }, { status: 200 });
 
   try {
@@ -67,6 +53,29 @@ export async function POST(request) {
     // A unique-violation here just means this account already has a
     // referral on file (e.g. a duplicate call) — not worth surfacing.
     if (error && error.code !== "23505") throw error;
+
+    // Let the referrer know right away, rather than making them wait 31 days
+    // for the eligibility sweep to surface anything. This is purely a "hey,
+    // someone signed up" ping — it doesn't imply the referral is payable
+    // yet, so it's sent regardless of what the sweep later decides.
+    if (!error) {
+      let referredName = null;
+      try {
+        const { data: profileRow } = await admin.from("kv").select("value").eq("owner_id", user.id).eq("key", "me:profile").maybeSingle();
+        if (profileRow?.value) referredName = JSON.parse(profileRow.value)?.name || null;
+      } catch {
+        // Best-effort only — fall back to the email below.
+      }
+      const who = referredName || user.email || "Someone";
+      await notifyUserServer(
+        affiliate.user_id,
+        "affiliate_signup",
+        "New referral! \u{1F331}",
+        `${who} just signed up using your invite link.`,
+        { screen: "incentives" }
+      ).catch((err) => console.error("affiliate-track-signup: notify failed:", err));
+    }
+
     return Response.json({ ok: !error });
   } catch (err) {
     console.error("affiliate-track-signup error:", err);

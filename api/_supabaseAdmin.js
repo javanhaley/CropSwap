@@ -226,6 +226,49 @@ export function checkCronAuth(request) {
   return null;
 }
 
+// Same shape/storage as the client-side notifyUser()/notifyShopOwner() in
+// src/App.jsx (SECTION 9) — those call setJSON(`notifications:${userId}`,
+// [...], true), where the trailing `true` is the "shared" flag storage.js
+// uses to route the write to the public shared_kv table (keyed by `key`
+// alone, no owner_id) rather than the private, RLS-owned kv table. That's
+// what lets one signed-in user's browser drop a notification into someone
+// else's list client-side; a server route with the service-role key could
+// use either table, but reusing shared_kv keeps every notification —
+// however it was written — in the exact same place the bell icon already
+// reads from, so nothing else has to change.
+function serverUid(prefix) {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+export async function notifyUserServer(userId, type, title, body, route) {
+  if (!userId) return;
+  const admin = getSupabaseAdmin();
+  const key = `notifications:${userId}`;
+  const { data: row, error: readErr } = await admin.from("shared_kv").select("value").eq("key", key).maybeSingle();
+  if (readErr) throw readErr;
+  let existing = [];
+  if (row?.value) {
+    try {
+      existing = JSON.parse(row.value);
+    } catch {
+      existing = [];
+    }
+  }
+  const notif = {
+    id: serverUid("notif"),
+    type,
+    title,
+    body,
+    createdAt: Date.now(),
+    read: false,
+    route: route || { screen: "explore" },
+  };
+  const next = [notif, ...(Array.isArray(existing) ? existing : [])];
+  const { error: writeErr } = await admin
+    .from("shared_kv")
+    .upsert({ key, value: JSON.stringify(next), updated_by: userId, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  if (writeErr) throw writeErr;
+}
+
 // "Real future timestamp within 50 years" — the same guard used across
 // admin-directory.js / admin-user-detail.js / check-email-locked.js to tell
 // an actual ban from Supabase's far-future "not banned" sentinel, which
