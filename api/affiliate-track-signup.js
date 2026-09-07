@@ -30,9 +30,23 @@ export async function POST(request) {
   try {
     body = await request.json();
   } catch {
-    return Response.json({ ok: false }, { status: 200 });
+    body = {};
   }
-  const code = (body?.code || "").trim().toLowerCase();
+  let code = (body?.code || "").trim().toLowerCase();
+  // Fallback for the case the client-side stores (localStorage + the plain
+  // JS-set cookie — see src/referral.js) both got wiped between the click
+  // and the signup: cs_ref_srv is set by api/track-visit.js via a real
+  // Set-Cookie response header, which survives things client-set storage
+  // doesn't (Safari's 7-day cap on script-set cookies, "clear site data" in
+  // some browsers' privacy modes). Read straight off the request here since
+  // it's HttpOnly-equivalent in practice — no client JS ever touches it.
+  if (!code) {
+    try {
+      const cookieHeader = request.headers.get("cookie") || "";
+      const match = cookieHeader.match(/(?:^|;\s*)cs_ref_srv=([^;]+)/);
+      if (match) code = decodeURIComponent(match[1]).trim().toLowerCase();
+    } catch {}
+  }
   if (!code) return Response.json({ ok: false }, { status: 200 });
 
   try {

@@ -20,6 +20,8 @@ import html2canvas from "html2canvas";
 import "./storage";
 import { supabase } from "./supabaseClient";
 import AuthGate from "./AuthGate";
+import LandingPage from "./LandingPage";
+import { extractReferralCodeFromLocation, isIncentivesLinkPath, captureReferralCode, refreshReferralWindow, getPendingReferralCode, clearPendingReferralCode } from "./referral";
 
 /* ============================================================================
    SECTION 1: DESIGN TOKENS
@@ -1924,6 +1926,10 @@ function trackVisit(screenPath, userId) {
       device: /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "") ? "mobile" : "desktop",
       visitorId: getOrCreateVisitorId(),
       userId: userId || null,
+      // Rides along on this same beacon so the server can keep a
+      // Safari-ITP-proof mirror of the referral cookie alive — see
+      // src/referral.js and api/track-visit.js's Set-Cookie response.
+      ref: getPendingReferralCode() || null,
     });
     if (navigator.sendBeacon) {
       const blob = new Blob([payload], { type: "application/json" });
@@ -6711,7 +6717,7 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
                 navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen });
                 onClose?.();
               }}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-white text-brand-swap shadow-sm ring-1 ring-stone-200" : "text-stone-500 hover:bg-stone-50"}`}
             >
               <it.icon size={18} className={it.gold ? "text-amber-500 shrink-0" : "shrink-0"} />
               {it.label}
@@ -7061,6 +7067,38 @@ function ToggleSwitch({ checked, onChange }) {
   );
 }
 
+// Shown at the top of Shops, Listings, Map (all three are this same
+// ExploreView, told apart only by `exploreView`) and Start Selling — the
+// four pages this was asked to appear on. Crop-green fill (the bright leaf
+// green from the wordmark) with Swap-green (the wordmark's dark forest
+// green) text/pill for contrast. An existing account goes straight to their
+// own affiliate link; a guest gets the sign-up prompt first (same
+// requireAuth + pendingRoute pattern every other guest-gated action in the
+// app uses), then lands on that same page once they're in.
+function ReferralBanner() {
+  const { me, requireAuth, navigate } = useApp();
+  return (
+    <button
+      onClick={() => {
+        if (requireAuth("get your affiliate link and start earning", { screen: "incentives" })) navigate({ screen: "incentives" });
+      }}
+      className="w-full flex items-center justify-between gap-3 bg-brand-crop hover:brightness-95 rounded-2xl px-4 sm:px-5 py-3.5 mb-4 shadow-sm transition text-left"
+    >
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span className="w-9 h-9 rounded-full bg-brand-swap text-white flex items-center justify-center shrink-0">
+          <Gift size={17} />
+        </span>
+        <p className="text-sm sm:text-lg font-extrabold text-brand-swap leading-tight">
+          Refer a friend to earn $!!!
+        </p>
+      </div>
+      <span className="shrink-0 bg-brand-swap text-white text-xs font-bold px-3.5 py-2 rounded-full whitespace-nowrap">
+        {me ? "Get my link" : "Sign up free"}
+      </span>
+    </button>
+  );
+}
+
 /* ============================================================================
    SECTION 15: EXPLORE VIEW
 ============================================================================ */
@@ -7238,13 +7276,15 @@ function ExploreView({ navigate }) {
               <button
                 key={btn.id}
                 onClick={handleClick}
-                className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-700 bg-opacity-50 text-white border-emerald-600" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
+                className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-brand-swap text-white border-brand-swap" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
               >
                 {btn.label}
               </button>
             );
           })}
         </div>
+
+        <ReferralBanner />
 
         {sponsoredNow.length > 0 && view === "grid" && (
           <div className="mb-6">
@@ -8637,7 +8677,7 @@ function ShopProfileView({ shopId, navigate }) {
                   key={btn.id}
                   onClick={handleClick}
                   disabled={isActive}
-                  className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-700 bg-opacity-50 text-white border-emerald-600 cursor-default" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
+                  className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-brand-swap text-white border-brand-swap cursor-default" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
                 >
                   {btn.label}
                 </button>
@@ -23811,6 +23851,39 @@ function StartSellingPreviewScreen({ navigate, me }) {
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-3xl mx-auto px-5 pt-4">
+        {/* Same "This is a sample ___" treatment the Dashboard/Orders/
+            Calendar/Inventory demo screens already use for a guest or
+            free-tier account, so every one of these preview pages reads the
+            same way — sample data, with a clear, direct link to actually
+            sign up rather than just an upgrade nudge. */}
+        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-2xl px-4 py-3 mb-4">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0 shadow-sm">
+              <Crown size={16} />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-stone-900">This is a sample storefront</p>
+              <p className="text-xs text-amber-800">
+                {me ? (
+                  <>Upgrade to Basic or Premium to start selling for real.</>
+                ) : (
+                  <>
+                    <button onClick={() => requireAuth("build your own storefront")} className="font-bold underline underline-offset-2">
+                      Sign up free
+                    </button>{" "}
+                    to start selling for real.
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
+          <button onClick={() => gateUpgrade("build your own storefront")} className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition">
+            Start selling
+          </button>
+        </div>
+        <ReferralBanner />
+      </div>
       <div className="relative h-40 md:h-52 overflow-hidden">
         <button onClick={() => navigate({ screen: "explore" })} className="absolute top-3 left-3 z-20 bg-white/90 backdrop-blur rounded-full px-3 py-2 shadow-md flex items-center gap-1.5 text-sm font-semibold text-stone-700">
           <ArrowLeft size={15} /> Back
@@ -24840,6 +24913,28 @@ function RootShell() {
     saveSearchRef.current = fn ? fn() : null;
   }, []);
   const [route, setRoute] = useState({ screen: "explore" });
+  // Guests see the marketing LandingPage instead of Explore exactly once per
+  // browser, on a true first visit to the bare homepage. `cs_seenLanding`
+  // (set by dismissLanding, called from navigate() below and from the
+  // landing page's own CTAs) makes that permanent for this browser; the
+  // pathname check covers this same visit before that flag exists yet — any
+  // deep link (a shared shop, an /incentives/<code> invite, anything other
+  // than "/") skips straight to what was actually clicked, never a detour
+  // through marketing copy first.
+  const [landingDismissed, setLandingDismissedState] = useState(() => {
+    try {
+      if (localStorage.getItem("cs_seenLanding")) return true;
+      return window.location.pathname !== "/";
+    } catch {
+      return true;
+    }
+  });
+  const dismissLanding = useCallback(() => {
+    try {
+      localStorage.setItem("cs_seenLanding", "1");
+    } catch {}
+    setLandingDismissedState(true);
+  }, []);
   const [userLoc, setUserLoc] = useState({ label: "Rathdrum, ID", lat: 47.8121, lng: -116.8974 });
   const [locPickerOpen, setLocPickerOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -25015,15 +25110,73 @@ function RootShell() {
   // AuthGate/Onboarding over an existing session.
   useEffect(() => {
     try {
-      const match = window.location.pathname.match(/^\/incentives\/([A-Za-z0-9-]+)\/?$/);
-      if (match) {
-        localStorage.setItem("cs_pendingReferralCode", match[1].toLowerCase());
+      const code = extractReferralCodeFromLocation();
+      if (!code) return;
+      // Belt-and-suspenders capture across localStorage + a real cookie (and,
+      // via the next screen-view beacon, a server-set one too) — see
+      // src/referral.js for why any single one of those can drop the code
+      // before someone actually signs up.
+      captureReferralCode(code);
+      if (isIncentivesLinkPath()) {
+        // The dedicated cropswapmarket.com/incentives/<code> share link —
+        // jump straight into sign-up.
         window.history.replaceState(null, "", "/");
         setAuthFlow({ reason: "claim your invite from a fellow CropSwap grower 🌱", mode: "signup" });
+      } else {
+        // A bare ?ref=/?aff= fallback (in case a link ever loses its path —
+        // see extractReferralCodeFromLocation) just gets remembered quietly;
+        // scrub it out of the visible URL without disturbing whatever page
+        // they actually landed on.
+        try {
+          const url = new URL(window.location.href);
+          if (url.searchParams.has("ref") || url.searchParams.has("aff")) {
+            url.searchParams.delete("ref");
+            url.searchParams.delete("aff");
+            const qs = url.searchParams.toString();
+            window.history.replaceState(null, "", url.pathname + (qs ? `?${qs}` : "") + url.hash);
+          }
+        } catch {}
       }
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Closes the gap where the tab above's inline retry-3x attempt above still
+  // isn't enough — e.g. the tab gets closed/backgrounded right after the
+  // verification code is entered, before any attempt there could complete.
+  // Supabase persists the session in localStorage, so the next time this
+  // exact account loads on this browser, `me` resolves without ever going
+  // through Onboarding again — this is what gets the referral recorded even
+  // then. Scoped to the one account `cs_pendingReferralRetryUid` names (set
+  // right before the first attempt above) so it can only ever fire for the
+  // account that was actually just created with a pending code on file,
+  // never for some unrelated existing account that happens to sign in while
+  // an old ?ref= is still sitting in storage.
+  useEffect(() => {
+    if (!me?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const retryUid = localStorage.getItem("cs_pendingReferralRetryUid");
+        const pendingCode = getPendingReferralCode();
+        if (!retryUid || retryUid !== me.id || !pendingCode) return;
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token || cancelled) return;
+        const res = await fetch("/api/affiliate-track-signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ code: pendingCode }),
+        }).catch(() => null);
+        if (!cancelled && res && res.ok) {
+          clearPendingReferralCode();
+          localStorage.removeItem("cs_pendingReferralRetryUid");
+        }
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [me?.id]);
   // True from the moment someone requests a password-reset code until they've
   // actually set a new password (or backs out). Verifying that code signs
   // them in (Supabase hands back a real session so they CAN set a new
@@ -25076,6 +25229,10 @@ function RootShell() {
   // themselves represent.
   useEffect(() => {
     trackVisit(`/${route.screen || "explore"}`, me?.id);
+    // Keeps a pending referral's 30-day window rolling forward on every
+    // screen an active visitor looks at, instead of it silently expiring
+    // partway through a long browsing session — see src/referral.js.
+    refreshReferralWindow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.screen]);
 
@@ -25104,6 +25261,11 @@ function RootShell() {
   // card would vanish out from under the popover the instant it's tapped.
   const navigate = useCallback(
     (r) => {
+      // Any real navigation retires the landing page for the rest of this
+      // browser's visits — otherwise going Explore -> Start Selling ->
+      // back to Explore mid-session would dredge the marketing page back up
+      // in front of someone who's clearly already using the app.
+      dismissLanding();
       if (AUTH_REQUIRED_SCREENS.has(r.screen) && !me) {
         requireAuth(AUTH_REASON_BY_SCREEN[r.screen] || "continue", r);
         return false;
@@ -25115,7 +25277,7 @@ function RootShell() {
       checkAccountLock();
       return true;
     },
-    [me, requireAuth, checkAccountLock]
+    [me, requireAuth, checkAccountLock, dismissLanding]
   );
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -25442,6 +25604,37 @@ function RootShell() {
   }
 
   if (meLoading && !recovering) return <LoadingScreen />;
+
+  // First-time guests who opened the plain homepage — not a deep link, not
+  // mid sign-up, not returning from a password reset (those are the
+  // authFlow/recovering branches below, which is why this also has to wait
+  // for `meLoading` to resolve — no flash of the landing page in front of
+  // someone AuthGate is about to take over for anyway) — see the marketing
+  // LandingPage instead of a loading spinner for market data no static
+  // marketing page needs, and instead of being dropped straight into the
+  // Explore grid. `dismissLanding` (wired into every navigate() call, and
+  // into this page's own two CTAs) makes sure this never shows again once
+  // they've actually started using the app, this visit or any later one.
+  if (!me && !authFlow && !recovering && route.screen === "explore" && exploreView === "grid" && !landingDismissed) {
+    return (
+      <>
+        <link rel="stylesheet" href={FONT_LINK_HREF} />
+        <GlobalStyles />
+        <LandingPage
+          onExplore={() => dismissLanding()}
+          onSell={() => {
+            dismissLanding();
+            setAuthFlow({ reason: "start your own storefront on CropSwap 🌱", pendingRoute: { screen: "store" }, mode: "signup" });
+          }}
+          onSignIn={() => {
+            dismissLanding();
+            setAuthFlow({ reason: null, mode: "signin" });
+          }}
+        />
+      </>
+    );
+  }
+
   if (market.loading && !recovering) return <LoadingScreen />;
 
   // An account can end up owning more than one shop — see removeShop's
@@ -25526,24 +25719,46 @@ function RootShell() {
             },
           });
           // If they arrived via someone's cropswapmarket.com/incentives/<code>
-          // link (captured into localStorage above, before there was any
-          // session to record a referral against), this is the first moment
-          // a session actually exists — record it now. Best-effort: a
-          // missing/invalid code, or this call failing outright, should
-          // never block a signup that already succeeded.
+          // link (captured into cookies/localStorage above, before there was
+          // any session to record a referral against — see src/referral.js),
+          // this is the first moment a session actually exists — record it
+          // now. Best-effort, with a couple of retries: a brand-new
+          // session's access token isn't always ready on the very first
+          // tick. A missing/invalid code, or every attempt here failing
+          // outright, should never block a signup that already succeeded —
+          // and the code is only cleared once the server actually confirms
+          // it one way or the other, so a network hiccup right at signup
+          // doesn't just lose the referral. `cs_pendingReferralRetryUid`
+          // marks exactly this account as still owing a retry, so the
+          // effect below can pick it back up on a later load if this tab
+          // gets closed before that happens — without it, an unrelated
+          // existing user who happens to still have some old ?ref= sitting
+          // in storage could get wrongly attributed just by signing in.
           try {
-            const pendingCode = localStorage.getItem("cs_pendingReferralCode");
+            const pendingCode = getPendingReferralCode();
             if (pendingCode) {
-              const { data: sessionData } = await supabase.auth.getSession();
-              const token = sessionData?.session?.access_token;
+              let token = null;
+              let uid = null;
+              for (let attempt = 0; attempt < 3 && !token; attempt++) {
+                if (attempt > 0) await new Promise((r) => setTimeout(r, 500));
+                const { data: sessionData } = await supabase.auth.getSession();
+                token = sessionData?.session?.access_token || null;
+                uid = sessionData?.session?.user?.id || uid;
+              }
+              if (uid) {
+                try { localStorage.setItem("cs_pendingReferralRetryUid", uid); } catch {}
+              }
               if (token) {
-                await fetch("/api/affiliate-track-signup", {
+                const res = await fetch("/api/affiliate-track-signup", {
                   method: "POST",
                   headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                   body: JSON.stringify({ code: pendingCode }),
-                }).catch(() => {});
+                }).catch(() => null);
+                if (res && res.ok) {
+                  clearPendingReferralCode();
+                  try { localStorage.removeItem("cs_pendingReferralRetryUid"); } catch {}
+                }
               }
-              localStorage.removeItem("cs_pendingReferralCode");
             }
           } catch {}
           const pending = authFlow?.pendingRoute;

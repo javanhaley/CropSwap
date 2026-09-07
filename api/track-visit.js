@@ -15,6 +15,8 @@
 import { getSupabaseAdmin } from "./_supabaseAdmin.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const REF_CODE_RE = /^[a-z0-9-]{1,40}$/;
+const REF_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // 30 days — see src/referral.js
 
 function clip(value, max) {
   if (typeof value !== "string") return null;
@@ -24,6 +26,27 @@ function clip(value, max) {
 }
 
 export async function POST(request) {
+  // Affiliate-referral resilience (see src/referral.js for the full
+  // picture): this beacon already fires once per in-app screen change for
+  // every visitor, guest or not, so it doubles as a way to keep a pending
+  // referral code's cookie alive server-side. A cookie this route sets via
+  // a real Set-Cookie response header isn't subject to Safari ITP's 7-day
+  // cap on cookies JavaScript sets directly with document.cookie — so as
+  // long as someone who clicked a referral link keeps browsing (which
+  // re-fires this beacon on every screen), the attribution window keeps
+  // rolling forward the full 30 days even in Safari. Computed up front and
+  // attached to every response below (success or failure) — a dropped
+  // analytics row should never also cost someone their referral cookie.
+  let setCookie = null;
+  try {
+    const bodyForCookie = await request.clone().json().catch(() => ({}));
+    const refCode = clip(bodyForCookie.ref, 40);
+    if (refCode && REF_CODE_RE.test(refCode)) {
+      setCookie = `cs_ref_srv=${refCode}; Path=/; Max-Age=${REF_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax; Secure`;
+    }
+  } catch {}
+  const headers = setCookie ? { "Set-Cookie": setCookie } : undefined;
+
   try {
     const body = await request.json().catch(() => ({}));
     const path = clip(body.path, 80) || "/explore";
@@ -57,11 +80,11 @@ export async function POST(request) {
       user_id: userId,
     });
 
-    return Response.json({ ok: true });
+    return Response.json({ ok: true }, { headers });
   } catch (err) {
     // A dropped visit row is a rounding error on a chart, never worth
     // surfacing to whoever's just browsing.
     console.error("track-visit error:", err);
-    return Response.json({ ok: false }, { status: 200 });
+    return Response.json({ ok: false }, { status: 200, headers });
   }
 }
