@@ -6584,7 +6584,11 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
         {/* Filter sits between the search field and the bell. Every control in
             this row is a 36px box on one centre line so nothing rides high or low. */}
         <button onClick={onOpenFilters} className="relative shrink-0 w-8 h-8 rounded-full bg-stone-100 hover:bg-stone-200 flex items-center justify-center text-stone-600 transition" aria-label="Filters">
-          <Filter size={16} />
+          {/* Same dark gray as the filled-in account icon below — "stone" is
+              intentionally the true-neutral gray scale in
+              tailwind.config.js, so this is real gray on purpose, unlike
+              the amber/rose fixes elsewhere on this page. */}
+          <Filter size={16} className="fill-stone-700 text-stone-700" />
           {filterCount > 0 && (
             // Matches the notifications badge's real green — bg-amber-500
             // is remapped to the true-neutral gray scale in
@@ -6596,7 +6600,10 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
         </button>
 
         <button onClick={onOpenNotifs} className="relative shrink-0 w-8 h-8 rounded-full bg-stone-100 hover:bg-stone-200 flex items-center justify-center text-stone-600 transition" aria-label="Notifications">
-          <Bell size={16} />
+          {/* Real gold, same hex as the filled star rating — "amber" is
+              remapped to gray in tailwind.config.js along with the other
+              non-brand colors. */}
+          <Bell size={16} className="fill-[#fbbf24] text-[#fbbf24]" />
           {unreadCount > 0 && (
             <span className="absolute -top-1 -right-1 bg-emerald-700 text-white cs-t9 font-bold w-4 h-4 rounded-full flex items-center justify-center">
               {unreadCount > 9 ? "9+" : unreadCount}
@@ -6611,9 +6618,14 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
           className={`relative shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition ${totalFav > 0 ? "bg-rose-50" : "bg-stone-100 hover:bg-stone-200"}`}
           aria-label={`Favourites (${totalFav} saved)`}
         >
-          <Heart size={16} className={totalFav > 0 ? "fill-rose-600 text-rose-600" : "fill-none text-stone-600"} />
+          {/* Real red, same hex as the favorited FavoriteHeart — "rose" is
+              remapped to gray in tailwind.config.js along with the other
+              non-brand colors. Always red now rather than only once
+              favorited, to match person/bell/funnel all being colorful
+              all the time. */}
+          <Heart size={16} className="fill-[#e11d48] text-[#e11d48]" />
           {totalFav > 0 && (
-            <span className="absolute -top-1 -right-1 bg-rose-600 text-white cs-t9 font-bold w-4 h-4 rounded-full flex items-center justify-center">
+            <span className="absolute -top-1 -right-1 bg-[#e11d48] text-white cs-t9 font-bold w-4 h-4 rounded-full flex items-center justify-center">
               {totalFav > 9 ? "9+" : totalFav}
             </span>
           )}
@@ -6632,7 +6644,9 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
             // mark, so the icon itself signals "you're not signed in" before
             // they even tap it.
             <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-stone-100 text-stone-400">
-              <User size={16} />
+              {/* Filled silhouette (head + torso solid), not just an
+                  outline — same dark gray the funnel icon above uses. */}
+              <User size={16} className="fill-stone-700 text-stone-700" />
             </span>
           )}
           {unreadCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-600 border-2 border-white" />}
