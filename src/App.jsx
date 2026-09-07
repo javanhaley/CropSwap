@@ -5906,32 +5906,52 @@ function Avatar({ emoji, name, size = "md", className = "", photoId }) {
 function StarRating({ value = 0, onChange, size = "md", showNumber = false }) {
   const px = size === "sm" ? 14 : size === "lg" ? 26 : 18;
   const interactive = typeof onChange === "function";
-  const rounded = Math.round(value);
+  // Round to the nearest HALF star, not the nearest whole one — a 4.5
+  // average should render as four full stars plus one half-lit star,
+  // instead of snapping up to five (or down to four) and losing the
+  // precision an average rating actually has.
+  const roundedHalf = Math.round(value * 2) / 2;
   return (
     <div className="inline-flex items-center gap-0.5">
-      {[1, 2, 3, 4, 5].map((i) => (
-        <button
-          key={i}
-          type="button"
-          disabled={!interactive}
-          onClick={(e) => {
-            e.stopPropagation();
-            onChange && onChange(i);
-          }}
-          // Non-interactive (display-only) stars let clicks pass straight
-          // through to whatever wraps them — otherwise a disabled <button>
-          // silently eats the click and it never reaches a parent's own
-          // onClick (e.g. a product card's "view reviews" row).
-          style={!interactive ? { pointerEvents: "none" } : undefined}
-          className={interactive ? "cursor-pointer" : "cursor-default"}
-          aria-label={`${i} star${i > 1 ? "s" : ""}`}
-        >
-          <Star
-            size={px}
-            className={i <= rounded ? "fill-amber-400 text-amber-400" : "fill-none text-stone-300"}
-          />
-        </button>
-      ))}
+      {[1, 2, 3, 4, 5].map((i) => {
+        const full = i <= Math.floor(roundedHalf);
+        const half = !full && i - 0.5 === roundedHalf;
+        return (
+          <button
+            key={i}
+            type="button"
+            disabled={!interactive}
+            onClick={(e) => {
+              e.stopPropagation();
+              onChange && onChange(i);
+            }}
+            // Non-interactive (display-only) stars let clicks pass straight
+            // through to whatever wraps them — otherwise a disabled <button>
+            // silently eats the click and it never reaches a parent's own
+            // onClick (e.g. a product card's "view reviews" row).
+            style={!interactive ? { pointerEvents: "none" } : undefined}
+            className={interactive ? "cursor-pointer" : "cursor-default"}
+            aria-label={`${i} star${i > 1 ? "s" : ""}`}
+          >
+            {half ? (
+              // No half-star icon in lucide-react, so a full gold star is
+              // layered on top of the gray outline star and clipped to its
+              // left half via width+overflow, faking a half-lit star.
+              <span className="relative inline-block" style={{ width: px, height: px }}>
+                <Star size={px} className="absolute inset-0 fill-none text-stone-300" />
+                <span className="absolute inset-0 overflow-hidden" style={{ width: "50%" }}>
+                  {/* Real gold, not amber-400 — "amber" is remapped to the
+                      true-neutral gray scale in tailwind.config.js along
+                      with the other non-brand colors. */}
+                  <Star size={px} className="fill-[#fbbf24] text-[#fbbf24]" />
+                </span>
+              </span>
+            ) : (
+              <Star size={px} className={full ? "fill-[#fbbf24] text-[#fbbf24]" : "fill-none text-stone-300"} />
+            )}
+          </button>
+        );
+      })}
       {showNumber && value > 0 && <span className="text-xs text-stone-500 ml-1">{value.toFixed(1)}</span>}
     </div>
   );
@@ -5959,6 +5979,11 @@ function PriceTag({ children, tone = "emerald", className = "", rotate = true })
 
 function FavoriteHeart({ active, count, onToggle, size = "md", disabled }) {
   const px = size === "sm" ? 16 : size === "lg" ? 24 : 19;
+  // Filled once EITHER the current viewer has favorited it OR the item has
+  // at least one favorite from anyone — so a popular shop/listing reads as
+  // favorited (social proof) even to someone who hasn't personally tapped
+  // the heart yet, not only to the one person who did.
+  const filled = active || (typeof count === "number" && count > 0);
   return (
     <button
       type="button"
@@ -5970,8 +5995,12 @@ function FavoriteHeart({ active, count, onToggle, size = "md", disabled }) {
       className="inline-flex flex-col items-center gap-0.5 group"
       aria-label={active ? "Remove favorite" : "Add favorite"}
     >
-      <span className={`inline-flex items-center justify-center rounded-full p-1.5 transition ${active ? "bg-rose-50" : "bg-white/90 group-hover:bg-stone-100"} shadow-sm border border-stone-100`}>
-        <Heart size={px} className={active ? "fill-rose-600 text-rose-600" : "fill-none text-stone-400"} />
+      {/* Real red/pink, not rose-50/rose-600 — "rose" is remapped to the
+          true-neutral gray scale in tailwind.config.js along with the other
+          non-brand color families, which quietly turned a favorited heart
+          gray instead of red. */}
+      <span className={`inline-flex items-center justify-center rounded-full p-1.5 transition ${filled ? "bg-[#fff1f2]" : "bg-white/90 group-hover:bg-stone-100"} shadow-sm border border-stone-100`}>
+        <Heart size={px} className={filled ? "fill-[#e11d48] text-[#e11d48]" : "fill-none text-stone-400"} />
       </span>
       {typeof count === "number" && <span className="cs-t10 font-semibold text-stone-500">{count}</span>}
     </button>
