@@ -5226,6 +5226,7 @@ function GlobalStyles() {
       .cs-z-sheet { z-index: 200; }
       .cs-z-authprompt { z-index: 250; }
       .cs-z-sprout { z-index: 300; }
+      .cs-z-landing { z-index: 400; }
       /* Seed-to-seedling burst played once when a search is submitted: ~2s,
          styled as a little time-lapse rather than the flat logo mark — a
          seed settles into soil, a pale root pushes down while the stem
@@ -6726,7 +6727,7 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
                 navigate(it.tab ? { screen: it.screen, tab: it.tab } : { screen: it.screen });
                 onClose?.();
               }}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-50 text-emerald-800" : "text-stone-500 hover:bg-stone-50"}`}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-left font-medium transition ${isActive ? "bg-emerald-500 text-white" : "text-stone-500 hover:bg-stone-50"}`}
             >
               <it.icon size={18} className={it.gold ? "text-amber-500 shrink-0" : "shrink-0"} />
               {it.label}
@@ -7253,7 +7254,7 @@ function ExploreView({ navigate }) {
               <button
                 key={btn.id}
                 onClick={handleClick}
-                className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-700 bg-opacity-50 text-white border-emerald-600" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
+                className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-500 text-white border-emerald-500" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
               >
                 {btn.label}
               </button>
@@ -8652,7 +8653,7 @@ function ShopProfileView({ shopId, navigate }) {
                   key={btn.id}
                   onClick={handleClick}
                   disabled={isActive}
-                  className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-700 bg-opacity-50 text-white border-emerald-600 cursor-default" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
+                  className={`whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold border transition shrink-0 ${isActive ? "bg-emerald-500 text-white border-emerald-500 cursor-default" : "bg-white text-stone-700 border-stone-200 hover:bg-stone-50"}`}
                 >
                   {btn.label}
                 </button>
@@ -24832,6 +24833,61 @@ function AuthPromptPopover({ prompt, onSignUp, onLogIn, onDismiss }) {
 /* ============================================================================
    SECTION 27: ROOT SHELL — wires all hooks into context, owns routing
 ============================================================================ */
+// The site's actual landing page: a giant card over the top of the normal
+// app, shown once on a fresh visit to the bare domain (see showLanding in
+// RootShell for exactly when). The app underneath still mounts and starts
+// loading its data in the same pass — this is purely a visual layer with no
+// data dependencies of its own, so it paints immediately regardless of how
+// long the real homepage behind it takes to become ready.
+function LandingHero({ onExplore, onStartSelling, onLogoClick }) {
+  return (
+    <div className="fixed inset-0 bg-black/60 cs-z-landing flex items-center justify-center p-3 md:p-6 cs-fade-anim">
+      <div className="cs-modal-anim bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col w-[90vw] h-[90vh] max-w-6xl">
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+          <div className="relative h-40 md:h-auto md:w-1/2 shrink-0">
+            <img
+              src="https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=1200&q=75"
+              alt="Fresh, local produce"
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          </div>
+          <div className="flex-1 flex flex-col items-center justify-center gap-6 md:gap-10 p-6 md:p-12 overflow-y-auto">
+            <div className="flex flex-col items-center text-center gap-2">
+              <button onClick={onLogoClick} className="hover:opacity-80 active:opacity-70 transition" aria-label="CropSwap home">
+                <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-10 md:h-14 w-auto" />
+              </button>
+              <p className="text-lg md:text-2xl text-stone-800" style={displayFont}>
+                Buy, Sell, Swap.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 md:gap-4 w-full max-w-sm">
+              <button
+                onClick={onExplore}
+                className="w-full flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-base md:text-lg py-4 md:py-5 rounded-2xl shadow-lg transition"
+              >
+                <Search size={20} /> Explore
+              </button>
+              <button
+                onClick={onStartSelling}
+                className="w-full flex items-center justify-center gap-2 bg-emerald-800 hover:bg-emerald-900 text-white font-bold text-base md:text-lg py-4 md:py-5 rounded-2xl shadow-lg transition"
+              >
+                <Store size={20} /> Start Selling
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="shrink-0 border-t border-stone-100 px-6 md:px-12 py-5 md:py-6 text-center">
+          <p className="text-sm md:text-base text-stone-600 leading-relaxed" style={displayFont}>
+            Connect with local growers in your own community. From backyard gardeners and family farmers to farmstand
+            owners. <span className="italic">No middleman. No shipping.</span>{" "}
+            <span className="font-bold text-stone-900">Just neighbors connecting directly.</span>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RootShell() {
   const { me, hasSession, loading: meLoading, createProfile, updateMe, refreshMe, signOut } = useCurrentUser();
   const market = useMarketData();
@@ -24978,6 +25034,26 @@ function RootShell() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // The actual front door: a full-screen card shown once, over the top of
+  // the normal app, the moment someone lands on the bare domain. Read once
+  // on first render (same pattern as authCallback/checkoutReturn/
+  // adminLoginRequested above) so it never depends on anything async — the
+  // app underneath mounts and starts loading its data in the exact same
+  // pass regardless, so nothing about that is slowed down by this. Skipped
+  // outright whenever the URL is doing something else important (an email-
+  // verification link, a Stripe checkout return, the admin-login flag, or
+  // an affiliate invite path) so none of those flows gets an extra click
+  // shoved in front of it, and skipped on any path other than "/" so it
+  // only ever appears on the real landing, never mid-app.
+  const [showLanding, setShowLanding] = useState(() => {
+    try {
+      if (window.location.pathname !== "/") return false;
+      if (authCallback || checkoutReturn || adminLoginRequested) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  });
   // If an admin locks this account mid-session, Supabase's ban doesn't kill
   // an already-open browser session by itself — only the NEXT sign-in or
   // token refresh gets rejected (see api/admin-moderate-account.js). This
@@ -25812,6 +25888,25 @@ function RootShell() {
             </button>
           </div>
         </div>
+      )}
+
+      {showLanding && (
+        <LandingHero
+          onExplore={() => {
+            setExploreView("grid");
+            navigate({ screen: "explore" });
+            setShowLanding(false);
+          }}
+          onStartSelling={() => {
+            navigate({ screen: "store" });
+            setShowLanding(false);
+          }}
+          onLogoClick={() => {
+            setExploreView("grid");
+            navigate({ screen: "explore" });
+            setShowLanding(false);
+          }}
+        />
       )}
     </AppContext.Provider>
   );
