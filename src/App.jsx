@@ -16046,6 +16046,24 @@ function AffiliateSampleScreen({ navigate }) {
           </p>
         </div>
 
+        {/* The headline numbers, up top before anything else — how much and
+            for what, in one glance, before the mechanics of link/steps/card
+            below explain how you'd actually get there. */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-4 text-center">
+            <p className="text-2xl font-bold text-emerald-800" style={displayFont}>
+              Earn {formatMoney(30)}
+            </p>
+            <p className="text-xs text-emerald-700 mt-1.5">When someone signs up with your link and subscribes to Basic, billed annually.</p>
+          </div>
+          <div className="rounded-2xl border-2 border-emerald-800 bg-emerald-900 p-4 text-center text-white">
+            <p className="text-2xl font-bold" style={displayFont}>
+              Earn {formatMoney(50)}
+            </p>
+            <p className="text-xs text-emerald-100 mt-1.5">When someone signs up with your link and subscribes to Premium, billed annually.</p>
+          </div>
+        </div>
+
         {/* The hero: same CropSwap-green gradient as the real page, with a
             sample link that looks real but goes nowhere on its own — Copy
             hands off to sign-up instead of actually copying it. */}
@@ -16062,6 +16080,37 @@ function AffiliateSampleScreen({ navigate }) {
               <Copy size={13} /> Copy
             </button>
           </div>
+        </div>
+
+        {/* Same printable-card design real affiliates get from
+            ReferralCardModal (dark-green card, wordmark, QR code, link) —
+            shown inline and always-on here rather than behind a button and
+            a modal, so a guest actually sees it instead of having to know
+            to look for it. */}
+        <div>
+          <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Your printable card</p>
+          <div className="bg-gradient-to-br from-emerald-800 to-emerald-900 rounded-2xl p-6 text-center text-white">
+            <img src="/branding/cropswap-wordmark.png" alt="CropSwap" className="h-7 w-auto mx-auto mb-4" />
+            <p className="text-sm text-emerald-100 mb-1">Discover Local. Buy, Sell &amp; Swap.</p>
+            <p className="font-bold mb-4" style={displayFont}>
+              Join CropSwap with my link!
+            </p>
+            <div className="bg-white rounded-xl p-3 inline-block mb-4">
+              <img
+                src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=8&data=https%3A%2F%2Fcropswapmarket.com%2Fincentives%2Fyourname"
+                alt="Sample QR code"
+                width={180}
+                height={180}
+              />
+            </div>
+            <p className="text-sm font-semibold break-all">cropswapmarket.com/incentives/yourname</p>
+          </div>
+          <button
+            onClick={() => requireAuth("get your own printable referral card")}
+            className="w-full mt-2 text-sm font-bold py-2.5 rounded-lg bg-emerald-800 hover:bg-emerald-700 text-white flex items-center justify-center gap-1.5 transition"
+          >
+            <Printer size={14} /> Sign up to get yours
+          </button>
         </div>
 
         <div className="grid gap-2.5">
@@ -16205,6 +16254,24 @@ function AffiliateScreen({ navigate }) {
           </div>
         ) : (
           <>
+            {/* The headline numbers, up top before anything else — how much
+                and for what, in one glance, before the mechanics of
+                link/steps/card below explain how you'd actually get there. */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-4 text-center">
+                <p className="text-2xl font-bold text-emerald-800" style={displayFont}>
+                  Earn {formatMoney(data.payoutRates?.basic || 30)}
+                </p>
+                <p className="text-xs text-emerald-700 mt-1.5">When someone signs up with your link and subscribes to Basic, billed annually.</p>
+              </div>
+              <div className="rounded-2xl border-2 border-emerald-800 bg-emerald-900 p-4 text-center text-white">
+                <p className="text-2xl font-bold" style={displayFont}>
+                  Earn {formatMoney(data.payoutRates?.premium || 50)}
+                </p>
+                <p className="text-xs text-emerald-100 mt-1.5">When someone signs up with your link and subscribes to Premium, billed annually.</p>
+              </div>
+            </div>
+
             {/* The hero: your link, front and center on the CropSwap green,
                 same gradient the vendor dashboard's own header uses — this
                 page's one job is getting this link into someone's hands. */}
