@@ -8,11 +8,21 @@
 // off each account's own profile instead, same source useCurrentUser()
 // itself would read.
 //
-// Same admin gate as every other admin-*.js route.
-import { getSupabaseAdmin, getUserFromRequest } from "./_supabaseAdmin.js";
+// "locked" has one extra wrinkle: an account can end up with a real Auth-
+// level ban (banned_until far in the future) WITHOUT ever going through
+// admin-moderate-account.js -- e.g. a ban applied by hand directly in
+// Supabase. That account has no account_moderation row at all, so the
+// query below would silently omit it even though it's genuinely locked
+// (isRealBan() is what admin-directory.js / admin-user-detail.js use to
+// detect it there). For status === "locked" specifically, this route
+// also scans Auth directly and synthesizes an entry for any such
+// "orphaned" real ban, so it shows up here too instead of only on its own
+// detail page and in the full Directory.
+import { getSupabaseAdmin, getUserFromRequest, isRealBan } from "./_supabaseAdmin.js";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "cropswapadmin@gmail.com";
 const VALID_STATUSES = new Set(["deleted", "banned", "paused", "locked"]);
+const PAGE_SIZE = 1000;
 
 export async function GET(request) {
   let adminUser;
@@ -91,6 +101,52 @@ export async function GET(request) {
         updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : null,
       };
     });
+
+    // "locked" only: fall back to Auth directly for any real ban with no
+    // account_moderation row at all (see the big comment up top). Every
+    // OTHER status here (banned/deleted) genuinely requires a moderation
+    // record to mean anything -- there's no equivalent Auth-only signal for
+    // "deleted" or a permanent "banned" beyond what's already a "locked"
+    // ban under the hood -- so this fallback is intentionally scoped to
+    // "locked" alone.
+    if (status === "locked") {
+      const alreadyListedIds = new Set(accounts.map((a) => a.userId));
+
+      // Every user_id that has ANY moderation record, regardless of status,
+      // so an account properly recorded as "banned" or "deleted" is never
+      // double-counted as an orphaned "locked" entry too.
+      const { data: allModRows, error: allModErr } = await admin.from("account_moderation").select("user_id");
+      if (allModErr) throw allModErr;
+      const hasAnyRecord = new Set((allModRows || []).map((r) => r.user_id));
+
+      const authUsers = [];
+      for (let page = 1; page <= 20; page++) {
+        const { data, error: authErr } = await admin.auth.admin.listUsers({ page, perPage: PAGE_SIZE });
+        if (authErr) throw authErr;
+        const batch = data?.users || [];
+        authUsers.push(...batch);
+        if (batch.length < PAGE_SIZE) break;
+      }
+
+      for (const u of authUsers) {
+        if (alreadyListedIds.has(u.id) || hasAnyRecord.has(u.id)) continue;
+        if (!isRealBan(u.banned_until)) continue;
+        const profile = profileByOwner.get(u.id) || null;
+        accounts.push({
+          userId: u.id,
+          email: u.email || null,
+          name: profile?.name || null,
+          avatar: profile?.avatar || null,
+          reason: null,
+          note: "Locked outside the admin dashboard (no moderation record on file)",
+          actorEmail: null,
+          lockedAt: null,
+          updatedAt: u.banned_until ? new Date(u.banned_until).getTime() : null,
+        });
+      }
+      accounts.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    }
+
     return Response.json({ accounts });
   } catch (err) {
     console.error("admin-moderated-accounts error:", err);

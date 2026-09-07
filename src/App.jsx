@@ -10,7 +10,7 @@ import {
   AlertTriangle, Image as ImageIcon, Video, PlayCircle,
   DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark, Rss,
   Folder, MoreVertical, Inbox, Menu, Tag, Flag, ExternalLink, Unlock, Download, SlidersHorizontal,
-  Gift, Copy, Printer, Ban, UserX, PauseCircle, RotateCcw,
+  Gift, Copy, Printer, Ban, UserX, PauseCircle, RotateCcw, FlaskConical,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend, ComposedChart } from "recharts";
 import { jsPDF } from "jspdf";
@@ -12390,9 +12390,11 @@ function digitsOnly(s) {
 // Mirrors the authoritative server-side gate in api/create-checkout-
 // session.js — that one actually stops the charge; this one just keeps the
 // screen from inviting a click that would otherwise fail with a confusing
-// error. Search "CHECKOUT_TEMP_DISABLED" in both files and flip both to
-// false (or delete both blocks) once ready to go live on Stripe.
-const CHECKOUT_TEMP_DISABLED = true;
+// error. Now OFF so checkout can be tested end-to-end against Stripe's
+// TEST/sandbox keys (see the sandbox-mode banner below) — search
+// "CHECKOUT_TEMP_DISABLED" in both files if this ever needs to be paused
+// again.
+const CHECKOUT_TEMP_DISABLED = false;
 
 function CheckoutScreen({ navigate, tier, billing }) {
   const { me, startCheckout, showToast } = useApp();
@@ -12497,6 +12499,18 @@ function CheckoutScreen({ navigate, tier, billing }) {
         <button onClick={() => navigate({ screen: "plans" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
           <ArrowLeft size={15} /> Back to plans
         </button>
+
+        {/* Stripe is running on TEST/sandbox keys right now — this stays up
+            until those are swapped for live keys, so nobody worries a real
+            card is about to be charged while the app is being tested. */}
+        <div className="bg-amber-50 border-2 border-amber-400 rounded-2xl px-4 py-3.5 mb-5">
+          <p className="text-sm font-bold text-amber-900 flex items-center gap-1.5 mb-1">
+            <FlaskConical size={16} className="shrink-0" /> Stripe Sandbox Mode — Test Checkout
+          </p>
+          <p className="text-xs text-amber-800 leading-relaxed">
+            This is running on Stripe's test environment. <span className="font-semibold">No real money will be taken from your card, and no real card is even required.</span> Use test card number <span className="font-mono font-semibold">4242 4242 4242 4242</span> with any future expiry date, any 3-digit CVC, and any zip code to complete a test purchase.
+          </p>
+        </div>
 
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5 mb-5 flex items-center gap-2">
           <BadgeCheck size={15} className="text-emerald-700 shrink-0" />
