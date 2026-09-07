@@ -16000,10 +16000,119 @@ function ReferralCardModal({ open, onClose, code, link }) {
   );
 }
 
+// "incentives" is no longer in AUTH_REQUIRED_SCREENS — a guest gets the
+// sample preview below instead of being bounced into sign-up, so they can
+// actually see what the program looks like before deciding to join.
+function AffiliateScreenEntry({ navigate }) {
+  const { me } = useApp();
+  if (!me) return <AffiliateSampleScreen navigate={navigate} />;
+  return <AffiliateScreen navigate={navigate} />;
+}
+
+// A guest-visible preview of the real page below — same hero/3-step/stat-
+// tile layout, filled with plausible made-up numbers instead of a real
+// fetch, so someone can see exactly what the program looks like (and what
+// they'd stand to earn) before ever signing up. Mirrors the AdsPreviewScreen
+// guest-preview pattern used for Sponsored Ads.
+function AffiliateSampleScreen({ navigate }) {
+  const { requireAuth } = useApp();
+  const sampleReferrals = [
+    { id: "prev-ref1", email: "j***@gmail.com", status: "paid", amountCents: 5000, signedUpAt: Date.now() - 40 * 86400000 },
+    { id: "prev-ref2", email: "m***@yahoo.com", status: "eligible_awaiting_approval", amountCents: 3000, signedUpAt: Date.now() - 33 * 86400000 },
+    { id: "prev-ref3", email: "t***@outlook.com", status: "pending", amountCents: null, signedUpAt: Date.now() - 6 * 86400000 },
+  ];
+
+  return (
+    <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <div className="max-w-2xl mx-auto p-4 space-y-4">
+        <button onClick={() => navigate({ screen: "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600">
+          <ArrowLeft size={15} /> Back
+        </button>
+        <div>
+          <h1 className="text-xl font-bold text-stone-900 flex items-center gap-2" style={displayFont}>
+            <Gift size={20} className="text-emerald-700" /> Affiliate & Incentives
+          </h1>
+          <p className="text-sm text-stone-500 mt-1">Share it. They subscribe. You get paid.</p>
+        </div>
+
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5">
+          <Gift size={15} className="text-amber-500 shrink-0" />
+          <p className="text-stone-600 text-xs">
+            <span className="font-semibold text-stone-700">This is a sample</span> — filled in with real numbers so you can see exactly what it looks like.{" "}
+            <button onClick={() => requireAuth("get your own affiliate link")} className="font-semibold text-emerald-700 underline underline-offset-2">
+              Sign up free
+            </button>{" "}
+            to get your own link.
+          </p>
+        </div>
+
+        {/* The hero: same CropSwap-green gradient as the real page, with a
+            sample link that looks real but goes nowhere on its own — Copy
+            hands off to sign-up instead of actually copying it. */}
+        <div className="rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-500 p-5 shadow-sm relative overflow-hidden">
+          <div className="absolute -right-8 -top-10 w-40 h-40 rounded-full bg-white/10" />
+          <div className="absolute -left-10 -bottom-12 w-32 h-32 rounded-full bg-white/10" />
+          <p className="text-[11px] font-bold text-emerald-50 uppercase tracking-wide mb-1.5 relative">Your link</p>
+          <div className="flex items-center gap-2 flex-wrap relative">
+            <code className="text-sm font-bold text-emerald-900 bg-white rounded-lg px-3 py-2 break-all flex-1 min-w-[200px]">cropswapmarket.com/incentives/yourname</code>
+            <button
+              onClick={() => requireAuth("get your own affiliate link")}
+              className="text-xs font-bold px-3.5 py-2 rounded-lg bg-white/20 hover:bg-white/30 text-white flex items-center gap-1.5 shrink-0 backdrop-blur-sm transition"
+            >
+              <Copy size={13} /> Copy
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-2.5">
+          <AffiliateStep number={1} icon={Share2} tint="emerald" title="Share your link" text="Text it, post it, hand out the card — however you reach people." />
+          <AffiliateStep number={2} icon={UserPlus} tint="teal" title="They subscribe" text="Basic or Premium, billed annually." />
+          <AffiliateStep number={3} icon={DollarSign} tint="amber" title="Payday" text="$30 Basic · $50 Premium — paid on day 31." />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+            <p className="text-[11px] font-bold text-amber-700 uppercase mb-1">Pending</p>
+            <p className="text-2xl font-bold text-amber-800">{formatMoney(30)}</p>
+            <p className="text-xs text-amber-700/80">1 referral</p>
+          </div>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+            <p className="text-[11px] font-bold text-emerald-700 uppercase mb-1">Paid out</p>
+            <p className="text-2xl font-bold text-emerald-800">{formatMoney(50)}</p>
+            <p className="text-xs text-emerald-700/80">1 referral</p>
+          </div>
+        </div>
+
+        <div className="bg-white border border-stone-200 rounded-2xl p-5">
+          <h2 className="font-bold text-stone-900 mb-3">Sample referrals ({sampleReferrals.length})</h2>
+          <div className="space-y-2">
+            {sampleReferrals.map((r) => {
+              const statusMeta = REFERRAL_STATUS_LABEL[r.status] || { label: r.status, color: "bg-stone-100 text-stone-500" };
+              return (
+                <div key={r.id} className="border border-stone-100 rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="text-sm font-semibold text-stone-800">{r.email}</p>
+                    <p className="text-xs text-stone-400">Signed up {timeAgo(r.signedUpAt)}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${statusMeta.color}`}>{statusMeta.label}</span>
+                    {r.amountCents ? <p className="text-xs text-stone-500 mt-1">{formatMoney(r.amountCents / 100)}</p> : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // The full "Your Affiliate Link" page — reachable from the Sidebar, the
 // Site map, and the Account modal's Affiliate tab (all three just navigate
-// here rather than duplicating this UI). Gated by AUTH_REQUIRED_SCREENS
-// (see that Set above) so `me` can be assumed present.
+// to "incentives", which AffiliateScreenEntry above routes to this for a
+// signed-in account or the sample preview for a guest) — so `me` can be
+// assumed present here.
 function AffiliateScreen({ navigate }) {
   const { me, showToast } = useApp();
   const [loading, setLoading] = useState(true);
@@ -24754,19 +24863,19 @@ function Onboarding({ onCreate, reason, onCancel }) {
 // front-door reason, but the gate here is just "has an account" rather than
 // a plan tier — each routes through a small *ScreenEntry wrapper
 // (FavoritesScreenEntry, MessagesScreenEntry, StoreScreenEntry,
-// AdsScreenEntry) that shows a guest an interactive sample-data preview and
-// falls through to the real screen the moment `me` exists. "storeEditor",
-// "places", and "checkout" stay gated — there's nothing to preview there
-// that isn't already covered by one of the screens above.
-const AUTH_REQUIRED_SCREENS = new Set(["storeEditor", "places", "checkout", "incentives"]);
+// AdsScreenEntry, AffiliateScreenEntry) that shows a guest an interactive
+// sample-data preview and falls through to the real screen the moment `me`
+// exists. "storeEditor", "places", and "checkout" stay gated — there's
+// nothing to preview there that isn't already covered by one of the screens
+// above.
+const AUTH_REQUIRED_SCREENS = new Set(["storeEditor", "places", "checkout"]);
 // Only screens still in AUTH_REQUIRED_SCREENS need an entry here — favorites/
-// messages/store/ads moved to their own guest-preview wrappers above and
-// call requireAuth with their own inline reason strings instead.
+// messages/store/ads/incentives moved to their own guest-preview wrappers
+// above and call requireAuth with their own inline reason strings instead.
 const AUTH_REASON_BY_SCREEN = {
   storeEditor: "edit your storefront",
   places: "save your places",
   checkout: "subscribe to a plan",
-  incentives: "get your affiliate link",
 };
 
 // A small card next to whatever the guest just tapped — "Create a free
@@ -24839,10 +24948,17 @@ function AuthPromptPopover({ prompt, onSignUp, onLogIn, onDismiss }) {
 // loading its data in the same pass — this is purely a visual layer with no
 // data dependencies of its own, so it paints immediately regardless of how
 // long the real homepage behind it takes to become ready.
-function LandingHero({ onExplore, onStartSelling, onLogoClick }) {
+function LandingHero({ onExplore, onStartSelling, onLogoClick, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/60 cs-z-landing flex items-center justify-center p-3 md:p-6 cs-fade-anim">
-      <div className="cs-modal-anim bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col w-[90vw] h-[90vh] max-w-6xl">
+      <div className="cs-modal-anim relative bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col w-[90vw] h-[90vh] max-w-6xl">
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute top-3 right-3 md:top-4 md:right-4 z-10 w-9 h-9 rounded-full bg-white/90 hover:bg-white text-stone-500 hover:text-stone-800 shadow-md flex items-center justify-center transition"
+        >
+          <X size={18} />
+        </button>
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
           <div className="relative h-40 md:h-auto md:w-1/2 shrink-0">
             <img
@@ -25775,7 +25891,7 @@ function RootShell() {
             {route.screen === "adminUserDetail" && (
               <AdminUserDetailEntry navigate={navigate} userId={route.userId} userName={route.userName} userAvatar={route.userAvatar} />
             )}
-            {route.screen === "incentives" && <AffiliateScreen navigate={navigate} />}
+            {route.screen === "incentives" && <AffiliateScreenEntry navigate={navigate} />}
             {route.screen === "plans" && <PlansScreen navigate={navigate} route={route} />}
             {route.screen === "checkout" && <CheckoutScreen navigate={navigate} tier={route.tier} billing={route.billing} />}
             {route.screen === "places" && <PlacesScreen navigate={navigate} />}
@@ -25906,6 +26022,7 @@ function RootShell() {
             navigate({ screen: "explore" });
             setShowLanding(false);
           }}
+          onClose={() => setShowLanding(false)}
         />
       )}
     </AppContext.Provider>
