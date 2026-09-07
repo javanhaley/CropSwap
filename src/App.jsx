@@ -24846,8 +24846,8 @@ function LandingHero({ onExplore, onStartSelling, onLogoClick }) {
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
           <div className="relative h-40 md:h-auto md:w-1/2 shrink-0">
             <img
-              src="https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=1200&q=75"
-              alt="Fresh, local produce"
+              src="/branding/landing-hero-tomatoes.jpg"
+              alt="Two people passing a bowl of freshly picked tomatoes"
               className="absolute inset-0 w-full h-full object-cover"
             />
           </div>
