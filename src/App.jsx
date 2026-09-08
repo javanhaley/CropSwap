@@ -16832,6 +16832,9 @@ function AffiliateScreen({ navigate }) {
                 <p className="text-[11px] font-bold text-amber-700 uppercase mb-1">Pending</p>
                 <p className="text-2xl font-bold text-amber-800">{formatMoney((data.totals?.pendingCents || 0) / 100)}</p>
                 <p className="text-xs text-amber-700/80">{data.totals?.pendingCount || 0} referral{data.totals?.pendingCount === 1 ? "" : "s"}</p>
+                {data.referrals?.some((r) => r.status === "pending" && r.estimatedPayoutCents) && (
+                  <p className="text-[10px] text-amber-700/70 mt-1 leading-snug">Estimated for brand-new signups — confirmed on day 31.</p>
+                )}
               </div>
               <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
                 <p className="text-[11px] font-bold text-emerald-700 uppercase mb-1">Paid out</p>
@@ -16899,7 +16902,11 @@ function AffiliateScreen({ navigate }) {
                         </div>
                         <div className="text-right">
                           <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${statusMeta.color}`}>{statusMeta.label}</span>
-                          {r.payoutAmountCents ? <p className="text-xs text-stone-500 mt-1">{formatMoney(r.payoutAmountCents / 100)}</p> : null}
+                          {r.payoutAmountCents ? (
+                            <p className="text-xs text-stone-500 mt-1">{formatMoney(r.payoutAmountCents / 100)}</p>
+                          ) : r.estimatedPayoutCents ? (
+                            <p className="text-xs text-stone-400 mt-1">~{formatMoney(r.estimatedPayoutCents / 100)} est.</p>
+                          ) : null}
                         </div>
                       </div>
                     );
@@ -25577,7 +25584,7 @@ function LandingHero({ onExplore, onStartSelling, onLogoClick, onClose }) {
                 <img src="/branding/cropswap-wordmark-transparent.png" alt="CropSwap" className="h-10 md:h-14 w-auto" />
               </button>
               <p className="text-lg md:text-2xl text-stone-800" style={displayFont}>
-                Buy, Sell, Swap.
+                Buy. Sell. Swap.
               </p>
             </div>
             <div className="flex flex-col gap-3 md:gap-4 w-full max-w-sm">
@@ -25597,10 +25604,10 @@ function LandingHero({ onExplore, onStartSelling, onLogoClick, onClose }) {
           </div>
         </div>
         <div className="shrink-0 border-t border-stone-100 px-6 md:px-12 py-5 md:py-6 text-center">
-          <p className="text-sm md:text-base text-stone-600 leading-relaxed" style={displayFont}>
+          <p className="text-sm md:text-base text-stone-600 leading-[1.3]" style={displayFont}>
             Connect with local growers in your own community. From backyard gardeners and family farmers to farmstand
-            owners. <span className="italic">No middleman. No shipping.</span>{" "}
-            <span className="font-bold text-stone-900">Just neighbors connecting directly.</span>
+            owners. <span className="italic whitespace-nowrap">No middleman. No shipping.</span>{" "}
+            <span className="font-bold text-stone-900 whitespace-nowrap">Just neighbors connecting directly.</span>
           </p>
         </div>
       </div>
