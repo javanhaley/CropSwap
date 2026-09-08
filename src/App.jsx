@@ -14188,7 +14188,7 @@ function AdminDashboardScreen({ navigate }) {
           <p className="text-xs font-bold text-stone-600 uppercase mb-1 flex items-center gap-1.5">
             <UserX size={13} /> Deleted accounts
           </p>
-          <p className="text-xs text-stone-400">Access removed. Transaction history kept — can be reactivated.</p>
+          <p className="text-xs text-stone-400">Login permanently removed — can't be undone, but the email is free to sign up again.</p>
         </button>
         <button
           onClick={() => navigate?.({ screen: "adminModerated", status: "paused" })}
@@ -14991,6 +14991,13 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState(null);
   const [detailError, setDetailError] = useState(false);
+  // Distinct from detailError: this account's Auth login was actually
+  // deleted (see admin-moderate-account.js's "delete" action) rather than
+  // just banned, so admin-user-detail.js's getUserById genuinely returns
+  // nothing — not a transient fetch problem. There's no plan/billing/lock
+  // state left to show or act on, so this renders its own explanation
+  // instead of the normal "couldn't load" warning.
+  const [detailNotFound, setDetailNotFound] = useState(false);
   const [flags, setFlags] = useState([]);
   const [sponsorReceipts, setSponsorReceipts] = useState([]);
   const [productNameById, setProductNameById] = useState({});
@@ -15040,6 +15047,7 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
     if (!userId) return;
     setLoading(true);
     setDetailError(false);
+    setDetailNotFound(false);
 
     // Flags + sponsorship purchases come from the same shared collections
     // the Admin Dashboard's Reports queue / Sponsored ads panels already
@@ -15072,6 +15080,11 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
       const res = await fetch(`/api/admin-user-detail?userId=${encodeURIComponent(userId)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (res.status === 404) {
+        setDetailNotFound(true);
+        setDetail(null);
+        return;
+      }
       if (!res.ok) throw new Error(`status ${res.status}`);
       const payload = await res.json();
       setDetail(payload);
@@ -15326,6 +15339,15 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
               </p>
             </div>
 
+            {detailNotFound ? (
+              <div className="bg-stone-100 border border-stone-200 rounded-2xl p-4 sm:col-span-3 flex items-center gap-2.5">
+                <UserX size={18} className="text-stone-500 shrink-0" />
+                <p className="text-sm text-stone-600">
+                  This account was deleted — its login was fully removed, not just banned, so the email is free to sign up again as a brand-new account.
+                  There's nothing left here to lock, ban, or reactivate.
+                </p>
+              </div>
+            ) : (
             <div className="bg-white border border-stone-200 rounded-2xl p-4 flex flex-col justify-between sm:col-span-3">
               <p className="text-xs font-bold text-stone-400 uppercase mb-2">Account access</p>
               <div className="flex flex-wrap items-center gap-2">
@@ -15421,6 +15443,7 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
                 </p>
               )}
             </div>
+            )}
           </div>
 
           <ModerationReasonModal
@@ -15436,7 +15459,7 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
           <ModerationReasonModal
             open={moderationModal === "delete"}
             title="Delete this account"
-            description="Removes sign-in access. Transaction history and data are kept, and the account can be reactivated later."
+            description="Permanently removes the account's login — this can't be undone or reactivated. Its email becomes free to sign up again as a brand-new account."
             confirmLabel="Delete account"
             confirmClassName="bg-stone-700"
             busy={moderationBusy}
