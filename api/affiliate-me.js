@@ -8,6 +8,7 @@
 // payout-readiness, and every referral this person has generated with its
 // current status.
 import { getSupabaseAdmin, getUserFromRequest } from "./_supabaseAdmin.js";
+import { getStripe, syncConnectAccountPayouts } from "./_stripe.js";
 
 const SITE_ORIGIN = process.env.SITE_ORIGIN || "https://cropswapmarket.com";
 
@@ -57,6 +58,25 @@ export async function GET(request) {
     const profile = profileRow?.value ? JSON.parse(profileRow.value) : null;
 
     const affiliate = await ensureAffiliate(admin, user.id, profile?.name);
+
+    // Don't just trust the DB's payouts_enabled flag — it's only ever
+    // updated by the account.updated webhook, and that depends on Stripe
+    // actually delivering the event (it doesn't always, promptly or at
+    // all). If we already think it's off and there's a Connect account on
+    // file, ask Stripe directly for the real, current status and sync it
+    // right now. This is best-effort: any failure here just falls back to
+    // whatever was already in the DB, so a Stripe hiccup can never break
+    // the page from loading.
+    let payoutsEnabled = !!affiliate.payouts_enabled;
+    if (affiliate.stripe_connect_account_id && !payoutsEnabled) {
+      try {
+        const stripe = getStripe();
+        const sync = await syncConnectAccountPayouts(stripe, admin, user.id, affiliate.stripe_connect_account_id);
+        payoutsEnabled = sync.payoutsEnabled;
+      } catch (err) {
+        console.error("affiliate-me: on-demand Connect sync failed:", err);
+      }
+    }
 
     const { data: referralRows, error: refErr } = await admin
       .from("affiliate_referrals")
@@ -136,7 +156,7 @@ export async function GET(request) {
     return Response.json({
       code: affiliate.code,
       link: `${SITE_ORIGIN}/incentives/${affiliate.code}`,
-      payoutsEnabled: !!affiliate.payouts_enabled,
+      payoutsEnabled,
       hasConnectAccount: !!affiliate.stripe_connect_account_id,
       payoutRates: { basic: PAYOUT_CENTS.basic / 100, premium: PAYOUT_CENTS.premium / 100 },
       totals,

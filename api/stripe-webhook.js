@@ -14,7 +14,7 @@
 // instead of the app, Stripe's own retry logic, etc. Every write here is
 // idempotent (patchShopBillingStatusForUser no-ops if already correct), so
 // it's safe for this to run again for the same event.
-import { getStripe, tierFromPriceId, payoutReferral } from "./_stripe.js";
+import { getStripe, tierFromPriceId, syncConnectAccountPayouts } from "./_stripe.js";
 import { getSupabaseAdmin, patchProfile, patchShopBillingStatusForUser } from "./_supabaseAdmin.js";
 
 export async function POST(request) {
@@ -116,30 +116,13 @@ async function applyCancelledSubscription(subscription) {
 // importantly, the moment Stripe finishes verifying an affiliate's payout
 // info and flips payouts_enabled from false to true. That's also exactly
 // the moment any referral the admin already approved (but couldn't pay out
-// yet, because this wasn't ready) becomes payable, so this both updates
-// the affiliates row AND clears any backlog of approved-but-unpaid
-// referrals for that person in the same pass.
+// yet, because this wasn't ready) becomes payable. The actual sync-and-pay
+// logic lives in syncConnectAccountPayouts (_stripe.js) so the same thing
+// can also run on demand from affiliate-me.js — this webhook is the fast
+// path when it arrives, not the only path.
 async function applyConnectAccountUpdate(stripe, account) {
   const admin = getSupabaseAdmin();
   const userId = account.metadata?.userId;
   if (!userId) return; // not one of ours (or missing metadata) — ignore
-  const payoutsEnabled = !!account.payouts_enabled;
-
-  const { error: updateErr } = await admin
-    .from("affiliates")
-    .update({ payouts_enabled: payoutsEnabled, updated_at: new Date().toISOString() })
-    .eq("user_id", userId);
-  if (updateErr) throw updateErr;
-  if (!payoutsEnabled) return;
-
-  const { data: pending, error: pendingErr } = await admin
-    .from("affiliate_referrals")
-    .select("id, payout_amount_cents")
-    .eq("referrer_user_id", userId)
-    .eq("status", "approved");
-  if (pendingErr) throw pendingErr;
-
-  for (const referral of pending || []) {
-    await payoutReferral(stripe, admin, referral, account.id);
-  }
+  await syncConnectAccountPayouts(stripe, admin, userId, account.id);
 }

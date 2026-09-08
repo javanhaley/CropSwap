@@ -96,6 +96,44 @@ export function tierFromPriceId(priceId) {
 // referral in "paid" or "failed" — never left silently "approved" after
 // this was actually attempted, so nothing needs a human to notice a quiet
 // half-done transfer.
+// Checks a connected account's REAL payout status directly with Stripe and
+// syncs it, instead of only waiting on Stripe to push an account.updated
+// webhook. The webhook is the fast path when it arrives, but it depends on
+// the event actually being subscribed AND Stripe actually emitting a fresh
+// one — in practice that's one more thing that can silently fail to line up
+// (wrong mode, an endpoint that never re-fires because nothing "changed"
+// from Stripe's point of view, etc). This is the same sync logic
+// (update payouts_enabled, then clear any approved-but-unpaid backlog)
+// but callable on demand, so a page load can self-heal the state instead of
+// an affiliate being stuck looking "not ready" indefinitely for reasons
+// that have nothing to do with whether Stripe actually finished onboarding
+// them. Safe to call repeatedly — a no-op once payouts_enabled is already
+// true and there's no backlog.
+export async function syncConnectAccountPayouts(stripe, admin, userId, accountId) {
+  if (!userId || !accountId) return { payoutsEnabled: false };
+  const account = await stripe.accounts.retrieve(accountId);
+  const payoutsEnabled = !!account.payouts_enabled;
+
+  const { error: updateErr } = await admin
+    .from("affiliates")
+    .update({ payouts_enabled: payoutsEnabled, updated_at: new Date().toISOString() })
+    .eq("user_id", userId);
+  if (updateErr) throw updateErr;
+  if (!payoutsEnabled) return { payoutsEnabled: false };
+
+  const { data: backlog, error: backlogErr } = await admin
+    .from("affiliate_referrals")
+    .select("id, payout_amount_cents")
+    .eq("referrer_user_id", userId)
+    .eq("status", "approved");
+  if (backlogErr) throw backlogErr;
+
+  for (const referral of backlog || []) {
+    await payoutReferral(stripe, admin, referral, accountId);
+  }
+  return { payoutsEnabled: true, backlogCleared: (backlog || []).length };
+}
+
 export async function payoutReferral(stripe, admin, referral, connectAccountId) {
   try {
     const transfer = await stripe.transfers.create({
