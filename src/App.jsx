@@ -25571,7 +25571,14 @@ function LandingHero({ onExplore, onStartSelling, onLogoClick, onClose }) {
           <X size={18} />
         </button>
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-          <div className="relative h-40 md:h-auto md:w-1/2 shrink-0">
+          {/* Mobile height bumped ~70% (10rem -> 17rem) — the fixed-height
+              modal (h-[90vh]) meant the leftover flex area below it was
+              mostly dead centered white space; growing the photo eats
+              straight into that same leftover space (justify-center keeps
+              it split evenly above/below the logo+buttons), so this alone
+              removes an equal amount of blank space without any other
+              change needed. Desktop is untouched (md:h-auto). */}
+          <div className="relative h-[17rem] md:h-auto md:w-1/2 shrink-0">
             <img
               src="/branding/landing-hero-tomatoes.jpg"
               alt="Two people passing a bowl of freshly picked tomatoes"
