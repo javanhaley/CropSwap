@@ -16906,6 +16906,13 @@ function AffiliateScreen({ navigate }) {
                             <p className="text-xs text-stone-500 mt-1">{formatMoney(r.payoutAmountCents / 100)}</p>
                           ) : r.estimatedPayoutCents ? (
                             <p className="text-xs text-stone-400 mt-1">~{formatMoney(r.estimatedPayoutCents / 100)} est.</p>
+                          ) : r.status === "pending" ? (
+                            // Not a bug/glitch — this signup either isn't on a
+                            // paid plan yet or isn't on an ANNUAL plan (or has
+                            // since cancelled), so there's currently nothing
+                            // to estimate. Spelled out explicitly so it
+                            // doesn't just look like a missing number.
+                            <p className="text-xs text-stone-400 mt-1 max-w-[160px]">Not currently on a paid annual plan</p>
                           ) : null}
                         </div>
                       </div>
