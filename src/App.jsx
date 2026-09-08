@@ -8254,7 +8254,14 @@ function ReviewSection({ entityType, entityId, ownerId, shopId }) {
           }
           showToast("Your review is now live");
           if (targetShop && targetShop.ownerId !== me.id) {
-            notifyShopOwner(targetShop, "review", `${me.name} left a ${draftRating}-star review`, draftBody.trim().slice(0, 80));
+            // Deep-link straight to the review, not just the shop/product's
+            // general page — same focusReviews pattern the star-rating
+            // shortcut already uses to jump into a product's review list.
+            const reviewRoute =
+              entityType === "product"
+                ? { screen: "product", productId: entityId, focusReviews: true }
+                : { screen: "shop", shopId: targetShop.id, focusReviews: true };
+            notifyShopOwner(targetShop, "review", `${me.name} left a ${draftRating}-star review`, draftBody.trim().slice(0, 80), reviewRoute);
           }
         },
       }
@@ -8716,12 +8723,23 @@ function ConfirmDelete({ product, shopId, onClose }) {
 /* ============================================================================
    SECTION 18: SHOP PROFILE VIEW
 ============================================================================ */
-function ShopProfileView({ shopId, navigate }) {
+function ShopProfileView({ shopId, navigate, focusReviews }) {
   const { shopsById, products, favShops, toggleFavorite, incrementShare, me, userLoc, showToast, setExploreView } = useApp();
   const [addOpen, setAddOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [deletingProduct, setDeletingProduct] = useState(null);
   const shop = shopsById[shopId];
+
+  // Opened from a review notification — jump straight to the review list
+  // instead of leaving the visitor to scroll and find it themselves. Mirrors
+  // ProductDetailModal's identical focusReviews behavior.
+  useEffect(() => {
+    if (!shop || !focusReviews) return;
+    const t = setTimeout(() => {
+      document.getElementById("shop-reviews-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 200);
+    return () => clearTimeout(t);
+  }, [shop?.id, focusReviews]);
 
   useEffect(() => {
     if (!shop || (me && me.id === shop.ownerId)) return;
@@ -8963,7 +8981,11 @@ function ShopProfileView({ shopId, navigate }) {
         )}
 
         <ShopFaq shop={shop} />
-        {blocks.includes("reviews") && <ReviewSection entityType="shop" entityId={shop.id} ownerId={shop.ownerId} />}
+        {blocks.includes("reviews") && (
+          <div id="shop-reviews-anchor">
+            <ReviewSection entityType="shop" entityId={shop.id} ownerId={shop.ownerId} />
+          </div>
+        )}
       </div>
 
       {addOpen && <AddProductForm shop={shop} onClose={() => setAddOpen(false)} />}
@@ -16628,6 +16650,7 @@ function AffiliateScreen({ navigate }) {
   const [cardOpen, setCardOpen] = useState(false);
   const [connectBusy, setConnectBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [fastForwardBusy, setFastForwardBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -16687,6 +16710,39 @@ function AffiliateScreen({ navigate }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }).catch(() => {});
+  }
+
+  // TEMPORARY TEST TOOL — see api/admin-affiliate-fast-forward.js for what
+  // this actually does and why it's restricted to admin/test accounts.
+  // Delete this function, the button below, and that API route together
+  // once the payout flow has been verified end-to-end.
+  async function fastForwardReferrals() {
+    setFastForwardBusy(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch("/api/admin-affiliate-fast-forward", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || "Couldn't fast-forward");
+      if (!payload.processed) {
+        showToast("No pending referrals to fast-forward right now.");
+      } else if (payload.paid > 0) {
+        showToast(`Fast-forwarded ${payload.processed} referral(s) — ${payload.paid} paid out via Stripe!`);
+      } else if (payload.approvedAwaitingPayout > 0) {
+        showToast(`Approved ${payload.approvedAwaitingPayout} referral(s) — set up payout info below to actually trigger the transfer.`);
+      } else {
+        showToast(`Checked ${payload.processed} referral(s) — none were eligible (not an active annual paid plan).`);
+      }
+      await load();
+    } catch (e) {
+      showToast(e?.message || "Couldn't fast-forward referrals");
+    } finally {
+      setFastForwardBusy(false);
+    }
   }
 
   return (
@@ -16784,6 +16840,25 @@ function AffiliateScreen({ navigate }) {
               </div>
             </div>
 
+            {(isAdminUser(me) || (me?.shopId && TEST_ACCOUNT_SHOP_IDS.has(me.shopId))) && (
+              <div className="bg-amber-50 border-2 border-dashed border-amber-400 rounded-2xl p-4">
+                <p className="text-xs font-bold text-amber-800 uppercase mb-1 flex items-center gap-1.5">
+                  <FlaskConical size={13} /> Test tool — temporary
+                </p>
+                <p className="text-xs text-amber-700 mb-3">
+                  Skips the real 31-day wait for every pending referral above: checks eligibility right now, approves it, and fires the real Stripe
+                  payout if payout info below is already set up. Delete this button once you've seen it work.
+                </p>
+                <button
+                  onClick={fastForwardReferrals}
+                  disabled={fastForwardBusy}
+                  className="text-sm font-bold px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-60 transition flex items-center gap-1.5"
+                >
+                  {fastForwardBusy ? "Fast-forwarding…" : "Speed up 31 days"}
+                </button>
+              </div>
+            )}
+
             <div className="bg-white border border-stone-200 rounded-2xl p-5">
               <p className="text-xs font-bold text-stone-400 uppercase mb-1.5">Payout info</p>
               {data.payoutsEnabled ? (
@@ -16868,14 +16943,18 @@ function AffiliateStep({ number, icon: Icon, tint, title, text }) {
    SECTION 23: NOTIFICATIONS MODAL
 ============================================================================ */
 const NOTIF_ICON = { message: MessageCircle, review: Star, favorite: Heart, affiliate_signup: Gift };
-function NotificationsModal({ open, onClose, navigate, onOpenProduct }) {
-  const { notifications, markAllRead, unreadCount, removeNotification, clearNotifications, openProfileCard } = useApp();
+function NotificationsModal({ open, onClose, navigate }) {
+  const { notifications, markAllRead, unreadCount, removeNotification, clearNotifications, openProfileCard, openProduct, openProductReviews } = useApp();
   const [confirmClear, setConfirmClear] = useState(false);
   const handleClick = (n) => {
     markAllRead();
     onClose();
-    if (n.route?.screen === "product" && n.route.productId) onOpenProduct(n.route.productId);
-    else if (n.route) navigate(n.route);
+    if (n.route?.screen === "product" && n.route.productId) {
+      // Routes through context so a review notification's focusReviews flag
+      // actually scrolls to the review list, not just opens the product.
+      if (n.route.focusReviews) openProductReviews(n.route.productId);
+      else openProduct(n.route.productId);
+    } else if (n.route) navigate(n.route);
   };
   return (
     <Modal open={open} onClose={onClose} labelledBy="notif-title">
@@ -26387,7 +26466,7 @@ function RootShell() {
           )}
           <main className="flex-1 flex flex-col overflow-hidden relative cs-paper">
             {route.screen === "explore" && <ExploreView navigate={navigate} />}
-            {route.screen === "shop" && <ShopProfileView shopId={route.shopId} navigate={navigate} />}
+            {route.screen === "shop" && <ShopProfileView shopId={route.shopId} navigate={navigate} focusReviews={route.focusReviews} />}
             {route.screen === "store" && <StoreScreenEntry navigate={navigate} />}
             {route.screen === "storeEditor" && <StorefrontEditor navigate={navigate} initialTab={route.tab} />}
             {route.screen === "favorites" && <FavoritesScreenEntry navigate={navigate} />}
@@ -26464,7 +26543,7 @@ function RootShell() {
       <TextEntrySheet config={textSheet} onClose={() => setTextSheet(null)} />
       <LocationPickerModal open={locPickerOpen} onClose={() => setLocPickerOpen(false)} onPick={setUserLoc} />
       <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} />
-      <NotificationsModal open={notifOpen} onClose={() => setNotifOpen(false)} navigate={navigate} onOpenProduct={setOpenProductId} />
+      <NotificationsModal open={notifOpen} onClose={() => setNotifOpen(false)} navigate={navigate} />
       <NotificationsPreviewModal
         open={notifPreviewOpen}
         onClose={() => setNotifPreviewOpen(false)}
