@@ -15318,43 +15318,49 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
                 this to test anything downstream of "has a paid plan" (Premium features, the affiliate payout pipeline) without needing a real subscription.
                 A referral tied to this account still moves through the normal pending → eligible → paid timeline afterward — this doesn't touch that at all.
               </p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  disabled={grantBusy}
-                  onClick={() => grantTestPlan("basic", "monthly")}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-full border border-amber-300 bg-white hover:bg-amber-100 disabled:opacity-50"
-                >
-                  Basic · monthly
-                </button>
-                <button
-                  disabled={grantBusy}
-                  onClick={() => grantTestPlan("basic", "annual")}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-full border border-amber-300 bg-white hover:bg-amber-100 disabled:opacity-50"
-                >
-                  Basic · annual
-                </button>
-                <button
-                  disabled={grantBusy}
-                  onClick={() => grantTestPlan("premium", "monthly")}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-full border border-amber-300 bg-white hover:bg-amber-100 disabled:opacity-50"
-                >
-                  Premium · monthly
-                </button>
-                <button
-                  disabled={grantBusy}
-                  onClick={() => grantTestPlan("premium", "annual")}
-                  className="text-xs font-bold px-3 py-1.5 rounded-full border border-amber-400 bg-amber-800 text-white hover:bg-amber-900 disabled:opacity-50"
-                >
-                  Premium · annual
-                </button>
-                <button
-                  disabled={grantBusy}
-                  onClick={() => grantTestPlan("free")}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-full border border-stone-200 bg-white hover:bg-stone-50 disabled:opacity-50 text-stone-600"
-                >
-                  Revert to Free
-                </button>
-              </div>
+              {/* Highlights whichever plan this account is ACTUALLY on right
+                  now (from the real entitlement data in `detail.plan`), not
+                  just a fixed "recommended" button — Premium·annual used to
+                  always render dark regardless of the account's real plan,
+                  which read as "this is the current plan" even right after
+                  reverting someone to Free. Free itself has no billing
+                  interval, so it matches on tier alone. */}
+              {(() => {
+                const currentTier = detail?.plan?.tier || "free";
+                const currentBilling = detail?.plan?.billing || null;
+                const isCurrent = (tier, billing = null) => currentTier === tier && currentBilling === billing;
+                const grantButtonClass = (active) =>
+                  `text-xs px-3 py-1.5 rounded-full border disabled:opacity-50 ${
+                    active ? "font-bold border-amber-400 bg-amber-800 text-white hover:bg-amber-900" : "font-semibold border-amber-300 bg-white hover:bg-amber-100"
+                  }`;
+                return (
+                  <div className="flex flex-wrap gap-2">
+                    <button disabled={grantBusy} onClick={() => grantTestPlan("basic", "monthly")} className={grantButtonClass(isCurrent("basic", "monthly"))}>
+                      Basic · monthly
+                    </button>
+                    <button disabled={grantBusy} onClick={() => grantTestPlan("basic", "annual")} className={grantButtonClass(isCurrent("basic", "annual"))}>
+                      Basic · annual
+                    </button>
+                    <button disabled={grantBusy} onClick={() => grantTestPlan("premium", "monthly")} className={grantButtonClass(isCurrent("premium", "monthly"))}>
+                      Premium · monthly
+                    </button>
+                    <button disabled={grantBusy} onClick={() => grantTestPlan("premium", "annual")} className={grantButtonClass(isCurrent("premium", "annual"))}>
+                      Premium · annual
+                    </button>
+                    <button
+                      disabled={grantBusy}
+                      onClick={() => grantTestPlan("free")}
+                      className={`text-xs px-3 py-1.5 rounded-full border disabled:opacity-50 ${
+                        isCurrent("free")
+                          ? "font-bold border-stone-400 bg-stone-700 text-white hover:bg-stone-800"
+                          : "font-semibold border-stone-200 bg-white hover:bg-stone-50 text-stone-600"
+                      }`}
+                    >
+                      Revert to Free
+                    </button>
+                  </div>
+                );
+              })()}
               <p className="text-[11px] text-amber-600 mt-2">
                 Affiliate commissions ($30 Basic / $50 Premium) only pay out for <span className="font-semibold">annual</span> plans — pick annual here if
                 you're testing the referral payout flow specifically.
