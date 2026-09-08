@@ -60,10 +60,40 @@ export async function GET(request) {
 
     const { data: referralRows, error: refErr } = await admin
       .from("affiliate_referrals")
-      .select("id, referred_email, signed_up_at, eligible_check_at, status, plan_tier, payout_amount_cents, approved_at, paid_at")
+      .select("id, referred_user_id, referred_email, signed_up_at, eligible_check_at, status, plan_tier, payout_amount_cents, approved_at, paid_at")
       .eq("referrer_user_id", user.id)
       .order("signed_up_at", { ascending: false });
     if (refErr) throw refErr;
+
+    // A still-"pending" row (day-31 check hasn't run yet) has no
+    // payout_amount_cents on file — that column is only ever set once the
+    // cron sweep or an admin approval confirms the tier. But a referrer who
+    // sees a brand-new referral already sitting on a live, paid annual plan
+    // reasonably expects to see that reflected as pending money right away,
+    // not a flat $0 for a full month. So for pending rows only, look up the
+    // referred account's CURRENT profile and estimate what day 31 would pay
+    // out if their plan holds — same eligibility rule cron-affiliate-sweep.js
+    // uses (live, paid, ANNUAL billing). This is only an estimate: it can
+    // still change or fall through to "ineligible" if they downgrade or
+    // cancel before day 31, which is exactly why the real payout_amount_cents
+    // is never set this early.
+    const pendingUserIds = [...new Set((referralRows || []).filter((r) => r.status === "pending" && r.referred_user_id).map((r) => r.referred_user_id))];
+    const profileByUserId = {};
+    if (pendingUserIds.length) {
+      const { data: profileRows } = await admin.from("kv").select("owner_id, value").eq("key", "me:profile").in("owner_id", pendingUserIds);
+      for (const row of profileRows || []) {
+        try {
+          profileByUserId[row.owner_id] = row.value ? JSON.parse(row.value) : null;
+        } catch {
+          profileByUserId[row.owner_id] = null;
+        }
+      }
+    }
+    function estimatePendingPayoutCents(referredUserId) {
+      const plan = profileByUserId[referredUserId]?.plan;
+      const isLiveAnnualPaid = plan && (plan.tier === "basic" || plan.tier === "premium") && plan.billing === "annual" && plan.status === "active" && !plan.cancelledAt;
+      return isLiveAnnualPaid ? PAYOUT_CENTS[plan.tier] : 0;
+    }
 
     const referrals = (referralRows || []).map((r) => ({
       id: r.id,
@@ -75,6 +105,7 @@ export async function GET(request) {
       status: r.status,
       planTier: r.plan_tier,
       payoutAmountCents: r.payout_amount_cents,
+      estimatedPayoutCents: r.status === "pending" ? estimatePendingPayoutCents(r.referred_user_id) || null : null,
       approvedAt: r.approved_at ? new Date(r.approved_at).getTime() : null,
       paidAt: r.paid_at ? new Date(r.paid_at).getTime() : null,
     }));
@@ -83,15 +114,16 @@ export async function GET(request) {
     // point of view: a brand-new signup still counting down to day 31
     // ("pending"), and one that's already cleared that check and is
     // waiting on admin approval or an approved-but-not-yet-paid transfer
-    // ("eligible_awaiting_approval" / "approved"). Only the latter two have
-    // a known payout amount (set by the cron sweep once the plan/tier is
-    // confirmed) — a fresh "pending" row's payoutAmountCents is still null,
-    // so it correctly contributes $0 to pendingCents until then.
+    // ("eligible_awaiting_approval" / "approved"). The latter two always
+    // have a known payout_amount_cents (set once the cron sweep or an admin
+    // approval confirms the tier); a fresh "pending" row falls back to its
+    // live estimate above so it isn't shown as $0 while someone's paid
+    // annual subscription is sitting right there.
     const totals = referrals.reduce(
       (acc, r) => {
         if (r.status === "pending" || r.status === "eligible_awaiting_approval" || r.status === "approved") {
           acc.pendingCount += 1;
-          acc.pendingCents += r.payoutAmountCents || 0;
+          acc.pendingCents += r.payoutAmountCents || r.estimatedPayoutCents || 0;
         } else if (r.status === "paid") {
           acc.paidCount += 1;
           acc.paidCents += r.payoutAmountCents || 0;
