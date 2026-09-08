@@ -15179,17 +15179,18 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
     }
   }
 
-  // TEST ONLY — see api/admin-grant-plan.js. Sets this account's plan
-  // directly, exactly the shape a real Stripe checkout/webhook would write,
-  // without a checkout session, a card, or Stripe ever being involved. This
-  // exists so the rest of a subscription's downstream effects (Premium
-  // dashboard features, and specifically the affiliate payout pipeline —
-  // cron-affiliate-sweep.js needs a referred account to actually be on a
-  // live annual paid plan before it'll move that referral past "pending")
-  // can be tested while real checkout is paused
-  // (CHECKOUT_TEMP_DISABLED in api/create-checkout-session.js). Doesn't
-  // touch affiliate_referrals at all, so a referral tied to this account
-  // still goes through the exact same pending → eligible → approved → paid
+  // Permanent admin comp tool — see api/admin-grant-plan.js. Sets this
+  // account's plan directly, exactly the shape a real Stripe
+  // checkout/webhook would write, without a checkout session, a card, or
+  // Stripe ever being involved. Lets the admin comp a plan to a partner, a
+  // promotion, or a support gesture, live checkout or not — it also still
+  // covers its original purpose of testing a subscription's downstream
+  // effects (Premium dashboard features, and specifically the affiliate
+  // payout pipeline — cron-affiliate-sweep.js needs a referred account to
+  // actually be on a live annual paid plan before it'll move that referral
+  // past "pending") without needing a real card. Doesn't touch
+  // affiliate_referrals at all, so a referral tied to this account still
+  // goes through the exact same pending → eligible → approved → paid
   // lifecycle it would for a real subscriber — this only removes the
   // Stripe/card step, nothing downstream is shortcut.
   const [grantBusy, setGrantBusy] = useState(false);
@@ -15206,7 +15207,7 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
       });
       const payload = await res.json().catch(() => null);
       if (!res.ok) throw new Error(payload?.error || `status ${res.status}`);
-      globalToast?.(tier === "free" ? "Reverted to Free (test)" : `Granted ${tier === "premium" ? "Premium" : "Basic"} (${billing}, test) — no card was involved`);
+      globalToast?.(tier === "free" ? "Reverted to Free" : `Granted ${tier === "premium" ? "Premium" : "Basic"} (${billing}) — no card was involved`);
       await load();
     } catch (e) {
       globalToast?.(e?.message || "Couldn't update this account's plan");
@@ -15311,12 +15312,13 @@ function AdminUserDetailScreen({ navigate, userId, userName, userAvatar }) {
 
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 sm:col-span-3">
               <p className="text-xs font-bold text-amber-800 uppercase mb-1 flex items-center gap-1.5">
-                <Gift size={13} /> Grant plan — test only, bypasses Stripe
+                <Gift size={13} /> Grant plan — bypasses Stripe
               </p>
               <p className="text-xs text-amber-700 mb-3">
-                Sets this account's plan directly, no checkout session or card involved. Real checkout is paused right now (see CHECKOUT_TEMP_DISABLED) — use
-                this to test anything downstream of "has a paid plan" (Premium features, the affiliate payout pipeline) without needing a real subscription.
-                A referral tied to this account still moves through the normal pending → eligible → paid timeline afterward — this doesn't touch that at all.
+                Sets this account's plan directly — no checkout session or card involved. Use this to comp a plan (a partner, a promotion, a support
+                gesture) or to unlock anything downstream of "has a paid plan" (Premium features, the affiliate payout pipeline) without a real
+                subscription. A referral tied to this account still moves through the normal pending → eligible → paid timeline afterward — this doesn't
+                touch that at all.
               </p>
               {/* Highlights whichever plan this account is ACTUALLY on right
                   now (from the real entitlement data in `detail.plan`), not

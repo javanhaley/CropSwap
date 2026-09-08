@@ -1,17 +1,21 @@
 // POST /api/admin-grant-plan
 // body: { userId, tier: "free"|"basic"|"premium", billing?: "monthly"|"annual" }
 //
-// TEST-ONLY TOOL: instantly grants (or revokes) a subscription on an
+// ADMIN COMP TOOL: instantly grants (or revokes) a subscription on an
 // account's profile WITHOUT touching Stripe at all — no checkout session,
-// no card, no real charge. Exists so the whole "subscribe → do X → see the
-// downstream effect" chain can be tested while real checkout is paused
-// (CHECKOUT_TEMP_DISABLED in create-checkout-session.js) — the affiliate
-// payout pipeline is the reason this was built: cron-affiliate-sweep.js
-// needs a referred account to actually be on a live ANNUAL paid plan
-// before it'll move that referral past "pending", and there was no way to
-// get an account into that state without a real card. Remove this route
-// (and its one entry point on the Admin User Detail screen) once real
-// checkout goes live, since as it stands it's a free way to grant Premium.
+// no card, no real charge. This is intentionally permanent, not a
+// pre-launch shortcut to remove later: it's how the admin comps a free
+// Basic/Premium plan to a partner, a promotion, or a support gesture, both
+// before and after real checkout goes live. It originally existed so the
+// whole "subscribe → do X → see the downstream effect" chain could be
+// tested while real checkout was paused (CHECKOUT_TEMP_DISABLED in
+// create-checkout-session.js) — the affiliate payout pipeline was the
+// reason it was built: cron-affiliate-sweep.js needs a referred account to
+// actually be on a live ANNUAL paid plan before it'll move that referral
+// past "pending", and there was no way to get an account into that state
+// without a real card — and that testing use still works the same way.
+// The only thing keeping this from being "a free way to grant Premium" to
+// anyone is that it's locked to the single ADMIN_EMAIL account below.
 //
 // Writes the exact same profile.plan shape a real Stripe checkout/webhook
 // would (see the patchProfile calls in create-checkout-session.js and
