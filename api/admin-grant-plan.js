@@ -66,7 +66,17 @@ export async function POST(request) {
   try {
     if (tier === "free") {
       const updated = await patchProfile(userId, {
-        plan: { tier: "free", billing: null, status: "canceled", startedAt: null, periodEnd: null, cancelledAt: Date.now(), refundPct: null },
+        // manualGrant marks this as an admin override rather than a real
+        // Stripe outcome — see entitlement.js, which checks this flag and
+        // skips its usual "re-derive from Stripe" reconciliation entirely
+        // when it's set, so this doesn't get silently overwritten (back
+        // to some stray live subscription still sitting under this email,
+        // or up from a real one) the next time the account loads anything.
+        // A genuine Stripe event (real checkout or the webhook) always
+        // writes a fresh plan object without this flag, which clears it
+        // automatically — patchProfile replaces `plan` wholesale rather
+        // than merging into it.
+        plan: { tier: "free", billing: null, status: "canceled", startedAt: null, periodEnd: null, cancelledAt: Date.now(), refundPct: null, manualGrant: true },
       });
       if (!updated) return Response.json({ error: "Account has no profile yet" }, { status: 404 });
       await patchShopBillingStatusForUser(userId, false);
@@ -83,6 +93,7 @@ export async function POST(request) {
         periodEnd: Date.now() + periodDays * 86400000,
         cancelledAt: null,
         refundPct: null,
+        manualGrant: true,
       },
     });
     if (!updated) return Response.json({ error: "Account has no profile yet" }, { status: 404 });

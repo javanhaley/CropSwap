@@ -15,7 +15,7 @@
 // is the durable, cross-device, no-tools-needed version of that — writing a
 // tier into your own database row and having the whole app believe it.
 import { getStripe, listLiveSubscriptions, tierFromPriceId } from "./_stripe.js";
-import { getUserFromRequest, patchProfile } from "./_supabaseAdmin.js";
+import { getSupabaseAdmin, getUserFromRequest, patchProfile } from "./_supabaseAdmin.js";
 
 const FREE_PLAN = { tier: "free", billing: null, status: null, startedAt: null, periodEnd: null, cancelledAt: null, refundPct: null };
 
@@ -32,6 +32,29 @@ export async function GET(request) {
   }
 
   try {
+    const admin = getSupabaseAdmin();
+
+    // A plan set by the admin's "Grant plan" comp tool (admin-grant-plan.js)
+    // is deliberately NOT backed by a real Stripe subscription — that's the
+    // whole point of it. Without this check, the very next load of this
+    // endpoint would run the Stripe-derived reconciliation below, find
+    // nothing (or some unrelated stray subscription still sitting under the
+    // same email from earlier testing) and silently overwrite the comp. A
+    // genuine Stripe event always writes a fresh plan object without this
+    // flag — see patchProfile's shallow merge, which replaces `plan`
+    // wholesale — so a real subscription naturally takes back over the
+    // moment one actually exists, with nothing here to clear by hand.
+    const { data: profileRow } = await admin.from("kv").select("value").eq("owner_id", user.id).eq("key", "me:profile").maybeSingle();
+    let storedPlan = null;
+    try {
+      storedPlan = profileRow?.value ? JSON.parse(profileRow.value)?.plan ?? null : null;
+    } catch {
+      storedPlan = null;
+    }
+    if (storedPlan?.manualGrant) {
+      return Response.json({ plan: storedPlan });
+    }
+
     const stripe = getStripe();
     const customers = await stripe.customers.list({ email: user.email, limit: 1 });
     const customer = customers.data[0];
