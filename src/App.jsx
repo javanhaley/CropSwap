@@ -6738,7 +6738,7 @@ function Sidebar({ route, navigate, variant = "inline", onClose }) {
   const isDrawer = variant === "drawer";
   const items = [
     { id: "explore", label: "Explore", icon: Home, screen: "explore" },
-    { id: "store", label: me?.isVendor ? "My Store" : "Start Selling", icon: Store, screen: "store" },
+    { id: "store", label: "My Store", icon: Store, screen: "store" },
     { id: "messages", label: "Messages", icon: MessageCircle, screen: "messages" },
     { id: "bulkMessaging", label: "Bulk Messaging", icon: Megaphone, screen: "bulkMessaging", gold: true },
     { id: "favorites", label: "Favorites", icon: Heart, screen: "favorites" },
@@ -7313,27 +7313,27 @@ function ExploreView({ navigate }) {
 
         {/* flex-wrap on the outer row lets the "Share to Earn" pill drop to
             its own line on narrow screens instead of forcing horizontal
-            scroll or getting clipped; the Shops/Listings/Map/Start Selling
+            scroll or getting clipped; the Stores/Listings/Map/My Store
             pills keep their own independent horizontal scroll (unchanged)
             since that set is meant to stay a single row. */}
         <div className="flex flex-wrap items-center gap-2 pb-4">
         <div className="flex gap-2 overflow-x-auto -mx-4 px-4" style={{ scrollbarWidth: "none" }}>
           {[
-            { id: "shops", label: "Shops" },
+            { id: "shops", label: "Stores" },
             { id: "listings", label: "Listings" },
             { id: "map", label: "Map" },
-            { id: "selling", label: me?.isVendor ? "My Shop" : "Start Selling" },
+            { id: "selling", label: "My Store" },
           ].map((btn) => {
             const isActive = (btn.id === "listings" && view === "grid") || (btn.id === "shops" && view === "shops") || (btn.id === "map" && view === "map");
             const handleClick = () => {
               if (btn.id === "listings") setView("grid");
               else if (btn.id === "shops") setView("shops");
               else if (btn.id === "map") setView("map");
-              // "Start Selling"/"My Shop" points at the same "store" screen
-              // for guests, non-vendors, and vendors alike — StoreScreen
-              // itself decides what to show (upgrade preview, signup form,
-              // or the real storefront). This matches how Sidebar/BottomNav
-              // already route their own Start Selling / My Store items.
+              // "My Store" points at the same "store" screen for guests,
+              // non-vendors, and vendors alike — StoreScreen itself decides
+              // what to show (upgrade preview, signup form, or the real
+              // storefront). This matches how Sidebar/BottomNav already
+              // route their own My Store item.
               else if (btn.id === "selling") navigate({ screen: "store" });
             };
             return (
@@ -8774,7 +8774,7 @@ function ShopProfileView({ shopId, navigate, focusReviews }) {
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-      {/* Same Shops/Listings/Map/My Shop row as the top of Explore/Map, in
+      {/* Same Stores/Listings/Map/My Store row as the top of Explore/Map, in
           the same top-of-page position with the same padding — so landing
           on My Store doesn't mean scrolling past the banner and bio first
           to find the nav you already saw everywhere else. Owner-only, same
@@ -8783,12 +8783,12 @@ function ShopProfileView({ shopId, navigate, focusReviews }) {
         <div className="max-w-6xl mx-auto px-4 pt-4">
           <div className="flex gap-2 overflow-x-auto pb-4" style={{ scrollbarWidth: "none" }}>
             {[
-              { id: "shops", label: "Shops" },
+              { id: "shops", label: "Stores" },
               { id: "listings", label: "Listings" },
               { id: "map", label: "Map" },
-              { id: "store", label: "My Shop" },
+              { id: "store", label: "My Store" },
             ].map((btn) => {
-              // "My Shop" represents the page already on screen, so it's a
+              // "My Store" represents the page already on screen, so it's a
               // no-op rather than a real nav target (clicking it used to
               // send you away to Explore, which defeated the point of it
               // reading as the "you are here" button).
@@ -24630,6 +24630,24 @@ function StartSellingPreviewScreen({ navigate, me }) {
           </p>
         </div>
 
+        {/* Same "Try it out" pattern as the Favorites page's sample-data
+            banner — makes it explicit up front that this whole page is a
+            mock, not an existing shop, before anyone starts tapping around
+            a suspiciously well-populated "Example Farm Stand". */}
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2.5 mt-4">
+          <Store size={15} className="text-amber-500 shrink-0" />
+          <p className="text-stone-600 text-xs">
+            <span className="font-semibold text-stone-700">Try it out</span> — this is a sample storefront, fully interactive. {" "}
+            {/* gateUpgrade already tells a guest and a signed-in Free
+                account apart (sign-up prompt vs. straight to Plans), so
+                this reuses it instead of re-deriving the same branch. */}
+            <button onClick={() => gateUpgrade("build your own storefront")} className="font-semibold text-emerald-700 underline underline-offset-2">
+              {me ? "Upgrade" : "Sign up free"}
+            </button>{" "}
+            to start selling for real.
+          </p>
+        </div>
+
         <div className="flex items-center gap-2 flex-wrap mt-4">
           <FavoriteHeart active={liked} count={37 + (liked ? 1 : 0)} onToggle={() => setLiked((v) => !v)} size="lg" />
           <button
@@ -26639,7 +26657,7 @@ function RootShell() {
             setShowLanding(false);
           }}
           onStartSelling={() => {
-            navigate({ screen: "store" });
+            navigate({ screen: "plans" });
             setShowLanding(false);
           }}
           onLogoClick={() => {
