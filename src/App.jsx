@@ -23330,22 +23330,32 @@ function buildDemoDashboardData() {
 function VendorDashboard({ navigate }) {
   const { me, shopsById, shops, products, conversations, showToast, sponsorships } = useApp();
   const realShop = me?.shopId ? shopsById[me.shopId] : null;
-  // Anyone browsing without a real storefront yet sees a fully-populated
-  // example dashboard instead of a locked empty state — see
-  // buildDemoDashboardData above. Built once per mount (it uses Math.random,
-  // so recomputing it on every render would make every chart/card jitter).
-  const isDemo = !realShop;
+  // An inactive shop (Premium or Basic cancelled, or never reactivated
+  // after lapsing) is hidden from every other shopper — showing its real
+  // numbers here, even blurred, doesn't make sense once there's nothing
+  // live to report on, and it's what let a cancelled account's real
+  // mailing list reach the mass-message composer once that tool stopped
+  // being locked in demo mode (see the ToolLock below): a real list of
+  // real past subscribers, sitting behind a now-unlocked "sample" tool.
+  // So "demo" means "no ACTIVE real shop", not just "no shop at all" —
+  // anyone without one gets the exact same fully-populated example
+  // dashboard (see buildDemoDashboardData above), never a half-real one
+  // built from data that's currently hidden anyway. Built once per mount
+  // (it uses Math.random, so recomputing it on every render would make
+  // every chart/card jitter).
+  const hasActiveShop = !!realShop && realShop.billingStatus !== "inactive";
+  const isDemo = !hasActiveShop;
   const demo = useMemo(() => (isDemo ? buildDemoDashboardData() : null), [isDemo]);
-  const shop = realShop || demo?.shop;
-  const { reviews: shopReviewsReal, avgRating: avgRatingReal, count: countReal } = useReviews("shop", realShop?.id || "none");
+  const shop = hasActiveShop ? realShop : demo?.shop;
+  const { reviews: shopReviewsReal, avgRating: avgRatingReal, count: countReal } = useReviews("shop", hasActiveShop ? realShop.id : "none");
   const shopReviews = isDemo ? demo.reviews : shopReviewsReal;
   const avgRating = isDemo ? demo.avgRating : avgRatingReal;
   const count = isDemo ? demo.reviews.length : countReal;
   const premium = isPremiumPlan(me);
-  const mailing = useMailingList(realShop?.ownerId || null);
-  const shopOrdersReal = useOrders(realShop?.id || null);
+  const mailing = useMailingList(hasActiveShop ? realShop.ownerId : null);
+  const shopOrdersReal = useOrders(hasActiveShop ? realShop.id : null);
   const shopOrders = isDemo ? { ...shopOrdersReal, orders: demo.orders } : shopOrdersReal;
-  const inventoryReal = useInventory(realShop?.id || null);
+  const inventoryReal = useInventory(hasActiveShop ? realShop.id : null);
   const inventory = isDemo ? { ...inventoryReal, items: demo.inventory } : inventoryReal;
 
   // Which KPI/sales card's drill-down modal is currently open, if any — see
@@ -24075,6 +24085,19 @@ function VendorDashboard({ navigate }) {
                     </button>{" "}
                     to set up your real storefront and put these tools to work.
                   </p>
+                ) : realShop ? (
+                  // A cancelled/lapsed shop, not a brand-new account — it
+                  // already has a real name and real (now hidden) history,
+                  // so "start selling" reads wrong here; "reactivate" is
+                  // the accurate verb, and routes to the same My Store
+                  // screen that offers one-click Basic or Premium reactivation.
+                  <p className="text-xs text-amber-800">
+                    {realShop.name} is inactive —{" "}
+                    <button onClick={() => navigate({ screen: "store" })} className="font-bold underline underline-offset-2">
+                      reactivate it
+                    </button>{" "}
+                    to bring these numbers back for real.
+                  </p>
                 ) : (
                   <p className="text-xs text-amber-800">
                     Start selling and{" "}
@@ -24087,10 +24110,10 @@ function VendorDashboard({ navigate }) {
               </div>
             </div>
             <button
-              onClick={() => navigate({ screen: premium ? "store" : "plans" })}
+              onClick={() => navigate({ screen: premium || realShop ? "store" : "plans" })}
               className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition"
             >
-              {premium ? "Go to My Store" : "Start selling"}
+              {premium ? "Go to My Store" : realShop ? "Reactivate" : "Start selling"}
             </button>
           </div>
         )}
@@ -24106,7 +24129,13 @@ function VendorDashboard({ navigate }) {
               <h1 className="text-2xl font-bold text-white" style={displayFont}>{shop.name} dashboard</h1>
               <p className="text-emerald-50/90 text-sm mt-0.5">
                 {shopProducts.length} active listing{shopProducts.length === 1 ? "" : "s"} ·{" "}
-                {isDemo ? (premium ? "example dashboard — set up My Store to make it real" : "example dashboard — see what Premium unlocks") : "real activity, not simulated"}
+                {isDemo
+                  ? premium
+                    ? "example dashboard — set up My Store to make it real"
+                    : realShop
+                    ? "example dashboard — reactivate your storefront to make it real again"
+                    : "example dashboard — see what Premium unlocks"
+                  : "real activity, not simulated"}
               </p>
             </div>
             {premium ? (
