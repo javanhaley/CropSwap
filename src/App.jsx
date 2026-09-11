@@ -12357,7 +12357,7 @@ function PremiumPromoModal({ open, onClose, onClaim, claiming }) {
 }
 
 function PlansScreen({ navigate, route }) {
-  const { me, cancelPlan, showToast, requireAuth, refreshMe } = useApp();
+  const { me, cancelPlan, showToast, requireAuth, refreshMe, reloadMarket } = useApp();
   const [billingByPlan, setBillingByPlan] = useState({ basic: "monthly", premium: "monthly" });
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -12427,14 +12427,19 @@ function PlansScreen({ navigate, route }) {
       const payload = await res.json().catch(() => null);
       if (!res.ok) throw new Error(payload?.error || "Couldn't claim this right now");
       // The grant is already live in the database at this point — pull it
-      // down into this tab's own `me` right away rather than waiting for a
-      // reload. Without this, the account IS Premium server-side but every
-      // screen gating a Premium feature (the Dashboard, Bulk Messaging,
-      // Sponsored Ads, the Plans page's own "Current plan" highlight) keeps
-      // reading this tab's stale pre-claim `me.plan` until something else
-      // happens to refresh it — which is exactly what looked like the promo
-      // "not actually unlocking anything."
-      await refreshMe();
+      // down into this tab's own state right away rather than waiting for
+      // a reload. refreshMe() covers `me.plan` (every screen gating a
+      // Premium feature reads that). But redeem-premium-promo.js ALSO
+      // flips the owner's own SHOP to billingStatus: "active" if they
+      // already have one from earlier (a shop that lapsed back when their
+      // old plan ended) — that lives in the separate market data cache
+      // (market.shops/shopsById), not on `me` at all, so without also
+      // reloading it here, navigating straight to My Store immediately
+      // after claiming showed that shop's stale cached "inactive, plan
+      // lapsed" screen even though the account was already Premium again.
+      // cancelPlan/startCheckout already pair these same two calls for
+      // the identical reason.
+      await Promise.all([refreshMe(), reloadMarket()]);
       showToast("You're on Premium for the next 12 months — welcome aboard!");
       setPromoOpen(false);
       navigate({ screen: "store" });
@@ -25033,9 +25038,22 @@ function StoreScreen({ navigate }) {
           <h2 className="text-2xl font-bold text-stone-900 mb-2" style={displayFont}>{shop.name} is inactive</h2>
           <p className="text-stone-500 mb-1">Your plan lapsed, so this storefront is hidden from other shoppers.</p>
           <p className="text-stone-500 mb-5">It's kept for {daysLeft} more day{daysLeft === 1 ? "" : "s"} before it's removed for good — re-up any time before then to bring it back online.</p>
+          {/* Premium first, and its own direct one-click button — not just
+              Basic with a "see all plans" afterthought. Re-subscribing to
+              Premium already reactivates this shop automatically (both the
+              real Stripe checkout webhook and the free-promo redemption
+              flip billingStatus back to active as part of granting the
+              plan), so there was never a real need to detour through Basic
+              first — only a UI that made Basic look like the sole option. */}
+          <button
+            onClick={() => navigate({ screen: "checkout", tier: "premium", billing: "monthly" })}
+            className="w-full bg-gradient-to-b from-[#F6E7A8] via-[#D4AF37] to-[#A97D1F] text-[#3B2A0E] font-bold py-3 rounded-xl mb-2 shadow-sm hover:brightness-105 flex items-center justify-center gap-2"
+          >
+            <Crown size={16} /> Reactivate with Premium
+          </button>
           <button
             onClick={() => navigate({ screen: "checkout", tier: "basic", billing: "monthly" })}
-            className="w-full bg-emerald-800 text-white font-semibold py-3 rounded-xl mb-2"
+            className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl mb-2"
           >
             Reactivate with Basic
           </button>
@@ -26473,6 +26491,7 @@ function RootShell() {
     removeProduct: market.removeProduct,
     removeShop: market.removeShop,
     createShopForUser: market.createShopForUser,
+    reloadMarket: market.reload,
     photoUrls: photos.photoUrls,
     loadPhoto: photos.loadPhoto,
     putPhoto: photos.putPhoto,
