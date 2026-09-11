@@ -12284,6 +12284,78 @@ function CancelPlanModal({ tierName, withinWindow, cancelling, onKeep, onConfirm
   );
 }
 
+// The launch-promo "Congratulations" popup on the Plans page — see
+// api/redeem-premium-promo.js and api/premium-promo-status.js. Its own
+// component (rather than inline JSX in PlansScreen) mainly to keep the
+// decorative header — a gold gradient plus a small cluster of real produce
+// photos peeking out from behind the text, so it reads as a CropSwap
+// moment rather than a generic "you win!" banner — from crowding out the
+// actual claim logic. `limit` drives the copy ("1st {limit}" / "{limit-1}
+// others") so raising the redemption cap later (a one-line SQL update to
+// the shared_kv row, see the API files — no redeploy needed) keeps the
+// wording correct on its own.
+function PremiumPromoModal({ open, onClose, onClaim, claiming, limit }) {
+  return (
+    <Modal open={open} onClose={onClose} labelledBy="premium-promo-title">
+      <div className="relative rounded-t-3xl overflow-hidden bg-gradient-to-br from-emerald-800 via-emerald-700 to-emerald-900 px-6 pt-9 pb-10 text-center">
+        {/* Small circular produce photos, tucked into the corners and
+            rotated slightly so they read as a garnish around the message
+            rather than the main event. Sized down on narrow phones (this
+            app's actual audience) rather than hidden outright — negative
+            offsets keep them clear of the centered headline text even at
+            the smallest supported widths. */}
+        <img
+          src={PHOTO("photo-1592924357228-91a4daadcfea")}
+          alt=""
+          className="absolute -left-2 -top-2 w-12 h-12 sm:w-20 sm:h-20 rounded-full object-cover border-4 border-white/90 shadow-lg -rotate-12"
+        />
+        <img
+          src={PHOTO("photo-1558642452-9d2a7deb7f62")}
+          alt=""
+          className="absolute -right-2 top-7 w-10 h-10 sm:w-16 sm:h-16 rounded-full object-cover border-4 border-white/90 shadow-lg rotate-12"
+        />
+        <img
+          src={PHOTO("photo-1506976785307-8732e854ad03")}
+          alt=""
+          className="absolute right-8 -bottom-3 w-10 h-10 sm:w-14 sm:h-14 rounded-full object-cover border-4 border-white/90 shadow-lg rotate-6"
+        />
+        <button onClick={onClose} className="absolute top-3 right-3 z-10 text-white/80 hover:text-white bg-black/10 hover:bg-black/25 rounded-full p-1.5 transition" aria-label="Close">
+          <X size={16} />
+        </button>
+        <div className="relative z-[1] flex flex-col items-center">
+          <span className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-b from-[#F6E7A8] via-[#D4AF37] to-[#A97D1F] text-[#3B2A0E] shadow-lg mb-3">
+            <Gift size={26} />
+          </span>
+          <p id="premium-promo-title" className="text-white font-bold text-2xl" style={displayFont}>
+            Congratulations!
+          </p>
+          <p className="text-emerald-100 text-xs font-semibold uppercase tracking-wide mt-1">A launch gift for early shop owners</p>
+        </div>
+      </div>
+      <div className="p-6 text-center">
+        <p className="text-stone-700 text-sm leading-relaxed mb-5">
+          Congratulations on being one of our 1st {limit} shop owners! We are gifting you and {Math.max(0, limit - 1)} others with a{" "}
+          <span className="font-bold text-stone-900">FREE 12 month Premium subscription</span> as a thank you for checking it out! Just click on the
+          Choose Premium button and it will bypass the normal payment information screens so you can start building your storefront right away! Enjoy!
+        </p>
+        <button
+          onClick={onClaim}
+          disabled={claiming}
+          className="w-full py-3.5 rounded-xl font-bold text-base transition disabled:opacity-60 bg-gradient-to-b from-[#F6E7A8] via-[#D4AF37] to-[#A97D1F] text-[#3B2A0E] shadow-md hover:brightness-105 flex items-center justify-center gap-2"
+        >
+          {claiming ? <Loader2 size={18} className="animate-spin" /> : <Crown size={18} />}
+          {claiming ? "Setting up your Premium account…" : "Choose Premium"}
+        </button>
+        <button onClick={onClose} disabled={claiming} className="w-full mt-2.5 text-xs font-semibold text-stone-400 hover:text-stone-600 py-1.5 disabled:opacity-50">
+          Maybe later
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+const PROMO_POPUP_DISMISSED_KEY = "cs_promo_popup_dismissed";
+
 function PlansScreen({ navigate, route }) {
   const { me, cancelPlan, showToast, requireAuth } = useApp();
   const [billingByPlan, setBillingByPlan] = useState({ basic: "monthly", premium: "monthly" });
@@ -12291,6 +12363,84 @@ function PlansScreen({ navigate, route }) {
   const [cancelling, setCancelling] = useState(false);
   const currentTier = planTier(me);
   const isPaid = currentTier !== "free";
+
+  // Launch promo: fetch whether free Premium slots are still available as
+  // soon as the Plans page opens — no matter how someone got here (the
+  // landing page's Start Selling button, the sidebar's My Plan link,
+  // upgrading from the mock storefront preview, etc.), this is the one
+  // place all of those roads lead through. Only pops up for an account
+  // that doesn't already have a paid plan, and only once per browser
+  // session even if they navigate away and back, so it doesn't nag anyone
+  // who already said "maybe later" or already claimed it.
+  const [promo, setPromo] = useState({ checked: false, available: false, limit: 5 });
+  const [promoOpen, setPromoOpen] = useState(false);
+  const [claimingPromo, setClaimingPromo] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/premium-promo-status");
+        const data = await res.json().catch(() => null);
+        if (cancelled || !data) return;
+        setPromo({ checked: true, available: !!data.available, limit: data.limit || 5 });
+        let dismissed = false;
+        try {
+          dismissed = sessionStorage.getItem(PROMO_POPUP_DISMISSED_KEY) === "1";
+        } catch {
+          // Storage can throw in some contexts (privacy mode, etc.) —
+          // just don't remember the dismissal for this visit if so.
+        }
+        if (data.available && !dismissed && (!me || currentTier === "free")) setPromoOpen(true);
+      } catch {
+        // Silent — the popup simply won't offer to show itself, and the
+        // rest of the Plans page works exactly the same either way.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Deliberately runs once per mount (landing on this screen), not on
+    // every `me`/currentTier change — re-checking every render would fight
+    // with the "once per session" dismissal logic above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const closePromo = () => {
+    setPromoOpen(false);
+    try {
+      sessionStorage.setItem(PROMO_POPUP_DISMISSED_KEY, "1");
+    } catch {
+      // Fine to no-op — worst case it can show again this same visit.
+    }
+  };
+
+  const claimPromo = async () => {
+    if (!me) {
+      requireAuth("claim your free 12-month Premium gift");
+      return;
+    }
+    setClaimingPromo(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data?.session?.access_token;
+      if (!token) throw new Error("no session");
+      const res = await fetch("/api/redeem-premium-promo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || "Couldn't claim this right now");
+      showToast("You're on Premium for the next 12 months — welcome aboard!");
+      setPromoOpen(false);
+      navigate({ screen: "store" });
+    } catch (err) {
+      showToast(err?.message || "Couldn't claim this right now — please try again");
+      if (/offer has ended/i.test(err?.message || "")) setPromo((p) => ({ ...p, available: false }));
+    } finally {
+      setClaimingPromo(false);
+    }
+  };
 
   // The slider on your OWN active plan isn't a preview like the ones on the
   // other cards — it's a real change. Sliding up to annual sends you to
@@ -12309,6 +12459,7 @@ function PlansScreen({ navigate, route }) {
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
+      <PremiumPromoModal open={promoOpen} onClose={closePromo} onClaim={claimPromo} claiming={claimingPromo} limit={promo.limit} />
       <div className="max-w-4xl mx-auto px-4 pt-4">
         <button onClick={() => navigate({ screen: route?.returnTo || "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
           <ArrowLeft size={15} /> Back
@@ -12426,7 +12577,18 @@ function PlansScreen({ navigate, route }) {
                   }}
                   disabled={isCurrent}
                   className={`w-full py-2.5 rounded-xl font-semibold text-sm transition disabled:opacity-40 ${
-                    isPremiumCard ? "bg-gradient-to-r from-amber-400 to-yellow-500 text-amber-950" : "bg-emerald-800 text-white"
+                    isPremiumCard
+                      ? // Real gold, not the old amber/yellow gradient — a
+                        // light-to-dark gold sweep reads as metallic rather
+                        // than flat yellow, with a dark brown label for
+                        // contrast against it.
+                        "bg-gradient-to-b from-[#F6E7A8] via-[#D4AF37] to-[#A97D1F] text-[#3B2A0E] shadow-sm hover:brightness-105"
+                      : p.id === "free"
+                      ? // The exact lime green sampled from the "Crop" half
+                        // of the logo wordmark (#2CD827) — Basic keeps the
+                        // original emerald so only Free and Premium changed.
+                        "bg-[#2CD827] hover:bg-[#25c022] text-white"
+                      : "bg-emerald-800 text-white"
                   }`}
                 >
                   {isCurrent ? "Current plan" : p.id === "free" ? (me ? "Included" : "Sign up free") : `Choose ${p.name}`}
