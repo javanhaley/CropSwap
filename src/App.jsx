@@ -42,7 +42,7 @@ const TOKENS = {
 };
 
 const FONT_LINK_HREF =
-  "https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap";
+  "https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700&family=Playfair+Display:wght@600;700&family=Bebas+Neue&family=Pacifico&family=Oswald:wght@500;600;700&family=Merriweather:wght@400;700&family=Caveat:wght@600;700&family=Montserrat:wght@500;600;700&display=swap";
 
 const displayFont = { fontFamily: "'Fraunces', serif" };
 const bodyFont = { fontFamily: "'Inter', sans-serif" };
@@ -8842,14 +8842,31 @@ function ShopProfileView({ shopId, navigate, focusReviews }) {
           />
         )}
         {(shop.banners || []).length > 0 && (
-          // pt-14 (not p-4): drops the whole stack below the Back / Edit
-          // storefront buttons instead of starting underneath them, so a
-          // banner never gets hidden behind either button no matter which
-          // corner it would otherwise land in.
-          <div className="absolute inset-0 pt-14 px-4 pb-4 flex flex-col items-start gap-2 pointer-events-none">
-            {(shop.banners || []).map((b) => (
-              <ShopBannerRibbon key={b.id} banner={b} />
-            ))}
+          // Each banner is placed with the same x/y/w/h percentages the
+          // vendor dragged it to in the Banners tab's preview — see
+          // bannerGeometry. pointer-events-none: purely decorative here,
+          // and it must never intercept taps meant for the Back / Edit
+          // storefront buttons layered above it.
+          <div className="absolute inset-0 pointer-events-none">
+            {(shop.banners || []).map((b, i) => {
+              const g = bannerGeometry(b, i);
+              const sized = g.w != null || g.h != null;
+              return (
+                <div
+                  key={b.id}
+                  className="absolute"
+                  style={{
+                    left: `${g.x}%`,
+                    top: `${g.y}%`,
+                    width: g.w != null ? `${g.w}%` : undefined,
+                    height: g.h != null ? `${g.h}%` : undefined,
+                    maxWidth: "calc(100% - 1.5rem)",
+                  }}
+                >
+                  <ShopBannerRibbon banner={b} sized={sized} />
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -10016,6 +10033,42 @@ const BANNER_TEXT_SIZES = [
 ];
 const bannerSizePx = (id) => (BANNER_TEXT_SIZES.find((s) => s.id === id) || BANNER_TEXT_SIZES[1]).px;
 
+// Ten fonts a vendor can put their banner text in, loaded via FONT_LINK_HREF
+// above. `preview` is a slightly-nudged font-family used just for the little
+// label on the picker button itself so it renders in its own face even
+// before a banner exists to show it on.
+const BANNER_FONTS = [
+  { id: "inter", label: "Inter", stack: "'Inter', sans-serif" },
+  { id: "fraunces", label: "Fraunces", stack: "'Fraunces', serif" },
+  { id: "poppins", label: "Poppins", stack: "'Poppins', sans-serif" },
+  { id: "playfair", label: "Playfair Display", stack: "'Playfair Display', serif" },
+  { id: "bebas", label: "Bebas Neue", stack: "'Bebas Neue', sans-serif" },
+  { id: "pacifico", label: "Pacifico", stack: "'Pacifico', cursive" },
+  { id: "oswald", label: "Oswald", stack: "'Oswald', sans-serif" },
+  { id: "merriweather", label: "Merriweather", stack: "'Merriweather', serif" },
+  { id: "caveat", label: "Caveat", stack: "'Caveat', cursive" },
+  { id: "montserrat", label: "Montserrat", stack: "'Montserrat', sans-serif" },
+];
+const bannerFontInfo = (id) => BANNER_FONTS.find((f) => f.id === id) || BANNER_FONTS[0];
+// Banners saved before the font picker existed only ever had the `serif`
+// on/off toggle — keep honoring it for any banner that predates `font`.
+const bannerFontFamily = (banner) => (banner.font ? bannerFontInfo(banner.font).stack : banner.serif ? "'Fraunces', serif" : "'Inter', sans-serif");
+
+// Drag/resize position + size, stored as percentages of the banner area
+// (not pixels) so a spot picked in the small editor preview lands in the
+// same relative spot on the full-width live storefront banner, whatever
+// size that turns out to be. Banners saved before drag/resize existed have
+// no x/y/w/h at all — bannerGeometry gives them a sensible stacked default
+// (same top-left-ish layout the old flexbox stack used to produce) rather
+// than requiring a data migration.
+function bannerGeometry(banner, index) {
+  const x = typeof banner.x === "number" ? banner.x : 4;
+  const y = typeof banner.y === "number" ? banner.y : clamp(6 + index * 24, 0, 82);
+  const w = typeof banner.w === "number" ? banner.w : null; // null = size to fit the text
+  const h = typeof banner.h === "number" ? banner.h : null; // null = size to fit the text
+  return { x, y, w, h };
+}
+
 // A wavy/scalloped bottom edge, built as a zigzag rather than a true curve —
 // clip-path's path() form needs fixed pixel coordinates, which can't track a
 // banner that resizes with its text, so a percentage-based polygon is what
@@ -10049,25 +10102,28 @@ const BANNER_SHAPES = [
 ];
 const bannerShapeInfo = (id) => BANNER_SHAPES.find((s) => s.id === id) || BANNER_SHAPES[0];
 
-function ShopBannerRibbon({ banner, className = "" }) {
+// `sized`: true once a banner has an explicit dragged width and/or height —
+// then the ribbon fills that box (flex-centered text, wrapping instead of
+// truncating) instead of shrinking to fit its text like an unsized one does.
+function ShopBannerRibbon({ banner, className = "", sized = false }) {
   if (!banner || !banner.text) return null;
   const shape = bannerShapeInfo(banner.shape);
   return (
     <span
-      className={`inline-block shadow-sm max-w-full truncate ${shape.rounded ? "rounded" : ""} ${className}`}
+      className={`shadow-sm max-w-full ${sized ? "flex items-center justify-center text-center break-words leading-tight w-full h-full" : "inline-block truncate"} ${shape.rounded ? "rounded" : ""} ${className}`}
       style={{
         background: banner.bg || "#047857",
         color: banner.color || "#ffffff",
         fontSize: `${bannerSizePx(banner.size)}px`,
         fontWeight: banner.bold ? 700 : 500,
         fontStyle: banner.italic ? "italic" : "normal",
-        fontFamily: banner.serif ? "'Fraunces', serif" : "'Inter', sans-serif",
+        fontFamily: bannerFontFamily(banner),
         letterSpacing: banner.wide ? "0.08em" : "normal",
         clipPath: shape.clipPath || undefined,
         paddingLeft: shape.padX,
         paddingRight: shape.padX,
-        paddingTop: "0.25rem",
-        paddingBottom: shape.padBottom || "0.25rem",
+        paddingTop: sized ? "0.4rem" : "0.25rem",
+        paddingBottom: sized ? "0.4rem" : shape.padBottom || "0.25rem",
       }}
     >
       {banner.text}
@@ -10075,43 +10131,143 @@ function ShopBannerRibbon({ banner, className = "" }) {
   );
 }
 
+// The editor's live preview: every banner is free-floating (drag anywhere,
+// resize by its corner handle) instead of the old fixed top-to-bottom
+// stack. Position/size only get written back to the shop (via editBanner)
+// once a drag or resize ends — while one is in progress it's tracked in
+// local `liveGeom` state so hauling a banner around doesn't fire a save on
+// every pixel of movement.
+function BannerCanvas({ shop, banners, editBanner, activeId, setActiveId }) {
+  const containerRef = useRef(null);
+  const [liveGeom, setLiveGeom] = useState({});
+  const [busyId, setBusyId] = useState(null);
+
+  const startDrag = (e, banner, index) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setActiveId(banner.id);
+    const start = bannerGeometry(banner, index);
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    setBusyId(banner.id);
+
+    const onMove = (ev) => {
+      const nx = clamp(start.x + ((ev.clientX - startClientX) / rect.width) * 100, 0, 94);
+      const ny = clamp(start.y + ((ev.clientY - startClientY) / rect.height) * 100, 0, 88);
+      setLiveGeom((m) => ({ ...m, [banner.id]: { ...start, x: nx, y: ny } }));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      setBusyId(null);
+      setLiveGeom((m) => {
+        const final = m[banner.id];
+        if (final) editBanner(banner.id, { x: final.x, y: final.y });
+        return m;
+      });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const startResize = (e, banner, index) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = containerRef.current?.getBoundingClientRect();
+    const boxEl = document.getElementById(`banner-box-${banner.id}`);
+    if (!rect) return;
+    const start = bannerGeometry(banner, index);
+    const startW = start.w != null ? start.w : boxEl ? (boxEl.offsetWidth / rect.width) * 100 : 34;
+    const startH = start.h != null ? start.h : boxEl ? (boxEl.offsetHeight / rect.height) * 100 : 18;
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    setActiveId(banner.id);
+    setBusyId(banner.id);
+    setLiveGeom((m) => ({ ...m, [banner.id]: { ...start, w: startW, h: startH } }));
+
+    const onMove = (ev) => {
+      const nw = clamp(startW + ((ev.clientX - startClientX) / rect.width) * 100, 14, 94);
+      const nh = clamp(startH + ((ev.clientY - startClientY) / rect.height) * 100, 10, 88);
+      setLiveGeom((m) => ({ ...m, [banner.id]: { ...m[banner.id], w: nw, h: nh } }));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      setBusyId(null);
+      setLiveGeom((m) => {
+        const final = m[banner.id];
+        if (final) editBanner(banner.id, { w: final.w, h: final.h });
+        return m;
+      });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  return (
+    <div ref={containerRef} className="relative h-28 rounded-xl overflow-hidden border border-stone-200 touch-none">
+      <BannerScene scene={shop.bannerScene || defaultScene(shop.id)} />
+      {banners.length === 0 && (
+        <span className="absolute top-3 left-3 cs-t11 text-stone-600 bg-white/80 px-2 py-1 rounded">No banners yet</span>
+      )}
+      {banners.map((b, i) => {
+        const g = liveGeom[b.id] || bannerGeometry(b, i);
+        const sized = g.w != null || g.h != null;
+        return (
+          <div
+            key={b.id}
+            id={`banner-box-${b.id}`}
+            onPointerDown={(e) => startDrag(e, b, i)}
+            className={`absolute select-none ${sized ? "" : "inline-block"} ${busyId === b.id ? "cursor-grabbing z-20" : "cursor-grab z-10"} ${activeId === b.id ? "ring-2 ring-emerald-600 ring-offset-1 rounded" : ""}`}
+            style={{ left: `${g.x}%`, top: `${g.y}%`, width: g.w != null ? `${g.w}%` : undefined, height: g.h != null ? `${g.h}%` : undefined, maxWidth: "94%" }}
+          >
+            <ShopBannerRibbon banner={b} sized={sized} className="pointer-events-none" />
+            <span
+              onPointerDown={(e) => startResize(e, b, i)}
+              title="Drag to resize"
+              className="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-full bg-white border-2 border-emerald-700 shadow cursor-nwse-resize"
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BannersTab({ shop }) {
   const { updateShop } = useApp();
   const banners = shop.banners || [];
+  const [activeId, setActiveId] = useState(null);
 
   const patch = (next) => updateShop(shop.id, { banners: next });
-  const addBanner = (preset) =>
-    patch([
-      ...banners,
-      {
-        id: uid("bn"),
-        text: preset ? preset.label : "Your message here",
-        bg: preset ? preset.bg : "#047857",
-        color: preset ? preset.color : "#ffffff",
-        size: "md",
-        bold: true,
-        italic: false,
-        serif: false,
-        wide: false,
-        shape: "classic",
-      },
-    ]);
+  const addBanner = (preset) => {
+    const fresh = {
+      id: uid("bn"),
+      text: preset ? preset.label : "Your message here",
+      bg: preset ? preset.bg : "#047857",
+      color: preset ? preset.color : "#ffffff",
+      size: "md",
+      bold: true,
+      italic: false,
+      font: "inter",
+      wide: false,
+      shape: "classic",
+    };
+    patch([...banners, fresh]);
+    setActiveId(fresh.id);
+  };
   const editBanner = (id, part) => patch(banners.map((b) => (b.id === id ? { ...b, ...part } : b)));
   const removeBanner = (id) => patch(banners.filter((b) => b.id !== id));
 
   return (
     <div>
-      <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Preview</p>
-      <div className="relative h-28 rounded-xl overflow-hidden border border-stone-200 mb-5">
-        <BannerScene scene={shop.bannerScene || defaultScene(shop.id)} />
-        <div className="absolute inset-0 p-3 flex flex-col items-start gap-1.5">
-          {banners.length === 0 ? (
-            <span className="cs-t11 text-stone-600 bg-white/80 px-2 py-1 rounded">No banners yet</span>
-          ) : (
-            banners.map((b) => <ShopBannerRibbon key={b.id} banner={b} />)
-          )}
-        </div>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Preview — drag a banner to move it, drag its dot to resize</p>
       </div>
+      <BannerCanvas shop={shop} banners={banners} editBanner={editBanner} activeId={activeId} setActiveId={setActiveId} />
+      <p className="cs-t10 text-stone-400 mt-1.5 mb-5">Heads up: the Back / Edit storefront buttons float over the top corners on the live page, so keep banners clear of those if you drag one up there.</p>
 
       <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Add a banner</p>
       <div className="flex flex-wrap gap-2 mb-5">
@@ -10133,7 +10289,11 @@ function BannersTab({ shop }) {
       <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Your banners ({banners.length})</p>
       <div className="flex flex-col gap-3">
         {banners.map((b) => (
-          <div key={b.id} className="border border-stone-200 rounded-xl p-3">
+          <div
+            key={b.id}
+            onClick={() => setActiveId(b.id)}
+            className={`border rounded-xl p-3 transition ${activeId === b.id ? "border-emerald-600 ring-1 ring-emerald-600" : "border-stone-200"}`}
+          >
             <div className="flex items-start justify-between gap-2 mb-2.5">
               <ShopBannerRibbon banner={b} />
               <button onClick={() => removeBanner(b.id)} className="text-stone-300 hover:text-rose-600 shrink-0 p-1" aria-label="Remove banner">
@@ -10185,7 +10345,6 @@ function BannersTab({ shop }) {
               {[
                 { key: "bold", label: "Bold" },
                 { key: "italic", label: "Italic" },
-                { key: "serif", label: "Serif" },
                 { key: "wide", label: "Spaced" },
               ].map((opt) => (
                 <button
@@ -10195,6 +10354,21 @@ function BannersTab({ shop }) {
                   aria-pressed={!!b[opt.key]}
                 >
                   {opt.label}
+                </button>
+              ))}
+            </div>
+
+            <p className="cs-t11 font-bold text-stone-400 uppercase mt-3 mb-1.5">Font</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {BANNER_FONTS.map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => editBanner(b.id, { font: f.id })}
+                  className={`px-2.5 py-1.5 rounded-lg cs-t11 font-semibold border truncate transition ${(b.font || "inter") === f.id ? "bg-emerald-800 text-white border-emerald-800" : "border-stone-200 text-stone-700"}`}
+                  style={{ fontFamily: f.stack }}
+                  aria-pressed={(b.font || "inter") === f.id}
+                >
+                  {f.label}
                 </button>
               ))}
             </div>
@@ -10217,6 +10391,15 @@ function BannersTab({ shop }) {
                 </button>
               ))}
             </div>
+
+            {(b.w != null || b.h != null) && (
+              <button
+                onClick={() => editBanner(b.id, { w: null, h: null })}
+                className="mt-3 cs-t11 font-semibold text-emerald-800 underline"
+              >
+                Reset to auto size
+              </button>
+            )}
           </div>
         ))}
         {banners.length === 0 && <p className="text-sm text-stone-400">Pick a preset above, or start blank.</p>}
