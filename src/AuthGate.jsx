@@ -90,6 +90,23 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
         if (err) throw err;
         if (data.session) {
           onSignedIn?.();
+        } else if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+          // Supabase's own anti-enumeration behavior for signUp(): calling it
+          // again for an email that already has a CONFIRMED account doesn't
+          // error and doesn't send anything — it fakes the exact same "check
+          // your email for a code" response as a real new signup, so nobody
+          // can use this screen to probe which emails are registered. Without
+          // this check, that person lands on the verify-code screen, waits
+          // for an email that will never come, hits Resend (which also
+          // silently does nothing for the same reason), and is stuck. An
+          // empty `identities` array is the documented client-side signal
+          // that this happened — real new signups always come back with at
+          // least one identity. Routing them to Sign In instead is standard
+          // practice for signup specifically (unlike the forgot-password
+          // flow and check-email-locked.js, which deliberately stay silent).
+          setMode("signin");
+          setPassword("");
+          setNotice("Looks like you already have an account with this email — sign in instead.");
         } else {
           setMode("signup-verify");
           setNotice(`We sent a code to ${email}. Enter it below to finish creating your account.`);
@@ -282,7 +299,7 @@ export default function AuthGate({ onSignedIn, reason, onCancel, initialMode = "
         ) : reason ? (
           <p className="text-center text-stone-500 mb-7 text-sm">Create a free account to {reason} — browsing is always open, this is just for that.</p>
         ) : (
-          <p className="text-center text-stone-500 mb-7 text-sm">A hyper-local, nationwide hub connecting growers and buyers.</p>
+          <p className="text-center text-stone-500 mb-7 text-sm">Discover Local. Buy, Sell &amp; Swap.</p>
         )}
 
         {onCancel && isMainFlow && (
