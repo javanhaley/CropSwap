@@ -24041,24 +24041,51 @@ function VendorDashboard({ navigate }) {
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
       <div className="max-w-5xl mx-auto px-4 pt-4">
         {isDemo && (
-          <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-2xl px-4 py-3 mb-4">
+          // Someone already on Premium browsing this before setting up a
+          // real shop doesn't need to hear "go Premium" — they already
+          // have it, they just haven't used it yet. Pointing them at My
+          // Store (where creating a real shop actually lives) is the
+          // correct next step either way; only the wording and the "go
+          // Premium" upsell itself differ by plan.
+          <div
+            className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 mb-4 border ${
+              premium ? "bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200" : "bg-gradient-to-r from-amber-50 to-yellow-50 border-amber-200"
+            }`}
+          >
             <div className="flex items-center gap-2.5 min-w-0">
-              <span className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0 shadow-sm">
-                <Crown size={16} />
+              <span
+                className={`w-9 h-9 rounded-full text-white flex items-center justify-center shrink-0 shadow-sm bg-gradient-to-br ${
+                  premium ? "from-emerald-500 to-teal-500" : "from-amber-400 to-yellow-500"
+                }`}
+              >
+                {premium ? <Store size={16} /> : <Crown size={16} />}
               </span>
               <div className="min-w-0">
                 <p className="text-sm font-bold text-stone-900">This is a sample dashboard</p>
-                <p className="text-xs text-amber-800">
-                  Start selling and{" "}
-                  <button onClick={() => navigate({ screen: "plans" })} className="font-bold underline underline-offset-2">
-                    go Premium
-                  </button>{" "}
-                  to unlock this for your own shop.
-                </p>
+                {premium ? (
+                  <p className="text-xs text-emerald-800">
+                    You're already on Premium — head to{" "}
+                    <button onClick={() => navigate({ screen: "store" })} className="font-bold underline underline-offset-2">
+                      My Store
+                    </button>{" "}
+                    to set up your real storefront and put these tools to work.
+                  </p>
+                ) : (
+                  <p className="text-xs text-amber-800">
+                    Start selling and{" "}
+                    <button onClick={() => navigate({ screen: "plans" })} className="font-bold underline underline-offset-2">
+                      go Premium
+                    </button>{" "}
+                    to unlock this for your own shop.
+                  </p>
+                )}
               </div>
             </div>
-            <button onClick={() => navigate({ screen: "plans" })} className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition">
-              Start selling
+            <button
+              onClick={() => navigate({ screen: premium ? "store" : "plans" })}
+              className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition"
+            >
+              {premium ? "Go to My Store" : "Start selling"}
             </button>
           </div>
         )}
@@ -24073,7 +24100,8 @@ function VendorDashboard({ navigate }) {
             <div>
               <h1 className="text-2xl font-bold text-white" style={displayFont}>{shop.name} dashboard</h1>
               <p className="text-emerald-50/90 text-sm mt-0.5">
-                {shopProducts.length} active listing{shopProducts.length === 1 ? "" : "s"} · {isDemo ? "example dashboard — see what Premium unlocks" : "real activity, not simulated"}
+                {shopProducts.length} active listing{shopProducts.length === 1 ? "" : "s"} ·{" "}
+                {isDemo ? (premium ? "example dashboard — set up My Store to make it real" : "example dashboard — see what Premium unlocks") : "real activity, not simulated"}
               </p>
             </div>
             {premium ? (
@@ -24632,7 +24660,14 @@ function VendorDashboard({ navigate }) {
           <p className="cs-t11 text-stone-400 mb-3">
             {isDemo ? 128 : mailing.list.length} subscriber{(isDemo ? 128 : mailing.list.length) === 1 ? "" : "s"} — anyone who messages you gets added automatically. Messages sent to all deliver as an in-app message + notification, not an outside email.
           </p>
-          <ToolLock locked={!premium} navigate={navigate} label="Premium — send mass messages">
+          {/* Demo mode never locks anything, same rule as the KPI tiles
+              above (see the `locked={!premium && !isDemo}` on DashStat) —
+              this is fake data on a fake shop either way, so there's
+              nothing to protect by dimming it out here. Locking it was
+              the bug behind seeing "Premium — send mass messages" on the
+              sample dashboard even for an account that already IS
+              Premium and simply hasn't set up a real shop yet. */}
+          <ToolLock locked={!premium && !isDemo} navigate={navigate} label="Premium — send mass messages">
             <MassMessageComposer me={me} shop={shop} subscribers={mailing.list} onSent={mailing.reload} showToast={showToast} />
             {mailing.list.length > 0 && (
               <div className="mt-3 pt-3 border-t border-stone-100 space-y-1 max-h-40 overflow-y-auto">
