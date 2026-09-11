@@ -12290,11 +12290,13 @@ function CancelPlanModal({ tierName, withinWindow, cancelling, onKeep, onConfirm
 // decorative header — a gold gradient plus a small cluster of real produce
 // photos peeking out from behind the text, so it reads as a CropSwap
 // moment rather than a generic "you win!" banner — from crowding out the
-// actual claim logic. `limit` drives the copy ("1st {limit}" / "{limit-1}
-// others") so raising the redemption cap later (a one-line SQL update to
-// the shared_kv row, see the API files — no redeploy needed) keeps the
-// wording correct on its own.
-function PremiumPromoModal({ open, onClose, onClaim, claiming, limit }) {
+// actual claim logic. The "1st 5 shop owners" / "4 others" copy is
+// deliberately a fixed string, not tied to how many people have actually
+// claimed it — the promo itself has no real headcount cap (see
+// api/redeem-premium-promo.js) and keeps granting free Premium to everyone
+// who clicks until it's turned off entirely, so the wording never needs to
+// track a running count.
+function PremiumPromoModal({ open, onClose, onClaim, claiming }) {
   return (
     <Modal open={open} onClose={onClose} labelledBy="premium-promo-title">
       <div className="relative rounded-t-3xl overflow-hidden bg-gradient-to-br from-emerald-800 via-emerald-700 to-emerald-900 px-6 pt-9 pb-10 text-center">
@@ -12334,7 +12336,7 @@ function PremiumPromoModal({ open, onClose, onClaim, claiming, limit }) {
       </div>
       <div className="p-6 text-center">
         <p className="text-stone-700 text-sm leading-relaxed mb-5">
-          Congratulations on being one of our 1st {limit} shop owners! We are gifting you and {Math.max(0, limit - 1)} others with a{" "}
+          Congratulations on being one of our 1st 5 shop owners! We are gifting you and 4 others with a{" "}
           <span className="font-bold text-stone-900">FREE 12 month Premium subscription</span> as a thank you for checking it out! Just click on the
           Choose Premium button and it will bypass the normal payment information screens so you can start building your storefront right away! Enjoy!
         </p>
@@ -12355,25 +12357,32 @@ function PremiumPromoModal({ open, onClose, onClaim, claiming, limit }) {
 }
 
 function PlansScreen({ navigate, route }) {
-  const { me, cancelPlan, showToast, requireAuth } = useApp();
+  const { me, cancelPlan, showToast, requireAuth, refreshMe } = useApp();
   const [billingByPlan, setBillingByPlan] = useState({ basic: "monthly", premium: "monthly" });
   const [cancelConfirm, setCancelConfirm] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const currentTier = planTier(me);
   const isPaid = currentTier !== "free";
 
-  // Launch promo: fetch whether free Premium slots are still available as
+  // Launch promo: fetch whether free-Premium signups are still turned on as
   // soon as the Plans page opens — no matter how someone got here (the
   // landing page's Start Selling button, the sidebar's My Plan link,
   // upgrading from the mock storefront preview, etc.), this is the one
   // place all of those roads lead through. Deliberately shows every single
-  // time this screen mounts while slots remain — this is the whole point
-  // of the promo (getting the first 5 shop owners to claim it), so
-  // "maybe later" only dismisses this one viewing, not the offer itself.
-  // Someone who already claimed it moves off currentTier === "free" the
-  // moment the grant lands, so this naturally stops popping for them
+  // time this screen mounts while it's on — this is the whole point of the
+  // promo, so "maybe later" only dismisses this one viewing, not the offer
+  // itself. Someone who already claimed it moves off currentTier === "free"
+  // the moment the grant lands, so this naturally stops popping for them
   // without any separate "already claimed" check needed.
-  const [promo, setPromo] = useState({ checked: false, available: false, limit: 5 });
+  //
+  // The popup's own copy is intentionally fixed at "1st 5 shop owners" (see
+  // PremiumPromoModal) regardless of how many people have actually claimed
+  // it — the promo runs with no real headcount limit until it's turned off
+  // entirely (the `enabled` flag on the shared_kv row keyed
+  // "promo:free_premium_launch", flippable with one SQL update any time,
+  // no redeploy needed), so the wording never has to be revisited as more
+  // people sign up.
+  const [promo, setPromo] = useState({ checked: false, available: false });
   const [promoOpen, setPromoOpen] = useState(false);
   const [claimingPromo, setClaimingPromo] = useState(false);
 
@@ -12384,7 +12393,7 @@ function PlansScreen({ navigate, route }) {
         const res = await fetch("/api/premium-promo-status");
         const data = await res.json().catch(() => null);
         if (cancelled || !data) return;
-        setPromo({ checked: true, available: !!data.available, limit: data.limit || 5 });
+        setPromo({ checked: true, available: !!data.available });
         if (data.available && (!me || currentTier === "free")) setPromoOpen(true);
       } catch {
         // Silent — the popup simply won't offer to show itself, and the
@@ -12417,6 +12426,15 @@ function PlansScreen({ navigate, route }) {
       });
       const payload = await res.json().catch(() => null);
       if (!res.ok) throw new Error(payload?.error || "Couldn't claim this right now");
+      // The grant is already live in the database at this point — pull it
+      // down into this tab's own `me` right away rather than waiting for a
+      // reload. Without this, the account IS Premium server-side but every
+      // screen gating a Premium feature (the Dashboard, Bulk Messaging,
+      // Sponsored Ads, the Plans page's own "Current plan" highlight) keeps
+      // reading this tab's stale pre-claim `me.plan` until something else
+      // happens to refresh it — which is exactly what looked like the promo
+      // "not actually unlocking anything."
+      await refreshMe();
       showToast("You're on Premium for the next 12 months — welcome aboard!");
       setPromoOpen(false);
       navigate({ screen: "store" });
@@ -12445,7 +12463,7 @@ function PlansScreen({ navigate, route }) {
 
   return (
     <div className="flex-1 overflow-y-auto pb-24 md:pb-8">
-      <PremiumPromoModal open={promoOpen} onClose={closePromo} onClaim={claimPromo} claiming={claimingPromo} limit={promo.limit} />
+      <PremiumPromoModal open={promoOpen} onClose={closePromo} onClaim={claimPromo} claiming={claimingPromo} />
       <div className="max-w-4xl mx-auto px-4 pt-4">
         <button onClick={() => navigate({ screen: route?.returnTo || "explore" })} className="flex items-center gap-1.5 text-sm font-semibold text-stone-600 mb-4">
           <ArrowLeft size={15} /> Back
@@ -26409,6 +26427,7 @@ function RootShell() {
     me,
     requireAuth,
     updateMe,
+    refreshMe,
     signOut,
     shops: market.shops,
     products: market.products,

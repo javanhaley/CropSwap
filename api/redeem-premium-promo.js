@@ -3,11 +3,22 @@
 // The launch promo behind the Plans page's "Congratulations" popup: grants
 // a full 12-month Premium plan directly, with zero Stripe involvement — no
 // checkout session, no card. Real checkout has too much friction for early
-// signups right now, so this is the deliberate bypass for the first
-// several shop owners. Limited to a set number of redemptions, tracked in
-// shared_kv (see PROMO_KEY below) rather than hardcoded, so the limit can
-// be raised later with a single SQL update — no code change or redeploy
-// needed to open up a few more free slots.
+// signups right now, so this is the deliberate bypass while that's true.
+//
+// Deliberately has NO headcount cap — every signed-in account that clicks
+// Choose Premium gets the grant, whether that's 5 people or 500 in a
+// single afternoon. The popup's own copy still says "1st 5 shop owners"
+// (see PremiumPromoModal in src/App.jsx) because that's the framing that
+// was asked for, but it's just copy now, not an enforced limit — don't
+// wire a count-based check back in without updating that comment too.
+// The only real on/off switch is the `enabled` flag on the shared_kv row
+// below (PROMO_KEY), flippable with a single SQL update any time the
+// promo should stop — no code change or redeploy needed:
+//   update shared_kv set value = jsonb_set(value::jsonb, '{enabled}', 'false')::text where key = 'promo:free_premium_launch';
+// (or, if the row doesn't exist yet: insert into shared_kv (key, value) values ('promo:free_premium_launch', '{"enabled":false,"redeemedUserIds":[]}'))
+// `redeemedUserIds` is kept purely as a record of who's claimed it (handy
+// to glance at, and it makes a double-click/reopen idempotent) — it is
+// never compared against a limit.
 //
 // Writes plan.manualGrant: true, the same marker admin-grant-plan.js uses,
 // so entitlement.js's Stripe-derived reconciliation leaves this alone
@@ -18,7 +29,6 @@
 import { getSupabaseAdmin, getUserFromRequest, patchProfile, patchShopBillingStatusForUser } from "./_supabaseAdmin.js";
 
 const PROMO_KEY = "promo:free_premium_launch";
-const DEFAULT_LIMIT = 5;
 const GRANT_DAYS = 365;
 
 export async function POST(request) {
@@ -36,25 +46,30 @@ export async function POST(request) {
     const { data: row, error: rowErr } = await admin.from("shared_kv").select("value").eq("key", PROMO_KEY).maybeSingle();
     if (rowErr) throw rowErr;
 
-    let state = { limit: DEFAULT_LIMIT, redeemedUserIds: [] };
+    let state = { enabled: true, redeemedUserIds: [] };
     if (row?.value) {
       try {
         const parsed = JSON.parse(row.value);
-        if (parsed && typeof parsed === "object") state = { limit: DEFAULT_LIMIT, redeemedUserIds: [], ...parsed };
+        if (parsed && typeof parsed === "object") state = { enabled: true, redeemedUserIds: [], ...parsed };
       } catch {
         // Corrupt row — start fresh rather than fail the whole request.
       }
     }
     if (!Array.isArray(state.redeemedUserIds)) state.redeemedUserIds = [];
 
-    // Already redeemed — idempotent, just re-affirm the grant rather than
-    // erroring (covers a double-click, or someone reopening the popup
-    // after already claiming it).
+    // The only gate left: has this been turned off on purpose? Absent or
+    // anything other than `false` means it's still on — a missing row (the
+    // very first redemption ever) defaults to enabled so the promo works
+    // out of the box with nothing to seed first.
+    if (state.enabled === false) {
+      return Response.json({ error: "This offer has ended — free Premium signups are closed for now.", available: false }, { status: 409 });
+    }
+
+    // Idempotent — a double-click or someone reopening the popup after
+    // already claiming it just re-affirms the same grant rather than
+    // erroring or double-recording them.
     const alreadyRedeemed = state.redeemedUserIds.includes(user.id);
     if (!alreadyRedeemed) {
-      if (state.redeemedUserIds.length >= state.limit) {
-        return Response.json({ error: "This offer has ended — all the free spots have been claimed.", available: false }, { status: 409 });
-      }
       state.redeemedUserIds.push(user.id);
       const { error: upsertErr } = await admin
         .from("shared_kv")
