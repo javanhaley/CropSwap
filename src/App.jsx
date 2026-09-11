@@ -12354,8 +12354,6 @@ function PremiumPromoModal({ open, onClose, onClaim, claiming, limit }) {
   );
 }
 
-const PROMO_POPUP_DISMISSED_KEY = "cs_promo_popup_dismissed";
-
 function PlansScreen({ navigate, route }) {
   const { me, cancelPlan, showToast, requireAuth } = useApp();
   const [billingByPlan, setBillingByPlan] = useState({ basic: "monthly", premium: "monthly" });
@@ -12368,10 +12366,13 @@ function PlansScreen({ navigate, route }) {
   // soon as the Plans page opens — no matter how someone got here (the
   // landing page's Start Selling button, the sidebar's My Plan link,
   // upgrading from the mock storefront preview, etc.), this is the one
-  // place all of those roads lead through. Only pops up for an account
-  // that doesn't already have a paid plan, and only once per browser
-  // session even if they navigate away and back, so it doesn't nag anyone
-  // who already said "maybe later" or already claimed it.
+  // place all of those roads lead through. Deliberately shows every single
+  // time this screen mounts while slots remain — this is the whole point
+  // of the promo (getting the first 5 shop owners to claim it), so
+  // "maybe later" only dismisses this one viewing, not the offer itself.
+  // Someone who already claimed it moves off currentTier === "free" the
+  // moment the grant lands, so this naturally stops popping for them
+  // without any separate "already claimed" check needed.
   const [promo, setPromo] = useState({ checked: false, available: false, limit: 5 });
   const [promoOpen, setPromoOpen] = useState(false);
   const [claimingPromo, setClaimingPromo] = useState(false);
@@ -12384,14 +12385,7 @@ function PlansScreen({ navigate, route }) {
         const data = await res.json().catch(() => null);
         if (cancelled || !data) return;
         setPromo({ checked: true, available: !!data.available, limit: data.limit || 5 });
-        let dismissed = false;
-        try {
-          dismissed = sessionStorage.getItem(PROMO_POPUP_DISMISSED_KEY) === "1";
-        } catch {
-          // Storage can throw in some contexts (privacy mode, etc.) —
-          // just don't remember the dismissal for this visit if so.
-        }
-        if (data.available && !dismissed && (!me || currentTier === "free")) setPromoOpen(true);
+        if (data.available && (!me || currentTier === "free")) setPromoOpen(true);
       } catch {
         // Silent — the popup simply won't offer to show itself, and the
         // rest of the Plans page works exactly the same either way.
@@ -12401,19 +12395,11 @@ function PlansScreen({ navigate, route }) {
       cancelled = true;
     };
     // Deliberately runs once per mount (landing on this screen), not on
-    // every `me`/currentTier change — re-checking every render would fight
-    // with the "once per session" dismissal logic above.
+    // every `me`/currentTier change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const closePromo = () => {
-    setPromoOpen(false);
-    try {
-      sessionStorage.setItem(PROMO_POPUP_DISMISSED_KEY, "1");
-    } catch {
-      // Fine to no-op — worst case it can show again this same visit.
-    }
-  };
+  const closePromo = () => setPromoOpen(false);
 
   const claimPromo = async () => {
     if (!me) {
@@ -24028,7 +24014,7 @@ function VendorDashboard({ navigate }) {
         icon={TrendingUp}
         title="No storefront yet"
         body="Your dashboard lights up once you have a storefront."
-        action={<button onClick={() => navigate({ screen: "store" })} className="text-sm font-semibold text-emerald-800">Start selling</button>}
+        action={<button onClick={() => navigate({ screen: "plans" })} className="text-sm font-semibold text-emerald-800">Start selling</button>}
       />
     );
   }
@@ -24053,7 +24039,7 @@ function VendorDashboard({ navigate }) {
                 </p>
               </div>
             </div>
-            <button onClick={() => navigate({ screen: "store" })} className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition">
+            <button onClick={() => navigate({ screen: "plans" })} className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition">
               Start selling
             </button>
           </div>
@@ -26177,6 +26163,62 @@ function RootShell() {
     },
     [me, requireAuth, checkAccountLock]
   );
+
+  // Browser back/forward integration. Without this, `navigate()` only ever
+  // changes React's own `route` state — it never touches the browser's
+  // actual history — so the very first Back press has nothing of ours to
+  // land on and instead walks straight off the site to whatever real page
+  // came before it (a Google results page, a bookmark, wherever), even
+  // after clicking through several screens inside CropSwap first. This
+  // pushes a real history entry on every route change (both from
+  // `navigate` above and the one other direct `setRoute` call, in the
+  // post-signup redirect below — watching `route` itself rather than
+  // wrapping every caller catches both), so Back/Forward move between
+  // CropSwap's own screens first and only ever leave the site once
+  // there's truly nothing earlier of ours left to return to. The address
+  // bar's path is deliberately never touched — this app has no per-screen
+  // URLs — only history's own state object carries the route, so none of
+  // the URL-scrubbing effects elsewhere (auth callback, checkout return,
+  // admin flag, affiliate invite) are affected.
+  const isPoppingRouteRef = useRef(false);
+  const historySeededRef = useRef(false);
+  useEffect(() => {
+    if (!historySeededRef.current) {
+      // First render: stamp the entry the browser is already sitting on
+      // with the initial route, so a Forward press back to it later
+      // restores a real screen instead of landing on a blank state.
+      try {
+        window.history.replaceState({ csRoute: route }, "", window.location.pathname);
+      } catch {}
+      historySeededRef.current = true;
+      return;
+    }
+    if (isPoppingRouteRef.current) {
+      // This particular route change came FROM a popstate (the user just
+      // pressed Back/Forward) — the browser already has an entry for it,
+      // so pushing another here would double up the stack and take two
+      // presses to undo one.
+      isPoppingRouteRef.current = false;
+      return;
+    }
+    try {
+      window.history.pushState({ csRoute: route }, "", window.location.pathname);
+    } catch {}
+  }, [route]);
+  useEffect(() => {
+    const onPopState = (e) => {
+      if (e.state && e.state.csRoute) {
+        isPoppingRouteRef.current = true;
+        setRoute(e.state.csRoute);
+      }
+      // No csRoute on the entry means the browser has walked back past
+      // every screen this app ever pushed — there's genuinely nothing of
+      // ours left to return to, so leaving the site is the right call.
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
   const showToast = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
