@@ -130,15 +130,113 @@ const SPECIAL_PRESETS = [
   { id: "flash_sale", label: "Flash Sale", classes: "bg-rose-700 text-white" },
 ];
 
+// Just the note glyph (no background shape) — reused three times with color
+// + offset variations to build the real TikTok icon below.
+const TIKTOK_NOTE_PATH =
+  "M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z";
+
+// Real brand glyphs (official SVG path data, sourced from the Simple Icons /
+// Font Awesome brand sets — not hand-drawn approximations) on each brand's
+// actual color, so these read as the real logos rather than generic colored
+// dots. TikTok is the one exception worth a note: it's the same note glyph
+// layered three times with a small offset (cyan, then magenta, then white on
+// top) — that's genuinely how TikTok's own icon is constructed, not a hack.
 const SOCIAL_PLATFORMS = [
-  { id: "facebook", label: "Facebook", bg: "bg-blue-600", glyph: "f", prefix: "https://facebook.com/", hintTail: "yourfarm" },
-  { id: "instagram", label: "Instagram", bg: "bg-gradient-to-br from-fuchsia-500 to-amber-400", glyph: "◎", prefix: "https://instagram.com/", hintTail: "yourfarm" },
-  { id: "tiktok", label: "TikTok", bg: "bg-stone-900", glyph: "♪", prefix: "https://tiktok.com/@", hintTail: "yourfarm" },
-  { id: "x", label: "X", bg: "bg-black", glyph: "X", prefix: "https://x.com/", hintTail: "yourfarm" },
-  { id: "youtube", label: "YouTube", bg: "bg-red-600", glyph: "▶", prefix: "https://youtube.com/@", hintTail: "yourfarm" },
-  { id: "website", label: "Website", bg: "bg-stone-600", glyph: null, icon: Globe, prefix: "https://", hintTail: "yourfarm.com" },
-  { id: "phone", label: "Phone", bg: "bg-teal-600", glyph: null, icon: Phone, prefix: "", hintTail: "(555) 123-4567" },
-  { id: "email", label: "Email", bg: "bg-indigo-600", glyph: null, icon: Mail, prefix: "", hintTail: "hello@yourfarm.com" },
+  {
+    id: "facebook",
+    label: "Facebook",
+    bg: "bg-[#0866FF]",
+    prefix: "https://facebook.com/",
+    hintTail: "yourfarm",
+    svg: {
+      viewBox: "0 0 24 24",
+      layers: [
+        {
+          fill: "#fff",
+          path: "M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z",
+        },
+      ],
+    },
+  },
+  {
+    id: "instagram",
+    label: "Instagram",
+    // The real Instagram badge is a diagonal 3-stop gradient, not a flat
+    // color — yellow/orange in one corner fading through pink to purple.
+    bg: "bg-gradient-to-br from-[#FEDA75] via-[#D62976] to-[#4F5BD5]",
+    prefix: "https://instagram.com/",
+    hintTail: "yourfarm",
+    svg: {
+      viewBox: "0 0 24 24",
+      layers: [
+        {
+          fill: "#fff",
+          path: "M7.0301.084c-1.2768.0602-2.1487.264-2.911.5634-.7888.3075-1.4575.72-2.1228 1.3877-.6652.6677-1.075 1.3368-1.3802 2.127-.2954.7638-.4956 1.6365-.552 2.914-.0564 1.2775-.0689 1.6882-.0626 4.947.0062 3.2586.0206 3.6671.0825 4.9473.061 1.2765.264 2.1482.5635 2.9107.308.7889.72 1.4573 1.388 2.1228.6679.6655 1.3365 1.0743 2.1285 1.38.7632.295 1.6361.4961 2.9134.552 1.2773.056 1.6884.069 4.9462.0627 3.2578-.0062 3.668-.0207 4.9478-.0814 1.28-.0607 2.147-.2652 2.9098-.5633.7889-.3086 1.4578-.72 2.1228-1.3881.665-.6682 1.0745-1.3378 1.3795-2.1284.2957-.7632.4966-1.636.552-2.9124.056-1.2809.0692-1.6898.063-4.948-.0063-3.2583-.021-3.6668-.0817-4.9465-.0607-1.2797-.264-2.1487-.5633-2.9117-.3084-.7889-.72-1.4568-1.3876-2.1228C21.2982 1.33 20.628.9208 19.8378.6165 19.074.321 18.2017.1197 16.9244.0645 15.6471.0093 15.236-.005 11.977.0014 8.718.0076 8.31.0215 7.0301.0839m.1402 21.6932c-1.17-.0509-1.8053-.2453-2.2287-.408-.5606-.216-.96-.4771-1.3819-.895-.422-.4178-.6811-.8186-.9-1.378-.1644-.4234-.3624-1.058-.4171-2.228-.0595-1.2645-.072-1.6442-.079-4.848-.007-3.2037.0053-3.583.0607-4.848.05-1.169.2456-1.805.408-2.2282.216-.5613.4762-.96.895-1.3816.4188-.4217.8184-.6814 1.3783-.9003.423-.1651 1.0575-.3614 2.227-.4171 1.2655-.06 1.6447-.072 4.848-.079 3.2033-.007 3.5835.005 4.8495.0608 1.169.0508 1.8053.2445 2.228.408.5608.216.96.4754 1.3816.895.4217.4194.6816.8176.9005 1.3787.1653.4217.3617 1.056.4169 2.2263.0602 1.2655.0739 1.645.0796 4.848.0058 3.203-.0055 3.5834-.061 4.848-.051 1.17-.245 1.8055-.408 2.2294-.216.5604-.4763.96-.8954 1.3814-.419.4215-.8181.6811-1.3783.9-.4224.1649-1.0577.3617-2.2262.4174-1.2656.0595-1.6448.072-4.8493.079-3.2045.007-3.5825-.006-4.848-.0608M16.953 5.5864A1.44 1.44 0 1 0 18.39 4.144a1.44 1.44 0 0 0-1.437 1.4424M5.8385 12.012c.0067 3.4032 2.7706 6.1557 6.173 6.1493 3.4026-.0065 6.157-2.7701 6.1506-6.1733-.0065-3.4032-2.771-6.1565-6.174-6.1498-3.403.0067-6.156 2.771-6.1496 6.1738M8 12.0077a4 4 0 1 1 4.008 3.9921A3.9996 3.9996 0 0 1 8 12.0077",
+        },
+      ],
+    },
+  },
+  {
+    id: "tiktok",
+    label: "TikTok",
+    bg: "bg-black",
+    prefix: "https://tiktok.com/@",
+    hintTail: "yourfarm",
+    svg: {
+      viewBox: "0 0 24 24",
+      layers: [
+        { fill: "#25F4EE", transform: "translate(-0.9 0.55)", path: TIKTOK_NOTE_PATH },
+        { fill: "#FE2C55", transform: "translate(0.9 -0.55)", path: TIKTOK_NOTE_PATH },
+        { fill: "#fff", path: TIKTOK_NOTE_PATH },
+      ],
+    },
+  },
+  {
+    id: "x",
+    label: "X",
+    bg: "bg-black",
+    prefix: "https://x.com/",
+    hintTail: "yourfarm",
+    svg: {
+      viewBox: "0 0 24 24",
+      layers: [
+        {
+          fill: "#fff",
+          path: "M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z",
+        },
+      ],
+    },
+  },
+  {
+    id: "youtube",
+    label: "YouTube",
+    bg: "bg-[#FF0000]",
+    prefix: "https://youtube.com/@",
+    hintTail: "yourfarm",
+    // Just the play triangle, not YouTube's whole rounded-rect badge shape —
+    // this row already gives every platform its own colored circle, so the
+    // circle itself is the badge and the triangle is the mark inside it.
+    svg: { viewBox: "0 0 24 24", layers: [{ fill: "#fff", path: "M9 7.5v9l8-4.5-8-4.5Z" }] },
+  },
+  {
+    id: "linkedin",
+    label: "LinkedIn",
+    bg: "bg-[#0A66C2]",
+    prefix: "https://linkedin.com/company/",
+    hintTail: "yourfarm",
+    svg: {
+      viewBox: "0 0 448 512",
+      layers: [
+        {
+          fill: "#fff",
+          path: "M100.28 448H7.4V148.9h92.88zM53.79 108.1C24.09 108.1 0 83.5 0 53.8a53.79 53.79 0 0 1 107.58 0c0 29.7-24.1 54.3-53.79 54.3zM447.9 448h-92.68V302.4c0-34.7-.7-79.2-48.29-79.2-48.29 0-55.69 37.7-55.69 76.7V448h-92.78V148.9h89.08v40.8h1.3c12.4-23.5 42.69-48.3 87.88-48.3 94 0 111.28 61.9 111.28 142.3V448z",
+        },
+      ],
+    },
+  },
+  { id: "website", label: "Website", bg: "bg-stone-600", icon: Globe, prefix: "https://", hintTail: "yourfarm.com" },
+  { id: "phone", label: "Phone", bg: "bg-teal-600", icon: Phone, prefix: "", hintTail: "(555) 123-4567" },
+  { id: "email", label: "Email", bg: "bg-indigo-600", icon: Mail, prefix: "", hintTail: "hello@yourfarm.com" },
 ];
 const socialInfo = (id) => SOCIAL_PLATFORMS.find((s) => s.id === id);
 
@@ -1269,7 +1367,7 @@ const DEMO_THREADS = [
     avatar: "\u{1F96C}",
     agoMin: 14,
     messages: [
-      { from: "them", body: "Hey! Saw you favourited the heirloom tomatoes. We pick Thursday mornings if you want a box set aside." },
+      { from: "them", body: "Hey! Saw you favorited the heirloom tomatoes. We pick Thursday mornings if you want a box set aside." },
       { from: "me", body: "That would be great. Do you have the Cherokee Purples this week?" },
       { from: "them", body: "We do — about ten pounds coming off. I'll hold two for you. Pickup at the Post Falls stand any time before noon." },
     ],
@@ -1325,7 +1423,7 @@ function seedNotifications(userId) {
   if (!userId) return [];
   return [
     { id: "sn-1", type: "message", title: "LocalRoots replied to you", body: "I'll hold two Cherokee Purples for you.", createdAt: INBOX_BASE - 14 * MIN, read: false, route: { screen: "messages" } },
-    { id: "sn-2", type: "favorite", title: "Your shop was favourited", body: "3 people saved your storefront this week.", createdAt: INBOX_BASE - 95 * MIN, read: false, route: { screen: "store" } },
+    { id: "sn-2", type: "favorite", title: "Your shop was favorited", body: "3 people saved your storefront this week.", createdAt: INBOX_BASE - 95 * MIN, read: false, route: { screen: "store" } },
     { id: "sn-3", type: "review", title: "New 5-star review", body: "Best heirloom tomatoes I have had all summer.", createdAt: INBOX_BASE - 260 * MIN, read: false, route: { screen: "shop", shopId: "seed-localroots" } },
     { id: "sn-4", type: "message", title: "Green Mountain Apiary replied", body: "Still available. We have four left.", createdAt: INBOX_BASE - 320 * MIN, read: true, route: { screen: "messages" } },
     { id: "sn-5", type: "favorite", title: "Golden Valley Orchards listed something new", body: "Blood Orange (2lb bag) is in season.", createdAt: INBOX_BASE - 1400 * MIN, read: true, route: { screen: "shop", shopId: "seed-goldenvalley" } },
@@ -1943,7 +2041,7 @@ function logViewOnce(key, fn) {
   _viewLogged.add(key);
   fn();
 }
-// Pure favourite toggle. Kept separate from storage so it can be tested, and so
+// Pure favorite toggle. Kept separate from storage so it can be tested, and so
 // the caller never has to re-read a record it already holds.
 function applyFavoriteToggle(record, type, id) {
   const base = { products: { ...(record?.products || {}) }, shops: { ...(record?.shops || {}) } };
@@ -3647,7 +3745,7 @@ function useMarketData() {
     await writeMarket();
   }, [writeMarket]);
 
-  // Many small changes (favourite counts, rating updates) arrive together; one
+  // Many small changes (favorite counts, rating updates) arrive together; one
   // save covers them all instead of one save each.
   const scheduleWrite = useCallback(() => {
     if (writeTimer.current) clearTimeout(writeTimer.current);
@@ -3919,7 +4017,7 @@ function useFavorites(me) {
   const [loading, setLoading] = useState(true);
   // The authoritative in-session copy. Toggling reads from here rather than from
   // storage: re-reading was destructive, because a transient read failure looked
-  // identical to "no favourites yet" and the next write erased everything.
+  // identical to "no favorites yet" and the next write erased everything.
   const recordRef = useRef({ products: {}, shops: {} });
 
   const userId = me?.id || null;
@@ -3972,7 +4070,7 @@ function useFavorites(me) {
 }
 
 // Which reviews this member has marked helpful. Same in-memory-record pattern
-// as favourites, so a failed read can never wipe the set.
+// as favorites, so a failed read can never wipe the set.
 function useHelpfulMarks(me) {
   const [marks, setMarks] = useState({});
   const recordRef = useRef({});
@@ -4014,7 +4112,7 @@ function useHelpfulMarks(me) {
   return { helpfulMarks: marks, toggleHelpfulMark: toggle };
 }
 
-// Favourites persist reliably through a per-user key, so a member's own reviews
+// Favorites persist reliably through a per-user key, so a member's own reviews
 // are mirrored the same way. The per-entity list stays the canonical public copy,
 // but if that write is dropped the author's own copy still restores their review.
 function useRestockWatch(me) {
@@ -6060,12 +6158,21 @@ function SocialIcon({ platform, size = 34 }) {
   const info = socialInfo(platform);
   if (!info) return null;
   const Icon = info.icon;
+  const glyphSize = size * 0.56;
   return (
     <div
-      className={`rounded-full flex items-center justify-center text-white font-bold shadow ${info.bg}`}
-      style={{ width: size, height: size, fontSize: size * 0.42 }}
+      className={`rounded-full flex items-center justify-center shadow overflow-hidden ${info.bg}`}
+      style={{ width: size, height: size }}
     >
-      {Icon ? <Icon size={size * 0.5} /> : <span style={{ fontFamily: "serif" }}>{info.glyph}</span>}
+      {Icon ? (
+        <Icon size={size * 0.5} className="text-white" />
+      ) : (
+        <svg width={glyphSize} height={glyphSize} viewBox={info.svg.viewBox} aria-hidden="true">
+          {info.svg.layers.map((layer, i) => (
+            <path key={i} d={layer.path} fill={layer.fill} transform={layer.transform} />
+          ))}
+        </svg>
+      )}
     </div>
   );
 }
@@ -6140,7 +6247,7 @@ function creditLine(credit) {
   return credit.by || credit.source || "";
 }
 
-function ProductImage({ src, photoId, artKey, category, emoji, alt, className = "", rounded = "", credit = null, showCredit = true }) {
+function ProductImage({ src, photoId, artKey, category, emoji, alt, className = "", rounded = "", credit = null, showCredit = true, fit = "cover" }) {
   // An uploaded photo always wins: it is local data, so it cannot fail to load.
   const uploaded = usePhotoUrl(photoId);
   const effectiveSrc = uploaded || src;
@@ -6163,10 +6270,19 @@ function ProductImage({ src, photoId, artKey, category, emoji, alt, className = 
   return (
     <div className={`relative overflow-hidden ${rounded} ${className}`} style={{ background: texture, containerType: "inline-size" }}>
       {/* Illustration always renders underneath; a photograph fades in over it
-          when one is reachable, so the tile is never empty or broken. */}
-      <div className="absolute inset-0">
-        <ProduceArt artKey={artKey} category={category} />
-      </div>
+          when one is reachable, so the tile is never empty or broken. Skipped
+          once a "contain" photo has actually loaded — that mode intentionally
+          leaves letterbox bars around the real photo instead of cropping it,
+          and the illustration would otherwise show through those bars behind
+          it, which reads as a glitch rather than a fallback. A plain neutral
+          backdrop (below) fills that space instead. */}
+      {fit === "contain" && state === "loaded" ? (
+        <div className="absolute inset-0 bg-stone-100" />
+      ) : (
+        <div className="absolute inset-0">
+          <ProduceArt artKey={artKey} category={category} />
+        </div>
+      )}
       {state !== "fallback" && (
         <img
           ref={imgRef}
@@ -6177,7 +6293,7 @@ function ProductImage({ src, photoId, artKey, category, emoji, alt, className = 
           referrerPolicy="no-referrer"
           onLoad={() => setState("loaded")}
           onError={() => setState("fallback")}
-          className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ${state === "loaded" ? "opacity-100" : "opacity-0"}`}
+          className={`absolute inset-0 w-full h-full ${fit === "contain" ? "object-contain" : "object-cover"} transition-opacity duration-500 ${state === "loaded" ? "opacity-100" : "opacity-0"}`}
         />
       )}
 
@@ -6648,7 +6764,7 @@ function TopBar({ onOpenSearch, onOpenNotifs, onOpenAccount, onOpenFavorites, on
         <button
           onClick={onOpenFavorites}
           className={`relative shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition ${totalFav > 0 ? "bg-rose-50" : "bg-stone-100 hover:bg-stone-200"}`}
-          aria-label={`Favourites (${totalFav} saved)`}
+          aria-label={`Favorites (${totalFav} saved)`}
         >
           {/* Real red, same hex as the favorited FavoriteHeart — "rose" is
               remapped to gray in tailwind.config.js along with the other
@@ -8579,8 +8695,12 @@ function ProductDetailModal({ product, open, onClose, navigate, focusReviews }) 
   return (
     <Modal open={open} onClose={onClose} labelledBy="prod-title">
       <div>
-        <div className="relative h-52">
-          <ProductImage src={product.image} photoId={product.photoId} credit={product.credit} artKey={product.art} category={product.category} emoji={product.emoji} alt={product.name} className="w-full h-full" />
+        {/* fit="contain" here (unlike the cropped, always-square grid tile) —
+            the whole point of opening a listing is to actually see the item,
+            so a tall or panoramic photo gets letterboxed instead of having
+            its top/bottom or sides cropped away. */}
+        <div className="relative h-64">
+          <ProductImage src={product.image} photoId={product.photoId} credit={product.credit} artKey={product.art} category={product.category} emoji={product.emoji} alt={product.name} className="w-full h-full" fit="contain" />
           <button onClick={onClose} className="absolute top-3 right-3 bg-white/90 rounded-full w-8 h-8 flex items-center justify-center"><X size={16} /></button>
           {product.bannerId && <div className="absolute top-3 left-3"><BannerRibbon bannerId={product.bannerId} customText={product.customBannerText} /></div>}
           {product.showStock && product.stockQty != null && (
@@ -9521,6 +9641,11 @@ function ContactCardEditor({ shop }) {
     persist(icons.map((ic) => (ic.id === id ? { ...ic, x, y } : ic)));
   };
 
+  // The "Remove" button buried in IconEditPopover (tap icon -> edit -> Remove)
+  // still works, but this gives a one-tap delete right on the icon itself —
+  // same pattern as the Banners tab's delete button.
+  const removeIcon = (id) => persist(icons.filter((ic) => ic.id !== id));
+
   const editingIcon = icons.find((i) => i.id === editingId) || null;
 
   return (
@@ -9549,7 +9674,22 @@ function ContactCardEditor({ shop }) {
               title={ic.value || info?.label}
             >
               <SocialIcon platform={ic.platform} />
-              {unfinished && <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-500 border-2 border-white" />}
+              {/* Moved to the bottom-right so it doesn't collide with the
+                  delete X now sitting top-right. */}
+              {unfinished && <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-500 border-2 border-white" />}
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeIcon(ic.id);
+                }}
+                title="Delete icon"
+                aria-label="Delete icon"
+                className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white border-2 border-rose-500 text-rose-600 shadow flex items-center justify-center leading-none"
+              >
+                <X size={9} strokeWidth={3} />
+              </button>
             </div>
           );
         })}
@@ -10147,10 +10287,21 @@ function ShopBannerRibbon({ banner, className = "", sized = false }) {
 // once a drag or resize ends — while one is in progress it's tracked in
 // local `liveGeom` state so hauling a banner around doesn't fire a save on
 // every pixel of movement.
-function BannerCanvas({ shop, banners, editBanner, activeId, setActiveId }) {
+function BannerCanvas({ shop, banners, editBanner, removeBanner, activeId, setActiveId }) {
   const containerRef = useRef(null);
   const [liveGeom, setLiveGeom] = useState({});
   const [busyId, setBusyId] = useState(null);
+  // Right-click delete menu: just the one banner's id plus where (in pixels,
+  // relative to the canvas) to anchor the little "Delete banner" popover.
+  // Closed by clicking anywhere else, same pattern as every other popover
+  // in this app.
+  const [contextMenu, setContextMenu] = useState(null);
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [contextMenu]);
 
   const startDrag = (e, banner, index) => {
     if (e.button !== undefined && e.button !== 0) return;
@@ -10248,10 +10399,34 @@ function BannerCanvas({ shop, banners, editBanner, activeId, setActiveId }) {
             key={b.id}
             id={`banner-box-${b.id}`}
             onPointerDown={(e) => startDrag(e, b, i)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const rect = containerRef.current?.getBoundingClientRect();
+              setActiveId(b.id);
+              setContextMenu({
+                id: b.id,
+                x: rect ? clamp(e.clientX - rect.left, 8, rect.width - 8) : 0,
+                y: rect ? clamp(e.clientY - rect.top, 8, rect.height - 8) : 0,
+              });
+            }}
             className={`absolute select-none ${sized ? "" : "inline-block"} ${busyId === b.id ? "cursor-grabbing z-20" : "cursor-grab z-10"} ${activeId === b.id ? "ring-2 ring-emerald-600 ring-offset-1 rounded" : ""}`}
             style={{ left: `${g.x}%`, top: `${g.y}%`, width: g.w != null ? `${g.w}%` : undefined, height: g.h != null ? `${g.h}%` : undefined, maxWidth: "94%" }}
           >
             <ShopBannerRibbon banner={b} sized={sized} className="pointer-events-none" />
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                removeBanner(b.id);
+              }}
+              title="Delete banner"
+              aria-label="Delete banner"
+              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white border-2 border-rose-500 text-rose-600 shadow flex items-center justify-center leading-none z-30"
+            >
+              <X size={9} strokeWidth={3} />
+            </button>
             <span
               onPointerDown={(e) => startResize(e, b, i)}
               title="Drag to resize"
@@ -10260,6 +10435,24 @@ function BannerCanvas({ shop, banners, editBanner, activeId, setActiveId }) {
           </div>
         );
       })}
+      {contextMenu && (
+        <div
+          className="absolute z-40 bg-white rounded-lg shadow-lg border border-stone-200 py-1 cs-fade-anim"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              removeBanner(contextMenu.id);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-rose-600 hover:bg-rose-50 whitespace-nowrap"
+          >
+            <Trash2 size={13} /> Delete banner
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -10294,7 +10487,7 @@ function BannersTab({ shop }) {
       <div className="flex items-center justify-between mb-2">
         <p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Preview — drag a banner to move it, drag its dot to resize</p>
       </div>
-      <BannerCanvas shop={shop} banners={banners} editBanner={editBanner} activeId={activeId} setActiveId={setActiveId} />
+      <BannerCanvas shop={shop} banners={banners} editBanner={editBanner} removeBanner={removeBanner} activeId={activeId} setActiveId={setActiveId} />
       <p className="cs-t10 text-stone-400 mt-1.5 mb-5">Heads up: the Back / Edit storefront buttons float over the top corners on the live page, so keep banners clear of those if you drag one up there.</p>
 
       <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Add a banner</p>
@@ -10593,7 +10786,7 @@ function VendorUpdatesTab({ shop }) {
   return (
     <div>
       <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Post an update</p>
-      <p className="cs-t11 text-stone-500 mb-3">Goes to everyone who has favourited your shop, and sits at the top of your storefront.</p>
+      <p className="cs-t11 text-stone-500 mb-3">Goes to everyone who has favorited your shop, and sits at the top of your storefront.</p>
       <div className="flex flex-wrap gap-1.5 mb-2.5">
         {UPDATE_KINDS.map((k) => (
           <button
@@ -12540,7 +12733,11 @@ function PremiumPromoModal({ open, onClose, onClaim, claiming }) {
         <button
           onClick={onClaim}
           disabled={claiming}
-          className="w-full py-3.5 rounded-full font-semibold text-base transition disabled:opacity-60 bg-emerald-900 hover:bg-emerald-800 text-white shadow-sm flex items-center justify-center gap-2"
+          // Real gold, matching the Choose Premium button on the Plans page
+          // and Reactivate with Premium — every Premium call-to-action
+          // stays gold consistently, even as the rest of this popup went
+          // calmer.
+          className="w-full py-3.5 rounded-full font-semibold text-base transition disabled:opacity-60 bg-gradient-to-b from-[#F6E7A8] via-[#D4AF37] to-[#A97D1F] text-[#3B2A0E] shadow-sm hover:brightness-105 flex items-center justify-center gap-2"
         >
           {claiming ? <Loader2 size={18} className="animate-spin" /> : <Crown size={17} />}
           {claiming ? "Setting up your Premium account…" : "Choose Premium"}
@@ -13083,7 +13280,18 @@ function CheckoutScreen({ navigate, tier, billing }) {
           )}
         </div>
 
-        <button onClick={confirm} disabled={busy || !formReady} className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-semibold py-3 rounded-xl disabled:opacity-50 transition">
+        <button
+          onClick={confirm}
+          disabled={busy || !formReady}
+          // Gold on the Premium checkout specifically (this button is
+          // shared with Basic, which keeps the plain green) — matches
+          // every other Premium call-to-action in the app.
+          className={`w-full font-semibold py-3 rounded-xl disabled:opacity-50 transition ${
+            plan.id === "premium"
+              ? "bg-gradient-to-b from-[#F6E7A8] via-[#D4AF37] to-[#A97D1F] text-[#3B2A0E] shadow-sm hover:brightness-105"
+              : "bg-emerald-800 hover:bg-emerald-700 text-white"
+          }`}
+        >
           {busy ? "Setting up…" : hasActiveSub ? `Switch to ${plan.name}` : "Continue to payment"}
         </button>
         <p className="text-center cs-t10 text-stone-400 mt-3">Payments are processed securely by Stripe — CropSwap never sees or stores your card details. Phone verification here is still a placeholder for now; no real text messages are sent.</p>
@@ -16443,7 +16651,7 @@ function AccountModal({ open, onClose }) {
     const favCount = favRec.ok
       ? Object.keys(favRec.value?.products || {}).length + Object.keys(favRec.value?.shops || {}).length
       : -1;
-    lines.push({ label: "Your saved favourites", value: favCount < 0 ? "unreadable" : String(favCount), ok: favCount >= 0 });
+    lines.push({ label: "Your saved favorites", value: favCount < 0 ? "unreadable" : String(favCount), ok: favCount >= 0 });
 
     // Photographs are external requests; some embedded hosts block them outright,
     // which is invisible from the code's point of view. Ask the browser directly.
@@ -17439,7 +17647,7 @@ function buildPreviewNotifications() {
   const now = Date.now();
   return [
     { id: "pn-1", type: "message", title: "Buzzy Bee Farm replied to you", body: "Your order of 2 dozen eggs is ready for pickup Saturday morning.", createdAt: now - 12 * 60000, read: false, route: { screen: "messages" } },
-    { id: "pn-2", type: "favorite", title: "Your shop was favourited", body: "3 people saved your storefront this week.", createdAt: now - 90 * 60000, read: false, route: { screen: "store" } },
+    { id: "pn-2", type: "favorite", title: "Your shop was favorited", body: "3 people saved your storefront this week.", createdAt: now - 90 * 60000, read: false, route: { screen: "store" } },
     { id: "pn-3", type: "review", title: "New 5-star review", body: "Best heirloom tomatoes I've had all summer.", createdAt: now - 260 * 60000, read: false, route: { screen: "shop", shopId: "seed-localroots" } },
     { id: "pn-4", type: "favorite", title: "Golden Valley Orchards listed something new", body: "Blood Orange (2lb bag) is in season.", createdAt: now - 1400 * 60000, read: true, route: { screen: "shop", shopId: "seed-goldenvalley" } },
     { id: "pn-5", type: "review", title: "Sunroot Collective replied to your review", body: "Thanks for the note about the shiitake logs.", createdAt: now - 2200 * 60000, read: true, route: { screen: "shop", shopId: "seed-sunroot" } },
@@ -22210,7 +22418,7 @@ function OrdersPreviewScreen({ navigate, tab, setTab }) {
           <Crown size={15} className="text-amber-500 shrink-0" />
           <p className="text-stone-600 text-xs">
             <span className="font-semibold text-stone-700">Try it out</span> — everything here is fully interactive with sample data. Nothing you do is saved, and it's never connected to real
-            customers. <button onClick={() => navigate({ screen: "plans" })} className="font-semibold text-emerald-700 underline underline-offset-2">Upgrade to Premium</button> to do this for real.
+            customers. <button onClick={() => navigate({ screen: "plans" })} className="font-semibold text-amber-700 underline underline-offset-2">Upgrade to Premium</button> to do this for real.
           </p>
         </div>
         {tab === "orders" && (
