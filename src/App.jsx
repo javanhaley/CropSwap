@@ -9551,6 +9551,18 @@ function IconEditPopover({ icon, onSave, onDelete, onClose, onPosition }) {
   );
 }
 
+// The snap grid every icon lives on: 9 evenly spaced columns (enough for
+// one of every platform in SOCIAL_PLATFORMS to sit in a single tidy row,
+// matching the "tap an icon to add it" row above) times 3 row heights.
+// Shared by new-icon placement, live drag-snapping, and the "Align in a
+// row" button below, so all three ways of arranging icons agree on exactly
+// the same set of valid spots — nobody has to eyeball freehand placement
+// to get a clean lineup.
+const CONTACT_GRID_COLS = [8, 18.5, 29, 39.5, 50, 60.5, 71, 81.5, 92];
+const CONTACT_GRID_ROWS = [25, 50, 75];
+const nearestOf = (arr, v) => arr.reduce((best, cur) => (Math.abs(cur - v) < Math.abs(best - v) ? cur : best), arr[0]);
+const snapToContactGrid = (x, y) => ({ x: nearestOf(CONTACT_GRID_COLS, x), y: nearestOf(CONTACT_GRID_ROWS, y) });
+
 function ContactCardEditor({ shop }) {
   const { updateShop } = useApp();
   const containerRef = useRef(null);
@@ -9574,22 +9586,34 @@ function ContactCardEditor({ shop }) {
 
   const addIcon = (platformId) => {
     const info = socialInfo(platformId);
-    // Stagger new icons across the card. Previously every icon was dropped at the
-    // same coordinates, so each new one landed exactly on top of the last and
-    // looked like it had replaced it.
+    // Fills the grid's first row left-to-right, then starts a second row —
+    // with 9 columns and at most one of each of the 9 platforms, a shop
+    // only ever needs the second row if the same platform gets added twice.
     const idx = icons.length;
-    const perRow = 4;
-    const x = 16 + (idx % perRow) * 22.5;
-    const y = 28 + Math.floor(idx / perRow) * 26;
+    const col = idx % CONTACT_GRID_COLS.length;
+    const row = Math.floor(idx / CONTACT_GRID_COLS.length) % CONTACT_GRID_ROWS.length;
     const newIcon = {
       id: uid("ic"),
       platform: platformId,
       value: info?.prefix || "",
-      x: clamp(x, 6, 94),
-      y: clamp(y, 15, 85),
+      x: CONTACT_GRID_COLS[col],
+      y: CONTACT_GRID_ROWS[row],
     };
     persist([...icons, newIcon]);
     setEditingId(newIcon.id);
+  };
+
+  // One click to fix a lineup that's drifted out of alignment (or was
+  // placed freehand before this grid existed) — lands every icon back on
+  // row one of the grid, left to right in whatever order they're already
+  // in, instead of asking anyone to drag each one back into place by eye.
+  const alignInRow = () => {
+    const next = icons.map((ic, i) => ({
+      ...ic,
+      x: CONTACT_GRID_COLS[i % CONTACT_GRID_COLS.length],
+      y: CONTACT_GRID_ROWS[Math.floor(i / CONTACT_GRID_COLS.length) % CONTACT_GRID_ROWS.length],
+    }));
+    persist(next);
   };
 
   // Pointer capture routes the entire drag to this element even when the finger
@@ -9612,8 +9636,12 @@ function ContactCardEditor({ shop }) {
     if (!dragId || !containerRef.current) return;
     movedRef.current = true;
     const rect = containerRef.current.getBoundingClientRect();
-    const x = clamp(((e.clientX - rect.left) / rect.width) * 100, 6, 94);
-    const y = clamp(((e.clientY - rect.top) / rect.height) * 100, 15, 85);
+    const rawX = ((e.clientX - rect.left) / rect.width) * 100;
+    const rawY = ((e.clientY - rect.top) / rect.height) * 100;
+    // Magnetic snap while dragging, not just on release — the icon tracks
+    // the pointer but only ever rests on a grid point, so there's no way to
+    // end up between columns even by accident.
+    const { x, y } = snapToContactGrid(clamp(rawX, 0, 100), clamp(rawY, 0, 100));
     setIcons((prev) => {
       const next = prev.map((ic) => (ic.id === dragId ? { ...ic, x, y } : ic));
       iconsRef.current = next;
@@ -9650,7 +9678,18 @@ function ContactCardEditor({ shop }) {
 
   return (
     <div>
-      <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Tap an icon to add it, then drag it into place</p>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <p className="text-xs font-bold text-stone-400 uppercase tracking-wide">Tap an icon to add it, then drag it into place</p>
+        {icons.length > 1 && (
+          <button
+            type="button"
+            onClick={alignInRow}
+            className="shrink-0 text-xs font-semibold text-emerald-700 hover:text-emerald-800 whitespace-nowrap"
+          >
+            Align in a row
+          </button>
+        )}
+      </div>
       <div className="flex gap-2 overflow-x-auto p-3 bg-stone-50 rounded-xl mb-3">
         {SOCIAL_PLATFORMS.map((pf) => (
           <button key={pf.id} onClick={() => addIcon(pf.id)} className="shrink-0" title={`Add ${pf.label}`}>
@@ -9659,6 +9698,21 @@ function ContactCardEditor({ shop }) {
         ))}
       </div>
       <div ref={containerRef} className="relative h-44 rounded-2xl border-2 border-dashed border-stone-300 bg-white">
+        {/* The grid every icon snaps to, drawn faintly so it reads as a
+            ruled surface rather than clutter — it's what makes "drag it
+            into place" actually land on a clean line instead of wherever
+            the pointer happened to be. */}
+        <div className="absolute inset-0 pointer-events-none">
+          {CONTACT_GRID_ROWS.map((gy) =>
+            CONTACT_GRID_COLS.map((gx) => (
+              <span
+                key={`${gx}-${gy}`}
+                className="absolute w-1 h-1 rounded-full bg-stone-200 -translate-x-1/2 -translate-y-1/2"
+                style={{ left: `${gx}%`, top: `${gy}%` }}
+              />
+            ))
+          )}
+        </div>
         {icons.map((ic) => {
           const info = socialInfo(ic.platform);
           const unfinished = !ic.value || ic.value === info?.prefix;
@@ -9699,7 +9753,7 @@ function ContactCardEditor({ shop }) {
       </div>
       {icons.length > 0 && (
         <p className="cs-t11 text-stone-400 mt-2">
-          Drag an icon to move it, or tap it to edit its link and pick a spot. An amber dot means the link still needs your handle.
+          Drag an icon to move it — it snaps to the grid as you go, so it always lands in a clean line. Tap it to edit its link. An amber dot means the link still needs your handle.
         </p>
       )}
       <IconEditPopover
@@ -10272,8 +10326,13 @@ function ShopBannerRibbon({ banner, className = "", sized = false }) {
         clipPath: shape.clipPath || undefined,
         paddingLeft: shape.padX,
         paddingRight: shape.padX,
+        // A shape's own padBottom (flag, wavy, scalloped) exists to keep
+        // text clear of a notch cut into the bottom edge — that need doesn't
+        // go away once a banner has an explicit size, so it always wins over
+        // the plain sized/unsized default instead of being silently
+        // discarded the moment a banner gets dragged or resized.
         paddingTop: sized ? "0.4rem" : "0.25rem",
-        paddingBottom: sized ? "0.4rem" : shape.padBottom || "0.25rem",
+        paddingBottom: shape.padBottom || (sized ? "0.4rem" : "0.25rem"),
       }}
     >
       {banner.text}
