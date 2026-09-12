@@ -10217,8 +10217,26 @@ function BannerCanvas({ shop, banners, editBanner, activeId, setActiveId }) {
   };
 
   return (
-    <div ref={containerRef} className="relative h-28 rounded-xl overflow-hidden border border-stone-200 touch-none">
+    <div ref={containerRef} className="relative h-40 md:h-52 rounded-xl overflow-hidden border border-stone-200 touch-none">
+      {/* Mirrors the exact same layer stack the live storefront header uses
+          (BannerScene -> ShopCoverPhoto -> legacy shop.banner) so this
+          preview is pixel-accurate to what shoppers actually see — a vendor
+          dragging a banner here needs to know for certain whether it'll
+          land on open sky or cover their cover photo's focal point. */}
       <BannerScene scene={shop.bannerScene || defaultScene(shop.id)} />
+      <ShopCoverPhoto shop={shop} />
+      {shop.banner && (
+        <img
+          src={shop.banner}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="absolute inset-0 w-full h-full object-cover"
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+          }}
+        />
+      )}
       {banners.length === 0 && (
         <span className="absolute top-3 left-3 cs-t11 text-stone-600 bg-white/80 px-2 py-1 rounded">No banners yet</span>
       )}
