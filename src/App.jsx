@@ -11,6 +11,7 @@ import {
   DollarSign, Receipt, Repeat, UserCheck, Percent, CreditCard, Landmark, Rss,
   Folder, MoreVertical, Inbox, Menu, Tag, Flag, ExternalLink, Unlock, Download, SlidersHorizontal,
   Gift, Copy, Printer, Ban, UserX, PauseCircle, RotateCcw, FlaskConical,
+  BarChart3,
 } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, AreaChart, Area, Legend, ComposedChart } from "recharts";
 import { jsPDF } from "jspdf";
@@ -18236,9 +18237,10 @@ function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate
             }
           : undefined
       }
-      className={`bg-white border rounded-2xl p-4 relative ${showWarn ? "border-stone-900 ring-1 ring-stone-200" : "border-stone-200"} ${
-        clickable ? "cursor-pointer hover:border-stone-300 hover:shadow-md transition" : ""
+      className={`bg-white border rounded-2xl p-4 relative transition ${showWarn ? "border-stone-900 ring-1 ring-stone-200" : "border-stone-200"} ${
+        clickable ? "cursor-pointer shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]" : ""
       }`}
+      style={clickable && !showWarn ? { borderColor: `${t.bar}66` } : undefined}
     >
       <div className="flex items-center justify-between mb-2">
         <span
@@ -18270,7 +18272,15 @@ function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate
       <p className="text-sm font-semibold text-stone-600 mt-0.5">{label}</p>
       {sub && <p className="text-xs text-stone-400 mt-0.5">{sub}</p>}
       {spark && !locked && <Sparkline data={spark} color={t.bar} height={30} />}
-      {clickable && <ChevronRight size={14} className="absolute bottom-4 right-4 text-stone-300" />}
+      {clickable && (
+        <span
+          className="absolute bottom-3 right-3 w-6 h-6 rounded-full flex items-center justify-center shadow-sm ring-2 ring-white"
+          style={{ background: `linear-gradient(135deg, ${t.chipBg}, ${t.chipBg2})`, color: t.chipFg }}
+          aria-hidden="true"
+        >
+          <BarChart3 size={13} strokeWidth={2.5} />
+        </span>
+      )}
     </div>
   );
 }
