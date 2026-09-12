@@ -6714,6 +6714,16 @@ function BottomNav({ route, navigate }) {
               // its own, so tapping Explore after being on the map would
               // otherwise leave you looking at the map again.
               if (it.id === "explore") setExploreView("grid");
+              // Tapping "Sell" (this same tab reads "My Store" once you
+              // already have a shop — see the label above) is this account's
+              // Start Selling moment, same as the landing page's own Start
+              // Selling button — send it to Plans so the launch-promo popup
+              // (PremiumPromoModal) offers itself immediately instead of
+              // landing on the guest/free "My Store" preview first.
+              if (it.id === "store" && !me?.isVendor) {
+                navigate({ screen: "plans" });
+                return;
+              }
               navigate({ screen: it.id });
             }}
             className={`flex flex-col items-center gap-0.5 px-4 py-1 ${isActive ? "text-emerald-800" : "text-stone-400"}`}
@@ -12467,71 +12477,57 @@ function CancelPlanModal({ tierName, withinWindow, cancelling, onKeep, onConfirm
   );
 }
 
-// The launch-promo "Congratulations" popup on the Plans page — see
+// The launch-promo "Welcome to CropSwap!" popup on the Plans page — see
 // api/redeem-premium-promo.js and api/premium-promo-status.js. Its own
 // component (rather than inline JSX in PlansScreen) mainly to keep the
-// decorative header — a gold gradient plus a small cluster of real produce
-// photos peeking out from behind the text, so it reads as a CropSwap
-// moment rather than a generic "you win!" banner — from crowding out the
-// actual claim logic. The "1st 5 shop owners" / "4 others" copy is
-// deliberately a fixed string, not tied to how many people have actually
-// claimed it — the promo itself has no real headcount cap (see
-// api/redeem-premium-promo.js) and keeps granting free Premium to everyone
-// who clicks until it's turned off entirely, so the wording never needs to
-// track a running count.
+// decorative header — a single full-bleed produce photo under a dark
+// gradient, quiet eyebrow label, and the brand's own SproutMark instead of
+// a novelty gift badge, so it reads as a calm, editorial CropSwap moment
+// rather than a flashy "you win!" banner — from crowding out the actual
+// claim logic. The "1st 5 shop owners" copy is deliberately a fixed
+// string, not tied to how many people have actually claimed it — the
+// promo itself has no real headcount cap (see api/redeem-premium-promo.js)
+// and keeps granting free Premium to everyone who clicks until it's
+// turned off entirely, so the wording never needs to track a running
+// count.
 function PremiumPromoModal({ open, onClose, onClaim, claiming }) {
   return (
     <Modal open={open} onClose={onClose} labelledBy="premium-promo-title">
-      <div className="relative rounded-t-3xl overflow-hidden bg-gradient-to-br from-emerald-800 via-emerald-700 to-emerald-900 px-6 pt-9 pb-10 text-center">
-        {/* Small circular produce photos, tucked into the corners and
-            rotated slightly so they read as a garnish around the message
-            rather than the main event. Sized down on narrow phones (this
-            app's actual audience) rather than hidden outright — negative
-            offsets keep them clear of the centered headline text even at
-            the smallest supported widths. */}
+      <div className="relative rounded-t-3xl overflow-hidden">
         <img
           src={PHOTO("photo-1592924357228-91a4daadcfea")}
           alt=""
-          className="absolute -left-2 -top-2 w-12 h-12 sm:w-20 sm:h-20 rounded-full object-cover border-4 border-white/90 shadow-lg -rotate-12"
+          className="w-full h-40 sm:h-48 object-cover"
         />
-        <img
-          src={PHOTO("photo-1558642452-9d2a7deb7f62")}
-          alt=""
-          className="absolute -right-2 top-7 w-10 h-10 sm:w-16 sm:h-16 rounded-full object-cover border-4 border-white/90 shadow-lg rotate-12"
-        />
-        <img
-          src={PHOTO("photo-1506976785307-8732e854ad03")}
-          alt=""
-          className="absolute right-8 -bottom-3 w-10 h-10 sm:w-14 sm:h-14 rounded-full object-cover border-4 border-white/90 shadow-lg rotate-6"
-        />
-        <button onClick={onClose} className="absolute top-3 right-3 z-10 text-white/80 hover:text-white bg-black/10 hover:bg-black/25 rounded-full p-1.5 transition" aria-label="Close">
+        <div className="absolute inset-0 bg-gradient-to-t from-emerald-950/92 via-emerald-950/30 to-black/5" />
+        <button onClick={onClose} className="absolute top-3 right-3 z-10 text-white/90 hover:text-white bg-black/20 hover:bg-black/35 rounded-full p-1.5 backdrop-blur-sm transition" aria-label="Close">
           <X size={16} />
         </button>
-        <div className="relative z-[1] flex flex-col items-center">
-          <span className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-b from-[#F6E7A8] via-[#D4AF37] to-[#A97D1F] text-[#3B2A0E] shadow-lg mb-3">
-            <Gift size={26} />
+        <div className="absolute inset-x-0 bottom-0 px-6 sm:px-7 pb-5 flex flex-col items-start">
+          <span className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-white/40 text-white mb-2.5">
+            <SproutMark size={16} />
           </span>
-          <p id="premium-promo-title" className="text-white font-bold text-2xl" style={displayFont}>
-            Congratulations!
+          <p className="text-white/70 text-[11px] font-semibold uppercase tracking-[0.14em] mb-1">Early access</p>
+          <p id="premium-promo-title" className="text-white font-semibold text-2xl leading-tight" style={displayFont}>
+            Welcome to CropSwap!
           </p>
-          <p className="text-emerald-100 text-xs font-semibold uppercase tracking-wide mt-1">A launch gift for early shop owners</p>
         </div>
       </div>
-      <div className="p-6 text-center">
-        <p className="text-stone-700 text-sm leading-relaxed mb-5">
-          Congratulations on being one of our 1st 5 shop owners! We are gifting you and 4 others with a{" "}
-          <span className="font-bold text-stone-900">FREE 12 month Premium subscription</span> as a thank you for checking it out! Just click on the
-          Choose Premium button and it will bypass the normal payment information screens so you can start building your storefront right away! Enjoy!
+      <div className="p-6 sm:p-7 text-left">
+        <p className="text-stone-600 text-sm leading-relaxed mb-6">
+          Help us test the platform as one of our first 5 shop owners! To say thank you, we're locking in a{" "}
+          <span className="font-semibold text-stone-900">free 12-month Premium subscription</span> for you. Click
+          "Choose Premium" to skip the payment screens so you can start building your storefront right away! Enjoy!
         </p>
         <button
           onClick={onClaim}
           disabled={claiming}
-          className="w-full py-3.5 rounded-xl font-bold text-base transition disabled:opacity-60 bg-gradient-to-b from-[#F6E7A8] via-[#D4AF37] to-[#A97D1F] text-[#3B2A0E] shadow-md hover:brightness-105 flex items-center justify-center gap-2"
+          className="w-full py-3.5 rounded-full font-semibold text-base transition disabled:opacity-60 bg-emerald-900 hover:bg-emerald-800 text-white shadow-sm flex items-center justify-center gap-2"
         >
-          {claiming ? <Loader2 size={18} className="animate-spin" /> : <Crown size={18} />}
+          {claiming ? <Loader2 size={18} className="animate-spin" /> : <Crown size={17} />}
           {claiming ? "Setting up your Premium account…" : "Choose Premium"}
         </button>
-        <button onClick={onClose} disabled={claiming} className="w-full mt-2.5 text-xs font-semibold text-stone-400 hover:text-stone-600 py-1.5 disabled:opacity-50">
+        <button onClick={onClose} disabled={claiming} className="w-full mt-3 text-xs font-medium text-stone-400 hover:text-stone-600 py-1.5 disabled:opacity-50">
           Maybe later
         </button>
       </div>
@@ -26025,8 +26021,12 @@ function AuthPromptPopover({ prompt, onSignUp, onLogIn, onDismiss }) {
 // long the real homepage behind it takes to become ready.
 function LandingHero({ onExplore, onStartSelling, onLogoClick, onClose }) {
   return (
-    <div className="fixed inset-0 bg-black/60 cs-z-landing flex items-center justify-center p-3 md:p-6 cs-fade-anim">
-      <div className="cs-modal-anim relative bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col w-[90vw] h-[90vh] max-w-6xl">
+    // Full-bleed, edge-to-edge on phones (p-0 / rounded-none / w-h-full) so
+    // this unmistakably reads as THE landing page rather than a dismissible
+    // card floating over a visible dark backdrop — sm+ keeps the original
+    // centered, rounded card treatment.
+    <div className="fixed inset-0 bg-black/60 cs-z-landing flex items-center justify-center p-0 sm:p-3 md:p-6 cs-fade-anim">
+      <div className="cs-modal-anim relative bg-white rounded-none sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col w-full h-full sm:w-[90vw] sm:h-[90vh] sm:max-w-6xl">
         <button
           onClick={onClose}
           aria-label="Close"
