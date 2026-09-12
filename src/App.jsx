@@ -17798,11 +17798,11 @@ const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Se
    happens.
 ============================================================================ */
 const DASHBOARD_RANGES = [
-  { id: "hours", label: "Hours", ms: 24 * 3600000, granularity: "hour" },
-  { id: "days", label: "Days", ms: 14 * 86400000, granularity: "day" },
-  { id: "weeks", label: "Weeks", ms: 12 * 7 * 86400000, granularity: "week" },
-  { id: "months", label: "Months", ms: 365 * 86400000, granularity: "month" },
-  { id: "years", label: "Years", ms: 5 * 365 * 86400000, granularity: "year" },
+  { id: "hours", label: "Hours", ms: 24 * 3600000, granularity: "hour", sub: "Last 24 hours" },
+  { id: "days", label: "Days", ms: 14 * 86400000, granularity: "day", sub: "Last 14 days" },
+  { id: "weeks", label: "Weeks", ms: 12 * 7 * 86400000, granularity: "week", sub: "Last 12 weeks" },
+  { id: "months", label: "Months", ms: 365 * 86400000, granularity: "month", sub: "Last 12 months" },
+  { id: "years", label: "Years", ms: 5 * 365 * 86400000, granularity: "year", sub: "Last 5 years" },
 ];
 // Independent per-panel period presets, Yahoo/Google-Finance style. These
 // live under a single chart (via PanelPeriodTabs below) and let that one
@@ -18153,10 +18153,22 @@ function InfoTip({ text, align = "center" }) {
 const DASH_TINTS = {
   emerald: { bg: "bg-emerald-50", text: "text-emerald-700", soft: "bg-emerald-50", chipBg: "#e1fae1", chipBg2: "#c0f3be", chipFg: "#146824", bar: "#25b926" },
   teal: { bg: "bg-teal-50", text: "text-teal-700", soft: "bg-teal-50", chipBg: "#c0f3be", chipBg2: "#96ec93", chipFg: "#0d4923", bar: "#1c9025" },
-  rose: { bg: "bg-rose-50", text: "text-rose-700", soft: "bg-rose-50", chipBg: "#171717", chipBg2: "#000000", chipFg: "#ffffff", bar: "#171717" },
+  // Real red — used only for hearts/favorites. Matches the same #e11d48 red
+  // already used for filled favorite hearts elsewhere in the app (the
+  // storefront/listing heart buttons), so "favorite" reads as the same red
+  // everywhere instead of the flattened-black look the old rose remap gave it.
+  rose: { bg: "bg-rose-50", text: "text-rose-700", soft: "bg-rose-50", chipBg: "#fee2e2", chipBg2: "#fecdd3", chipFg: "#e11d48", bar: "#e11d48" },
   blue: { bg: "bg-blue-50", text: "text-blue-700", soft: "bg-blue-50", chipBg: "#96ec93", chipBg2: "#61e25d", chipFg: "#08301a", bar: "#146824" },
   violet: { bg: "bg-violet-50", text: "text-violet-700", soft: "bg-violet-50", chipBg: "#404040", chipBg2: "#171717", chipFg: "#ffffff", bar: "#262626" },
-  amber: { bg: "bg-amber-50", text: "text-amber-700", soft: "bg-amber-50", chipBg: "#61e25d", chipBg2: "#2cd827", chipFg: "#08301a", bar: "#0d4923" },
+  // Real gold — used for star ratings, matching the same gold used for the
+  // Premium crown badges (#F6E7A8 -> #D4AF37) rather than the green the old
+  // amber-as-green substitution gave it.
+  amber: { bg: "bg-amber-50", text: "text-amber-700", soft: "bg-amber-50", chipBg: "#F6E7A8", chipBg2: "#D4AF37", chipFg: "#6b4f10", bar: "#D4AF37" },
+  // A clean white treatment (white/very-light-gray gradient, dark icon, thin
+  // border so the badge stays visible against the card's own white
+  // background) — used where a solid color badge doesn't fit the icon (e.g.
+  // the Messages tile's chat bubble).
+  white: { bg: "bg-stone-50", text: "text-stone-700", soft: "bg-stone-50", chipBg: "#ffffff", chipBg2: "#f5f5f5", chipFg: "#171717", chipBorder: "#e5e5e5", bar: "#525252" },
 };
 // A dedicated look for the "this metric dropped" warning state — it used to
 // borrow the "rose" tint, which (see above) rendered as the same invisible
@@ -18218,9 +18230,12 @@ function Sparkline({ data, color = "#25b926", height = 26 }) {
     </svg>
   );
 }
-function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate, tint = "emerald", warn = false, spark, onOpen }) {
+function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate, tint = "emerald", warn = false, warnBadge = true, spark, onOpen }) {
   const showWarn = warn && !locked;
-  const t = showWarn ? DASH_WARN_TINT : DASH_TINTS[tint] || DASH_TINTS.emerald;
+  // warnBadge lets a tile keep its own identity color (e.g. Avg rating's gold
+  // star) even while "watching" — the black "Watch" pill below is still shown
+  // as the alert, it just no longer has to repaint the icon badge black too.
+  const t = showWarn && warnBadge ? DASH_WARN_TINT : DASH_TINTS[tint] || DASH_TINTS.emerald;
   const clickable = !locked && !!onOpen;
   return (
     <div
@@ -18245,7 +18260,7 @@ function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate
       <div className="flex items-center justify-between mb-2">
         <span
           className="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm"
-          style={{ background: `linear-gradient(135deg, ${t.chipBg}, ${t.chipBg2})`, color: t.chipFg }}
+          style={{ background: `linear-gradient(135deg, ${t.chipBg}, ${t.chipBg2})`, color: t.chipFg, border: t.chipBorder ? `1px solid ${t.chipBorder}` : "none" }}
         >
           <Icon size={20} strokeWidth={2.25} />
         </span>
@@ -18275,7 +18290,7 @@ function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate
       {clickable && (
         <span
           className="absolute bottom-3 right-3 w-6 h-6 rounded-full flex items-center justify-center shadow-sm ring-2 ring-white"
-          style={{ background: `linear-gradient(135deg, ${t.chipBg}, ${t.chipBg2})`, color: t.chipFg }}
+          style={{ background: `linear-gradient(135deg, ${t.chipBg}, ${t.chipBg2})`, color: t.chipFg, border: t.chipBorder ? `1px solid ${t.chipBorder}` : "none" }}
           aria-hidden="true"
         >
           <BarChart3 size={13} strokeWidth={2.5} />
@@ -23882,8 +23897,14 @@ function VendorDashboard({ navigate }) {
   const [goalDraft, setGoalDraft] = useState("");
   const [editingGoal, setEditingGoal] = useState(false);
 
-  const [rangeId, setRangeId] = useState("days");
-  const range = DASHBOARD_RANGES.find((r) => r.id === rangeId) || DASHBOARD_RANGES[1];
+  // Defaults to "Weeks" (a trailing 12-week / ~84-day window) rather than the
+  // narrower 14-day "Days" option — a shop that sells sporadically can easily
+  // have zero completed orders in the last 14 days while still having real,
+  // recent sales, which made the Sales tiles read as broken/inaccurate on
+  // first load. A wider default window is far less likely to show all-zero
+  // KPIs the moment someone opens their dashboard.
+  const [rangeId, setRangeId] = useState("weeks");
+  const range = DASHBOARD_RANGES.find((r) => r.id === rangeId) || DASHBOARD_RANGES[2];
   const [lookupTerm, setLookupTerm] = useState("");
 
   const [rangeEvents, setRangeEvents] = useState({ shop: [], searches: [] });
@@ -24776,7 +24797,7 @@ function VendorDashboard({ navigate }) {
           />
           <DashStat
             icon={MessageCircle}
-            tint="blue"
+            tint="white"
             label="Messages"
             value={messageEvents.length}
             delta={messagesDelta}
@@ -24801,6 +24822,7 @@ function VendorDashboard({ navigate }) {
             icon={Star}
             tint="amber"
             warn={count > 0 && platformAvgRating != null && avgRating < platformAvgRating}
+            warnBadge={false}
             label="Avg rating"
             value={count > 0 ? avgRating.toFixed(1) : "—"}
             sub={`${count} review${count === 1 ? "" : "s"}`}
@@ -24826,6 +24848,7 @@ function VendorDashboard({ navigate }) {
             tint="emerald"
             label="Revenue"
             value={formatMoney(totalRevenue)}
+            sub={range.sub}
             delta={revenueDelta}
             spark={salesSeries.map((b) => b.value)}
             onOpen={() => setDetailKind("revenue")}
@@ -24836,6 +24859,7 @@ function VendorDashboard({ navigate }) {
             tint="blue"
             label="Orders"
             value={orderCountInRange.toLocaleString()}
+            sub={range.sub}
             spark={ordersSeries.map((b) => b.value)}
             onOpen={() => setDetailKind("orders")}
             info="Completed orders in this date range. Orders still open or awaiting pickup aren't counted until they're marked done. Tap to see the order list."
@@ -24845,6 +24869,7 @@ function VendorDashboard({ navigate }) {
             tint="violet"
             label="Avg order value"
             value={formatMoney(aov)}
+            sub={range.sub}
             onOpen={() => setDetailKind("aov")}
             info="Revenue ÷ orders in this range — how much a typical completed order is worth. Tap for the order-size breakdown."
           />
@@ -24858,10 +24883,14 @@ function VendorDashboard({ navigate }) {
                 setDetailKind("bestseller");
               }
             }}
-            className="bg-white border border-stone-200 rounded-xl p-3.5 relative cursor-pointer hover:border-stone-300 hover:shadow-sm transition"
+            className="bg-white border rounded-xl p-3.5 relative cursor-pointer shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98] transition"
+            style={{ borderColor: `${DASH_TINTS.amber.bar}66` }}
           >
             <div className="flex items-center justify-between mb-1.5">
-              <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${DASH_TINTS.amber.bg} ${DASH_TINTS.amber.text}`}>
+              <span
+                className="w-7 h-7 rounded-lg flex items-center justify-center"
+                style={{ background: `linear-gradient(135deg, ${DASH_TINTS.amber.chipBg}, ${DASH_TINTS.amber.chipBg2})`, color: DASH_TINTS.amber.chipFg }}
+              >
                 <Award size={14} />
               </span>
               <InfoTip text="Your top-selling item by quantity sold, in this date range. Tap for your full top-5 and a restock check." align="right" />
@@ -24888,7 +24917,14 @@ function VendorDashboard({ navigate }) {
               <p className="text-sm font-bold text-stone-600 py-2.5">No sales yet</p>
             )}
             <p className="text-sm font-semibold text-stone-600 mt-2">Best seller</p>
-            <ChevronRight size={12} className="absolute bottom-3.5 right-3.5 text-stone-300" />
+            <p className="text-xs text-stone-400 mt-0.5">{range.sub}</p>
+            <span
+              className="absolute bottom-3 right-3 w-6 h-6 rounded-full flex items-center justify-center shadow-sm ring-2 ring-white"
+              style={{ background: `linear-gradient(135deg, ${DASH_TINTS.amber.chipBg}, ${DASH_TINTS.amber.chipBg2})`, color: DASH_TINTS.amber.chipFg }}
+              aria-hidden="true"
+            >
+              <BarChart3 size={13} strokeWidth={2.5} />
+            </span>
           </div>
         </div>
 
