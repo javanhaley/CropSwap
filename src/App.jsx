@@ -18318,14 +18318,14 @@ function DashPanel({ title, icon: Icon, right, children, className = "", info })
 function PanelPeriodTabs({ value, onChange, monthOptions }) {
   const isMonthPick = typeof value === "string" && value.startsWith("month:");
   return (
-    <div className="flex flex-wrap items-center gap-1.5 mt-1 pt-1.5 border-t border-stone-100">
+    <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-stone-100">
       {PANEL_PERIODS.map((p) => (
         <button
           key={p.id}
           type="button"
           onClick={() => onChange(p.id)}
-          className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition ${
-            value === p.id ? "bg-stone-800 text-white" : "bg-stone-100 text-stone-500 hover:bg-stone-200"
+          className={`px-3 py-1.5 rounded-full text-xs font-bold transition ${
+            value === p.id ? "bg-stone-900 text-white" : "bg-stone-100 text-stone-700 hover:bg-stone-200"
           }`}
         >
           {p.label}
@@ -18335,8 +18335,8 @@ function PanelPeriodTabs({ value, onChange, monthOptions }) {
         <select
           value={isMonthPick ? value : ""}
           onChange={(e) => e.target.value && onChange(e.target.value)}
-          className={`text-[11px] font-semibold rounded-full pl-2.5 pr-1.5 py-1 border outline-none cursor-pointer ${
-            isMonthPick ? "bg-stone-800 text-white border-stone-800" : "bg-stone-100 text-stone-500 border-transparent"
+          className={`text-xs font-bold rounded-full pl-3 pr-1.5 py-1.5 border outline-none cursor-pointer ${
+            isMonthPick ? "bg-stone-900 text-white border-stone-900" : "bg-stone-100 text-stone-700 border-transparent"
           }`}
         >
           <option value="" disabled>
@@ -23080,8 +23080,8 @@ function DetailTrendChart({ data, dataKey, color, height = 160, formatY }) {
     <div style={{ width: "100%", height }}>
       <ResponsiveContainer>
         <AreaChart data={data}>
-          <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(data.length / 8))} />
-          <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={36} tickFormatter={formatY} />
+          <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(data.length / 8))} />
+          <YAxis tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" width={36} tickFormatter={formatY} />
           <Tooltip formatter={formatY ? (v) => formatY(v) : undefined} />
           <Area type="monotone" dataKey={dataKey} stroke={color} fill={color} fillOpacity={0.15} strokeWidth={2} />
         </AreaChart>
@@ -23328,12 +23328,12 @@ function MetricDetailModal({ kind, onClose, navigate, data }) {
             <DetailTrendChart data={chartSeries} dataKey="value" color={t.bar} formatY={(v) => `$${v}`} />
             {periodControl}
             <div>
-              <p className="cs-t11 text-stone-400 mb-1.5">Revenue by day of week</p>
+              <p className="text-sm font-semibold text-stone-600 mb-1.5">Revenue by day of week</p>
               <div style={{ width: "100%", height: 140 }}>
                 <ResponsiveContainer>
                   <BarChart data={data.revenueByWeekday}>
-                    <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" />
-                    <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={36} tickFormatter={(v) => `$${v}`} />
+                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" />
+                    <YAxis tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" width={36} tickFormatter={(v) => `$${v}`} />
                     <Tooltip formatter={(v) => `$${Math.round(v)}`} />
                     <Bar dataKey="revenue" fill={t.bar} radius={[3, 3, 0, 0]} />
                   </BarChart>
@@ -23892,6 +23892,8 @@ function VendorDashboard({ navigate }) {
   const [favoritesCustomEvents, setFavoritesCustomEvents] = useState([]);
   const [salesPeriod, setSalesPeriod] = useState("current");
   const [weekdayPeriod, setWeekdayPeriod] = useState("current");
+  const [bestSellersPeriod, setBestSellersPeriod] = useState("current");
+  const [customersPeriod, setCustomersPeriod] = useState("current");
   // Granularity toggle + fetched click events for the "Sponsored ads:
   // clicks & spend" panel — see the sponsoredClicks memos below. Defaults to
   // "all" (not "current") so this chart opens showing full sponsored
@@ -24296,6 +24298,29 @@ function VendorDashboard({ navigate }) {
     });
     return [...counts.values()].sort((a, b) => b.qty - a.qty).slice(0, 5);
   }, [ordersInRange]);
+  // The "Best sellers" PANEL's own list — independent of the global range
+  // selector, via the same "current" + 1M/6M/1Y/All/month-picker convention
+  // as Sales over time and Sales by day of week (bestSellers above stays
+  // tied to the global range, since that's what feeds the top "Best
+  // seller" KPI card and its detail modal).
+  const bestSellersPanelList = useMemo(() => {
+    const win = bestSellersPeriod === "current" ? { sinceMs, untilMs: nowMs } : panelPeriodWindow(bestSellersPeriod, nowMs, shop?.createdAt) || { sinceMs, untilMs: nowMs };
+    const counts = new Map();
+    completedOrders.forEach((o) => {
+      const t = orderFulfillmentTime(o) || 0;
+      if (t < win.sinceMs || t > win.untilMs) return;
+      (o.items || []).forEach((it) => {
+        const key = it.productId || it.inventoryItemId || it.name;
+        if (!key) return;
+        const prev = counts.get(key) || { key, name: it.name || "Item", qty: 0, revenue: 0 };
+        prev.qty += Number(it.qty) || 0;
+        prev.revenue += (Number(it.price) || 0) * (Number(it.qty) || 0);
+        counts.set(key, prev);
+      });
+    });
+    return [...counts.values()].sort((a, b) => b.qty - a.qty).slice(0, 5);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [completedOrders, bestSellersPeriod, nowMs, sinceMs]);
 
   // How completed orders in this range break down by size — used by the
   // Revenue and Average order value drill-downs to show the mix behind the
@@ -24400,20 +24425,29 @@ function VendorDashboard({ navigate }) {
     return map;
   }, [completedOrders]);
 
+  // Fixed: this used to only look at ordersInRange — i.e. only customers who
+  // placed ANOTHER order inside the currently selected window even counted
+  // at all, so a returning customer who bought before but not again during
+  // (say) "Today" was invisible, and both counts read 0 the moment the
+  // window had zero raw orders in it, even with a long, real customer
+  // history. The panel's own tooltip says "based on every completed order
+  // ever, not just this range" — so this now walks every all-time customer
+  // (customerFirstPurchase, all-time by construction) and buckets each one
+  // by whether their very first order falls inside the chosen window,
+  // matching that description. Independent of the global range selector via
+  // the same "current" + 1M/6M/1Y/All/month-picker convention as the other
+  // panels (customersPeriod).
   const customerBreakdown = useMemo(() => {
-    const seen = new Set();
+    const win = customersPeriod === "current" ? { sinceMs, untilMs: nowMs } : panelPeriodWindow(customersPeriod, nowMs, shop?.createdAt) || { sinceMs, untilMs: nowMs };
     let newCount = 0;
     let returningCount = 0;
-    ordersInRange.forEach((o) => {
-      const key = orderCustomerKey(o);
-      if (seen.has(key)) return;
-      seen.add(key);
-      const firstEver = customerFirstPurchase.get(key);
-      if (firstEver != null && firstEver >= sinceMs) newCount += 1;
-      else returningCount += 1;
+    customerFirstPurchase.forEach((firstEver) => {
+      if (firstEver >= win.sinceMs && firstEver <= win.untilMs) newCount += 1;
+      else if (firstEver < win.sinceMs) returningCount += 1;
     });
     return { newCount, returningCount, total: newCount + returningCount };
-  }, [ordersInRange, customerFirstPurchase, sinceMs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerFirstPurchase, customersPeriod, sinceMs, nowMs]);
 
   // All-time repeat-purchase rate — the share of every customer who has
   // ever bought from this shop who came back and bought a second time.
@@ -24837,13 +24871,13 @@ function VendorDashboard({ navigate }) {
                 />
                 <div className="min-w-0">
                   <p className="text-sm font-bold text-stone-900 truncate leading-tight">{bestSellers[0].name}</p>
-                  <p className="cs-t10 text-stone-400 mt-0.5">{bestSellers[0].qty} sold · {formatMoney(bestSellers[0].revenue)}</p>
+                  <p className="text-xs text-stone-600 mt-0.5">{bestSellers[0].qty} sold · {formatMoney(bestSellers[0].revenue)}</p>
                 </div>
               </div>
             ) : (
-              <p className="text-sm font-bold text-stone-400 py-2.5">No sales yet</p>
+              <p className="text-sm font-bold text-stone-600 py-2.5">No sales yet</p>
             )}
-            <p className="cs-t11 text-stone-500 mt-2">Best seller</p>
+            <p className="text-sm font-semibold text-stone-600 mt-2">Best seller</p>
             <ChevronRight size={12} className="absolute bottom-3.5 right-3.5 text-stone-300" />
           </div>
         </div>
@@ -24899,8 +24933,8 @@ function VendorDashboard({ navigate }) {
               <div className="h-2.5 rounded-full bg-stone-100 overflow-hidden mb-2.5">
                 <div className="h-full rounded-full bg-emerald-600" style={{ width: `${goalPct}%` }} />
               </div>
-              <p className="cs-t11 text-stone-400">
-                On pace for about <span className="font-bold text-stone-600">{formatMoney(projectedMonthRevenue)}</span> by month end —{" "}
+              <p className="text-sm text-stone-600">
+                On pace for about <span className="font-bold text-stone-900">{formatMoney(projectedMonthRevenue)}</span> by month end —{" "}
                 {projectedMonthRevenue >= monthlyGoal ? "ahead of goal" : "below goal at the current pace"}.
               </p>
             </>
@@ -24909,13 +24943,13 @@ function VendorDashboard({ navigate }) {
 
         <DashPanel title="Sales over time" icon={TrendingUp} className="mb-4" info="Revenue from completed orders, plotted by pickup (fulfillment) date. Use the tabs below to jump to a specific past month/quarter/year instead of the date range up top.">
           {salesSeries2.every((b) => b.value === 0) ? (
-            <p className="text-sm text-stone-400 py-6 text-center">No completed sales in this {salesPeriod === "current" ? "range" : "period"} yet.</p>
+            <p className="text-sm text-stone-600 py-6 text-center">No completed sales in this {salesPeriod === "current" ? "range" : "period"} yet.</p>
           ) : (
             <div style={{ width: "100%", height: 190 }}>
               <ResponsiveContainer>
                 <BarChart data={salesSeries2}>
-                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(salesSeries2.length / 8))} />
-                  <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={40} tickFormatter={(v) => `$${v}`} />
+                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(salesSeries2.length / 8))} />
+                  <YAxis tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" width={40} tickFormatter={(v) => `$${v}`} />
                   <Tooltip formatter={(v) => formatMoney(v)} />
                   <Bar dataKey="value" fill="#25b926" radius={[3, 3, 0, 0]} />
                 </BarChart>
@@ -24932,13 +24966,13 @@ function VendorDashboard({ navigate }) {
           info="Revenue by day of the week for completed orders. Use the buttons below (or pick an exact month) to widen or narrow the window and spot your best (and worst) market days."
         >
           {revenueByWeekday.every((d) => d.revenue === 0) ? (
-            <p className="text-sm text-stone-400 py-6 text-center">No completed sales in this window yet.</p>
+            <p className="text-sm text-stone-600 py-6 text-center">No completed sales in this window yet.</p>
           ) : (
             <div style={{ width: "100%", height: 160 }}>
               <ResponsiveContainer>
                 <BarChart data={revenueByWeekday}>
-                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" />
-                  <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={40} tickFormatter={(v) => `$${v}`} />
+                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" />
+                  <YAxis tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" width={40} tickFormatter={(v) => `$${v}`} />
                   <Tooltip formatter={(v) => formatMoney(v)} />
                   <Bar dataKey="revenue" fill={DASH_TINTS.emerald.bar} radius={[3, 3, 0, 0]} />
                 </BarChart>
@@ -24947,38 +24981,39 @@ function VendorDashboard({ navigate }) {
           )}
           <PanelPeriodTabs value={weekdayPeriod} onChange={setWeekdayPeriod} monthOptions={monthOptions} />
           {bestWeekday && (
-            <p className="cs-t11 text-stone-400 mt-2">
-              Best day: <span className="font-semibold text-stone-600">{bestWeekday.label}</span> ({formatMoney(bestWeekday.revenue)} in this window).
+            <p className="text-sm text-stone-600 mt-2">
+              Best day: <span className="font-bold text-stone-900">{bestWeekday.label}</span> ({formatMoney(bestWeekday.revenue)} in this window).
             </p>
           )}
         </DashPanel>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
-          <DashPanel title="Best sellers" icon={Award} info="Your top 5 items by units sold in this date range, with the revenue each one brought in.">
+          <DashPanel title="Best sellers" icon={Award} info="Your top 5 items by units sold in the window below, with the revenue each one brought in.">
             {bestSellerLowStockNote && (
               <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2.5">
                 <AlertTriangle size={12} className="text-amber-600 shrink-0" />
-                <p className="text-[11px] font-semibold text-amber-800">Your best seller is running low — {bestSellerLowStockNote}.</p>
+                <p className="text-xs font-semibold text-amber-800">Your best seller is running low — {bestSellerLowStockNote}.</p>
               </div>
             )}
-            {bestSellers.length === 0 ? (
-              <p className="text-sm text-stone-400 py-4 text-center">No completed sales in this range yet. Today's sales are counted in the totals above and join the chart once the day closes.</p>
+            {bestSellersPanelList.length === 0 ? (
+              <p className="text-sm text-stone-600 py-4 text-center">No completed sales in this {bestSellersPeriod === "current" ? "range" : "period"} yet. Today's sales are counted in the totals above and join the list once the day closes.</p>
             ) : (
               <div className="space-y-1.5">
-                {bestSellers.map((p, i) => (
+                {bestSellersPanelList.map((p, i) => (
                   <div key={p.name + i} className="flex items-center justify-between text-sm">
                     <span className="flex items-center gap-2 flex-1 truncate">
-                      <span className="cs-t11 text-stone-400 w-4">{i + 1}</span>
-                      <span className="truncate">{p.name}</span>
+                      <span className="text-sm font-bold text-stone-500 w-4">{i + 1}</span>
+                      <span className="truncate font-semibold text-stone-800">{p.name}</span>
                     </span>
-                    <span className="cs-t11 font-mono text-stone-600 shrink-0">{p.qty} sold · {formatMoney(p.revenue)}</span>
+                    <span className="text-sm font-mono font-semibold text-stone-700 shrink-0">{p.qty} sold · {formatMoney(p.revenue)}</span>
                   </div>
                 ))}
               </div>
             )}
+            <PanelPeriodTabs value={bestSellersPeriod} onChange={setBestSellersPeriod} monthOptions={monthOptions} />
           </DashPanel>
 
-          <DashPanel title="New vs. returning customers" icon={UserCheck} info="A customer counts as 'new' the first time their very first-ever completed order with you falls inside this date range — otherwise they're 'returning'. Based on every completed order ever, not just this range.">
+          <DashPanel title="New vs. returning customers" icon={UserCheck} info="A customer counts as 'new' the first time their very first-ever completed order with you falls inside the window below — otherwise they're 'returning'. Every all-time customer is counted, not just ones who ordered again during the window.">
             <div className="grid grid-cols-2 gap-2.5 mb-3">
               <DigestChip tint="blue" icon={UserPlus} label="New customers" value={customerBreakdown.newCount} />
               <DigestChip tint="teal" icon={Repeat} label="Returning" value={customerBreakdown.returningCount} />
@@ -24989,9 +25024,10 @@ function VendorDashboard({ navigate }) {
                 <div className="h-full" style={{ background: "#0d4923", width: `${Math.round((customerBreakdown.returningCount / customerBreakdown.total) * 100)}%` }} />
               </div>
             )}
-            <p className="text-sm text-stone-600">
+            <PanelPeriodTabs value={customersPeriod} onChange={setCustomersPeriod} monthOptions={monthOptions} />
+            <p className="text-sm text-stone-600 mt-3">
               All-time repeat-purchase rate: <span className="font-bold text-stone-900">{repeatStats2.pct}%</span>
-              <span className="cs-t11 text-stone-400"> ({repeatStats2.repeat} of {repeatStats2.total} customers have bought more than once)</span>
+              <span className="text-sm text-stone-500"> ({repeatStats2.repeat} of {repeatStats2.total} customers have bought more than once)</span>
             </p>
             <p className="text-sm text-stone-600 mt-1">
               Avg. lifetime value per customer: <span className="font-bold text-stone-900">{formatMoney(avgCustomerLTV)}</span>
@@ -25040,7 +25076,7 @@ function VendorDashboard({ navigate }) {
             <DigestChip tint="amber" icon={DollarSign} label="Total ad spend" value={formatMoney(adSpendAllTime)} />
           </div>
           {myCampaigns.length === 0 ? (
-            <p className="text-sm text-stone-400 py-4 text-center">No sponsored campaigns yet — sponsor a listing to see clicks and spend here.</p>
+            <p className="text-sm text-stone-600 py-4 text-center">No sponsored campaigns yet — sponsor a listing to see clicks and spend here.</p>
           ) : (
             <>
               <div className="flex items-center gap-4 mb-2">
@@ -25048,7 +25084,7 @@ function VendorDashboard({ navigate }) {
                 <span className="flex items-center gap-1.5 text-xs font-semibold text-stone-500"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: "#171717" }} /> Spend</span>
               </div>
               {sponsoredComboSeries.every((b) => b.clicks === 0 && b.spend === 0) ? (
-                <p className="text-sm text-stone-400 py-4 text-center">No listing views recorded during a sponsored window yet.</p>
+                <p className="text-sm text-stone-600 py-4 text-center">No listing views recorded during a sponsored window yet.</p>
               ) : (
                 <div style={{ width: "100%", height: 190 }}>
                   <ResponsiveContainer>
@@ -25059,9 +25095,9 @@ function VendorDashboard({ navigate }) {
                           <stop offset="100%" stopColor="#1c9025" />
                         </linearGradient>
                       </defs>
-                      <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#737373" interval={Math.max(0, Math.floor(sponsoredComboSeries.length / 8))} />
-                      <YAxis yAxisId="left" tick={{ fontSize: 11 }} stroke="#737373" width={30} allowDecimals={false} />
-                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} stroke="#737373" width={40} tickFormatter={(v) => `$${v}`} />
+                      <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(sponsoredComboSeries.length / 8))} />
+                      <YAxis yAxisId="left" tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" width={30} allowDecimals={false} />
+                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" width={40} tickFormatter={(v) => `$${v}`} />
                       <Tooltip formatter={(v, name) => (name === "Spend" ? formatMoney(v) : v)} />
                       {/* Vivid green bars + a solid black line, rather than the
                           two near-identical dark greens this used to pair —
@@ -25140,8 +25176,8 @@ function VendorDashboard({ navigate }) {
                     <stop offset="100%" stopColor="#61e25d" stopOpacity={0.05} />
                   </linearGradient>
                 </defs>
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#737373" interval={Math.max(0, Math.floor(viewsSeries2.length / 8))} />
-                <YAxis tick={{ fontSize: 11 }} stroke="#737373" width={32} />
+                <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(viewsSeries2.length / 8))} />
+                <YAxis tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" width={32} />
                 <Tooltip />
                 <Area type="monotone" dataKey="count" stroke="#146824" fill="url(#viewsAreaFill)" strokeWidth={2.5} />
               </AreaChart>
@@ -25152,9 +25188,9 @@ function VendorDashboard({ navigate }) {
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
           <DashPanel title="Keyword search intelligence" icon={Search} info="The top search terms shoppers are typing platform-wide right now — use it to see what's in demand and name your listings to match.">
-            <p className="text-sm text-stone-500 mb-2.5">Platform-wide, this range</p>
+            <p className="text-sm text-stone-600 mb-2.5">Platform-wide, this range</p>
             {trendingSearches.length === 0 ? (
-              <p className="text-sm text-stone-400 py-4 text-center">No searches logged yet in this range.</p>
+              <p className="text-sm text-stone-600 py-4 text-center">No searches logged yet in this range.</p>
             ) : (
               <div className="space-y-2">
                 {trendingSearches.map((t, i) => (
@@ -25177,8 +25213,8 @@ function VendorDashboard({ navigate }) {
             <div style={{ width: "100%", height: 150 }}>
               <ResponsiveContainer>
                 <LineChart data={favoriteSeries2}>
-                  <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#737373" interval={Math.max(0, Math.floor(favoriteSeries2.length / 6))} />
-                  <YAxis tick={{ fontSize: 11 }} stroke="#737373" width={28} />
+                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(favoriteSeries2.length / 6))} />
+                  <YAxis tick={{ fontSize: 12, fill: "#404040" }} stroke="#a3a3a3" width={28} />
                   <Tooltip />
                   <Line type="monotone" dataKey="count" stroke={DASH_TINTS.rose.bar} strokeWidth={2.5} dot={{ r: 3, fill: DASH_TINTS.rose.bar }} />
                 </LineChart>
@@ -25209,9 +25245,9 @@ function VendorDashboard({ navigate }) {
         </DashPanel>
 
         <DashPanel title="Listing leaderboard" icon={Zap} className="mb-4" info="Your own listings, ranked by a score of favorites and shares — the top 5 here are your best performers to feature or restock.">
-          <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2.5">Top performers</p>
+          <p className="text-xs font-bold text-stone-500 uppercase tracking-wide mb-2.5">Top performers</p>
           {leaderboard.top.length === 0 ? (
-            <p className="text-sm text-stone-400 py-2">No listings yet.</p>
+            <p className="text-sm text-stone-600 py-2">No listings yet.</p>
           ) : (
             <div className="space-y-1">
               {leaderboard.top.map((p, i) => (
@@ -25237,7 +25273,7 @@ function VendorDashboard({ navigate }) {
 
         <DashPanel title="Where your engagement comes from" icon={MapPin} className="mb-4" info="The cities generating the most views and favorites for you this range — useful for knowing where your customer base is actually coming from.">
           {topCities.length === 0 ? (
-            <p className="text-sm text-stone-400 py-4 text-center">Not enough location data yet.</p>
+            <p className="text-sm text-stone-600 py-4 text-center">Not enough location data yet.</p>
           ) : (
             topCities.map((c) => (
               <div key={c.place} className="flex items-center justify-between text-sm py-0.5">
@@ -25249,7 +25285,7 @@ function VendorDashboard({ navigate }) {
         </DashPanel>
 
         <DashPanel title="Mailing list & mass messages" icon={Megaphone} className="mb-4" info="Everyone who has ever messaged you first joins your mailing list automatically. Send them all one message at once — delivered as an in-app message + notification.">
-          <p className="cs-t11 text-stone-400 mb-3">
+          <p className="text-sm text-stone-600 mb-3">
             {isDemo ? 128 : mailing.list.length} subscriber{(isDemo ? 128 : mailing.list.length) === 1 ? "" : "s"} — anyone who messages you gets added automatically. Messages sent to all deliver as an in-app message + notification, not an outside email.
           </p>
           {/* Demo mode never locks anything, same rule as the KPI tiles
