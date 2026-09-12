@@ -18130,14 +18130,38 @@ function InfoTip({ text, align = "center" }) {
 // consistent tint across its stat card, digest chip, and chart color so the
 // whole page reads as one coherent, colorful system instead of a wall of
 // identical green cards.
+// Every named Tailwind color EXCEPT emerald/green/teal is remapped in
+// tailwind.config.js to one flat gray scale (see the brand-palette comment
+// there), so classes like bg-rose-50/text-blue-700/bg-violet-50 used to all
+// quietly render as the exact same gray — the stat cards below looked
+// identical to each other no matter which "tint" they were given, and the
+// hero banner's "from-emerald-600 via-emerald-500 to-teal-500" gradient was
+// nearly invisible because emerald-500 and teal-500 are literally the same
+// hex value. Fixed here by giving each tint real, distinct hex colors
+// (applied via inline style, not Tailwind classes, so nothing can flatten
+// them again) — a mix of real shades from the brand's own green scale plus
+// true black/graphite for contrast, per the "more greens + blacks, modern
+// and alive" redesign. `chipBg`/`chipFg` are the badge/icon colors,
+// `bar` is the sparkline/chart line color.
+// `bg`/`text`/`soft` are kept exactly as they were (still fed to plain
+// Tailwind classes elsewhere — AffiliateStep, MetricDetailModal, the
+// bestseller card) so nothing outside the Dashboard's own stat/digest cards
+// changes behavior. `chipBg`/`chipBg2`/`chipFg` are the new hex-based
+// fields those Dashboard cards use instead, specifically so they're immune
+// to the gray remap described above.
 const DASH_TINTS = {
-  emerald: { bg: "bg-emerald-50", text: "text-emerald-700", bar: "#1c9025", soft: "bg-emerald-50" },
-  rose: { bg: "bg-rose-50", text: "text-rose-700", bar: "#525252", soft: "bg-rose-50" },
-  blue: { bg: "bg-blue-50", text: "text-blue-700", bar: "#737373", soft: "bg-blue-50" },
-  violet: { bg: "bg-violet-50", text: "text-violet-700", bar: "#404040", soft: "bg-violet-50" },
-  amber: { bg: "bg-amber-50", text: "text-amber-700", bar: "#a3a3a3", soft: "bg-amber-50" },
-  teal: { bg: "bg-teal-50", text: "text-teal-700", bar: "#146824", soft: "bg-teal-50" },
+  emerald: { bg: "bg-emerald-50", text: "text-emerald-700", soft: "bg-emerald-50", chipBg: "#e1fae1", chipBg2: "#c0f3be", chipFg: "#146824", bar: "#25b926" },
+  teal: { bg: "bg-teal-50", text: "text-teal-700", soft: "bg-teal-50", chipBg: "#c0f3be", chipBg2: "#96ec93", chipFg: "#0d4923", bar: "#1c9025" },
+  rose: { bg: "bg-rose-50", text: "text-rose-700", soft: "bg-rose-50", chipBg: "#171717", chipBg2: "#000000", chipFg: "#ffffff", bar: "#171717" },
+  blue: { bg: "bg-blue-50", text: "text-blue-700", soft: "bg-blue-50", chipBg: "#96ec93", chipBg2: "#61e25d", chipFg: "#08301a", bar: "#146824" },
+  violet: { bg: "bg-violet-50", text: "text-violet-700", soft: "bg-violet-50", chipBg: "#404040", chipBg2: "#171717", chipFg: "#ffffff", bar: "#262626" },
+  amber: { bg: "bg-amber-50", text: "text-amber-700", soft: "bg-amber-50", chipBg: "#61e25d", chipBg2: "#2cd827", chipFg: "#08301a", bar: "#0d4923" },
 };
+// A dedicated look for the "this metric dropped" warning state — it used to
+// borrow the "rose" tint, which (see above) rendered as the same invisible
+// gray as everything else. Solid black/white reads as an unmistakable alert
+// without introducing an off-brand red.
+const DASH_WARN_TINT = { chipBg: "#171717", chipBg2: "#000000", chipFg: "#ffffff", bar: "#171717" };
 // Multi-stop "traffic map" gradient (cold blue -> green -> yellow -> orange
 // -> dark red) for the peak-activity heatmap — classic aggregate-heatmap
 // styling (think six-weeks-of-response-time heatmaps), chosen specifically
@@ -18195,7 +18219,7 @@ function Sparkline({ data, color = "#25b926", height = 26 }) {
 }
 function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate, tint = "emerald", warn = false, spark, onOpen }) {
   const showWarn = warn && !locked;
-  const t = showWarn ? DASH_TINTS.rose : DASH_TINTS[tint] || DASH_TINTS.emerald;
+  const t = showWarn ? DASH_WARN_TINT : DASH_TINTS[tint] || DASH_TINTS.emerald;
   const clickable = !locked && !!onOpen;
   return (
     <div
@@ -18212,38 +18236,41 @@ function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate
             }
           : undefined
       }
-      className={`bg-white border rounded-xl p-3.5 relative ${showWarn ? "border-rose-200 ring-1 ring-rose-100" : "border-stone-200"} ${
-        clickable ? "cursor-pointer hover:border-stone-300 hover:shadow-sm transition" : ""
+      className={`bg-white border rounded-2xl p-4 relative ${showWarn ? "border-stone-900 ring-1 ring-stone-200" : "border-stone-200"} ${
+        clickable ? "cursor-pointer hover:border-stone-300 hover:shadow-md transition" : ""
       }`}
     >
-      <div className="flex items-center justify-between mb-1.5">
-        <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${t.bg} ${t.text}`}>
-          <Icon size={14} />
+      <div className="flex items-center justify-between mb-2">
+        <span
+          className="w-10 h-10 rounded-xl flex items-center justify-center shadow-sm"
+          style={{ background: `linear-gradient(135deg, ${t.chipBg}, ${t.chipBg2})`, color: t.chipFg }}
+        >
+          <Icon size={20} strokeWidth={2.25} />
         </span>
         <div className="flex items-center gap-1.5">
           {delta != null && !locked && (
-            <span className={`inline-flex items-center gap-0.5 text-[11px] font-bold ${delta >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
-              {delta >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />} {Math.abs(delta)}%
+            <span className={`inline-flex items-center gap-0.5 text-xs font-extrabold ${delta >= 0 ? "text-emerald-700" : "text-stone-900"}`}>
+              {delta >= 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />} {Math.abs(delta)}%
             </span>
           )}
-          {showWarn && <span className="text-[9px] font-bold uppercase tracking-wide text-rose-600 bg-rose-50 rounded-full px-1.5 py-0.5">Watch</span>}
+          {showWarn && <span className="text-[11px] font-extrabold uppercase tracking-wide text-white bg-stone-900 rounded-full px-2 py-0.5">Watch</span>}
           {info && <InfoTip text={info} align="right" />}
         </div>
       </div>
       {locked ? (
         <button onClick={() => navigate({ screen: "plans" })} className="block text-left" title="Premium — tap to unlock the exact number">
-          <span className="inline-flex items-center gap-1 text-xl font-bold text-stone-900 font-mono tabular-nums select-none" style={{ filter: "blur(4px)" }}>
+          <span className="inline-flex items-center gap-1 text-3xl font-bold text-stone-900 font-mono tabular-nums select-none" style={{ filter: "blur(4px)" }}>
             {value}
           </span>
-          <Lock size={10} className="inline-block ml-1 text-amber-600 align-middle" />
+          <Lock size={12} className="inline-block ml-1 text-amber-600 align-middle" />
         </button>
       ) : (
-        <p className="text-xl font-bold text-stone-900 font-mono tabular-nums">{value}</p>
+        <p className="text-3xl font-bold text-stone-900 font-mono tabular-nums leading-tight">{value}</p>
       )}
-      <p className="cs-t11 text-stone-500">{label}</p>
-      {sub && <p className="cs-t10 text-stone-400 mt-0.5">{sub}</p>}
-      {spark && !locked && <Sparkline data={spark} color={t.bar} />}
-      {clickable && <ChevronRight size={12} className="absolute bottom-3.5 right-3.5 text-stone-300" />}
+      <p className="text-sm font-semibold text-stone-600 mt-0.5">{label}</p>
+      {sub && <p className="text-xs text-stone-400 mt-0.5">{sub}</p>}
+      {spark && !locked && <Sparkline data={spark} color={t.bar} height={30} />}
+      {clickable && <ChevronRight size={14} className="absolute bottom-4 right-4 text-stone-300" />}
     </div>
   );
 }
@@ -18252,18 +18279,21 @@ function DashStat({ icon: Icon, label, value, sub, delta, info, locked, navigate
 function DigestChip({ tint = "emerald", icon: Icon, label, value, prior }) {
   const t = DASH_TINTS[tint] || DASH_TINTS.emerald;
   const delta = prior != null ? (prior ? Math.round(((value - prior) / prior) * 100) : value > 0 ? 100 : null) : null;
+  const dark = t.chipFg === "#ffffff";
   return (
-    <div className={`rounded-xl px-3 py-2.5 ${t.soft}`}>
-      <div className="flex items-center justify-between mb-1">
-        <Icon size={13} className={t.text} />
+    <div className="rounded-xl px-3.5 py-3 shadow-sm" style={{ background: `linear-gradient(135deg, ${t.chipBg}, ${t.chipBg2})` }}>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: dark ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.6)" }}>
+          <Icon size={15} strokeWidth={2.25} style={{ color: t.chipFg }} />
+        </span>
         {delta != null && (
-          <span className={`text-[10px] font-bold ${delta >= 0 ? "text-emerald-700" : "text-rose-600"}`}>
+          <span className={`text-xs font-extrabold ${dark ? "text-white" : ""}`} style={dark ? undefined : { color: t.chipFg }}>
             {delta >= 0 ? "+" : ""}{delta}%
           </span>
         )}
       </div>
-      <p className="text-lg font-bold text-stone-900 font-mono tabular-nums leading-none">{value}</p>
-      <p className="cs-t10 text-stone-500 mt-0.5">{label}</p>
+      <p className="text-xl font-bold font-mono tabular-nums leading-none" style={{ color: t.chipFg }}>{value}</p>
+      <p className="text-xs font-semibold mt-1" style={{ color: t.chipFg, opacity: dark ? 0.85 : 0.75 }}>{label}</p>
     </div>
   );
 }
@@ -18271,8 +18301,8 @@ function DashPanel({ title, icon: Icon, right, children, className = "", info })
   return (
     <div className={`bg-white border border-stone-200 rounded-xl p-4 ${className}`}>
       <div className="flex items-center justify-between mb-3 gap-2">
-        <p className="text-xs font-bold text-stone-400 uppercase flex items-center gap-1.5 shrink-0">
-          {Icon && <Icon size={13} />} {title}
+        <p className="text-sm font-bold text-stone-500 uppercase tracking-wide flex items-center gap-1.5 shrink-0">
+          {Icon && <Icon size={15} />} {title}
           {info && <InfoTip text={info} />}
         </p>
         {right}
@@ -18335,12 +18365,20 @@ function ToolLock({ locked, navigate, label = "Premium tool", dimClass = "opacit
       <div className="absolute inset-0 flex items-center justify-center px-4">
         <button
           onClick={() => navigate({ screen: "plans" })}
-          className={`flex items-center bg-white shadow-lg border border-amber-300 rounded-full hover:shadow-xl transition ${large ? "gap-2 pl-2.5 pr-4 py-2" : "gap-1.5 pl-2 pr-3.5 py-1.5"}`}
+          // amber/yellow are both remapped to flat gray site-wide (see
+          // tailwind.config.js), so "from-amber-400 to-yellow-500" used to
+          // render as a dull gray pill instead of gold — real hex here
+          // guarantees the actual gold this Premium affordance needs.
+          className={`flex items-center bg-white shadow-lg border-2 rounded-full hover:shadow-xl transition ${large ? "gap-2 pl-2.5 pr-4 py-2.5" : "gap-1.5 pl-2 pr-3.5 py-2"}`}
+          style={{ borderColor: "#D4AF37" }}
         >
-          <span className={`rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 text-white flex items-center justify-center shrink-0 ${large ? "w-6 h-6" : "w-5 h-5"}`}>
-            <Crown size={large ? 13 : 11} />
+          <span
+            className={`rounded-full text-white flex items-center justify-center shrink-0 ${large ? "w-7 h-7" : "w-6 h-6"}`}
+            style={{ background: "linear-gradient(135deg, #F6E7A8, #D4AF37, #A97D1F)" }}
+          >
+            <Crown size={large ? 15 : 13} />
           </span>
-          <span className={`font-bold text-stone-900 whitespace-nowrap ${large ? "text-[13px]" : "text-[11px]"}`}>{label}</span>
+          <span className={`font-bold text-stone-900 whitespace-nowrap ${large ? "text-sm" : "text-xs"}`}>{label}</span>
         </button>
       </div>
     </div>
@@ -24527,22 +24565,26 @@ function VendorDashboard({ navigate }) {
           // correct next step either way; only the wording and the "go
           // Premium" upsell itself differ by plan.
           <div
-            className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 mb-4 border ${
-              premium ? "bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200" : "bg-gradient-to-r from-amber-50 to-yellow-50 border-amber-200"
+            className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3.5 mb-4 border-2 ${
+              premium ? "bg-gradient-to-r from-emerald-50 to-emerald-100 border-emerald-300" : "border-stone-200"
             }`}
+            // amber/yellow render as flat gray (see the DASH_TINTS comment
+            // above), so the non-Premium version of this banner used to be
+            // a nearly invisible pale-gray-on-gray card — real gold hex
+            // keeps it matching the app's established Premium/gold look.
+            style={premium ? undefined : { background: "linear-gradient(90deg, #FBF3D9, #F5E7B8)" }}
           >
-            <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex items-center gap-3 min-w-0">
               <span
-                className={`w-9 h-9 rounded-full text-white flex items-center justify-center shrink-0 shadow-sm bg-gradient-to-br ${
-                  premium ? "from-emerald-500 to-teal-500" : "from-amber-400 to-yellow-500"
-                }`}
+                className="w-11 h-11 rounded-full text-white flex items-center justify-center shrink-0 shadow-sm"
+                style={{ background: premium ? "linear-gradient(135deg, #2cd827, #146824)" : "linear-gradient(135deg, #F6E7A8, #D4AF37, #A97D1F)" }}
               >
-                {premium ? <Store size={16} /> : <Crown size={16} />}
+                {premium ? <Store size={19} /> : <Crown size={19} />}
               </span>
               <div className="min-w-0">
-                <p className="text-sm font-bold text-stone-900">This is a sample dashboard</p>
+                <p className="text-base font-bold text-stone-900">This is a sample dashboard</p>
                 {premium ? (
-                  <p className="text-xs text-emerald-800">
+                  <p className="text-sm text-emerald-800">
                     You're already on Premium — head to{" "}
                     <button onClick={() => navigate({ screen: "store" })} className="font-bold underline underline-offset-2">
                       My Store
@@ -24555,7 +24597,7 @@ function VendorDashboard({ navigate }) {
                   // so "start selling" reads wrong here; "reactivate" is
                   // the accurate verb, and routes to the same My Store
                   // screen that offers one-click Basic or Premium reactivation.
-                  <p className="text-xs text-amber-800">
+                  <p className="text-sm" style={{ color: "#8a6a1a" }}>
                     {realShop.name} is inactive —{" "}
                     <button onClick={() => navigate({ screen: "store" })} className="font-bold underline underline-offset-2">
                       reactivate it
@@ -24563,7 +24605,7 @@ function VendorDashboard({ navigate }) {
                     to bring these numbers back for real.
                   </p>
                 ) : (
-                  <p className="text-xs text-amber-800">
+                  <p className="text-sm" style={{ color: "#8a6a1a" }}>
                     Start selling and{" "}
                     <button onClick={() => navigate({ screen: "plans" })} className="font-bold underline underline-offset-2">
                       go Premium
@@ -24575,7 +24617,7 @@ function VendorDashboard({ navigate }) {
             </div>
             <button
               onClick={() => navigate({ screen: premium || realShop ? "store" : "plans" })}
-              className="bg-emerald-800 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-full shrink-0 whitespace-nowrap transition"
+              className="bg-emerald-800 hover:bg-emerald-700 text-white text-sm font-bold px-4 py-2.5 rounded-full shrink-0 whitespace-nowrap transition"
             >
               {premium ? "Go to My Store" : realShop ? "Reactivate" : "Start selling"}
             </button>
@@ -24585,13 +24627,22 @@ function VendorDashboard({ navigate }) {
           <ArrowLeft size={15} /> {isDemo ? "Back" : "Back to storefront"}
         </button>
 
-        <div className="rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-500 px-5 py-5 mb-5 shadow-sm relative overflow-hidden">
-          <div className="absolute -right-6 -top-10 w-40 h-40 rounded-full bg-white/10" />
-          <div className="absolute -right-16 bottom-0 w-28 h-28 rounded-full bg-white/10" />
+        {/* emerald/green/teal all resolve to the exact same brand-green
+            scale (tailwind.config.js), so "from-emerald-600 via-emerald-500
+            to-teal-500" used to be nearly a single flat color — emerald-500
+            and teal-500 are literally identical. This spans the scale's
+            real dark-to-bright range instead (near-black forest green up
+            through vivid "Crop" green), so the gradient actually shows, and
+            a soft black corner glow gives it some depth/contrast without
+            turning the card into a dark-mode block. */}
+        <div className="rounded-2xl bg-gradient-to-br from-emerald-950 via-emerald-700 to-emerald-400 px-5 py-6 mb-5 shadow-md relative overflow-hidden">
+          <div className="absolute -right-8 -top-12 w-48 h-48 rounded-full bg-black/20 blur-2xl" />
+          <div className="absolute -right-10 bottom-0 w-36 h-36 rounded-full bg-white/10" />
+          <div className="absolute left-1/3 -bottom-16 w-40 h-40 rounded-full bg-emerald-300/20 blur-xl" />
           <div className="relative flex items-center justify-between gap-2">
             <div>
-              <h1 className="text-2xl font-bold text-white" style={displayFont}>{shop.name} dashboard</h1>
-              <p className="text-emerald-50/90 text-sm mt-0.5">
+              <h1 className="text-3xl md:text-4xl font-bold text-white drop-shadow-sm" style={displayFont}>{shop.name} dashboard</h1>
+              <p className="text-emerald-50 text-base mt-1 font-medium">
                 {shopProducts.length} active listing{shopProducts.length === 1 ? "" : "s"} ·{" "}
                 {isDemo
                   ? premium
@@ -24605,12 +24656,12 @@ function VendorDashboard({ navigate }) {
             {premium ? (
               <CrownPill size="md" />
             ) : isDemo ? (
-              <button onClick={() => navigate({ screen: "store" })} className="text-xs font-bold text-white bg-white/15 hover:bg-white/25 backdrop-blur-sm rounded-full px-3 py-1.5 flex items-center gap-1 shrink-0 transition">
-                <Sparkles size={13} /> Sample data
+              <button onClick={() => navigate({ screen: "store" })} className="text-sm font-bold text-white bg-black/25 hover:bg-black/35 backdrop-blur-sm rounded-full px-3.5 py-2 flex items-center gap-1.5 shrink-0 transition">
+                <Sparkles size={15} /> Sample data
               </button>
             ) : (
-              <button onClick={() => navigate({ screen: "plans" })} className="text-xs font-bold text-white bg-white/15 hover:bg-white/25 backdrop-blur-sm rounded-full px-3 py-1.5 flex items-center gap-1 shrink-0 transition">
-                <Crown size={13} /> Preview only
+              <button onClick={() => navigate({ screen: "plans" })} className="text-sm font-bold text-white bg-black/25 hover:bg-black/35 backdrop-blur-sm rounded-full px-3.5 py-2 flex items-center gap-1.5 shrink-0 transition">
+                <Crown size={15} /> Preview only
               </button>
             )}
           </div>
@@ -24646,9 +24697,9 @@ function VendorDashboard({ navigate }) {
         </div>
 
         {!premium && !isDemo && (
-          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-4">
-            <Crown size={14} className="text-amber-600 shrink-0" />
-            <p className="text-xs text-amber-900">
+          <div className="flex items-center gap-2.5 border-2 rounded-xl px-3.5 py-3 mb-4" style={{ background: "linear-gradient(90deg, #FBF3D9, #F5E7B8)", borderColor: "#E9CE84" }}>
+            <Crown size={17} className="shrink-0" style={{ color: "#A97D1F" }} />
+            <p className="text-sm" style={{ color: "#6b4f10" }}>
               You're seeing a preview — a couple of numbers below are blurred and the mass-message tool is locked.{" "}
               <button onClick={() => navigate({ screen: "plans" })} className="font-bold underline underline-offset-2">Go Premium</button> to unlock everything.
             </p>
@@ -24933,9 +24984,9 @@ function VendorDashboard({ navigate }) {
               <DigestChip tint="teal" icon={Repeat} label="Returning" value={customerBreakdown.returningCount} />
             </div>
             {customerBreakdown.total > 0 && (
-              <div className="h-2 rounded-full bg-stone-100 overflow-hidden flex mb-3">
-                <div className="h-full bg-blue-500" style={{ width: `${Math.round((customerBreakdown.newCount / customerBreakdown.total) * 100)}%` }} />
-                <div className="h-full bg-teal-500" style={{ width: `${Math.round((customerBreakdown.returningCount / customerBreakdown.total) * 100)}%` }} />
+              <div className="h-3 rounded-full bg-stone-100 overflow-hidden flex mb-3">
+                <div className="h-full" style={{ background: "#61e25d", width: `${Math.round((customerBreakdown.newCount / customerBreakdown.total) * 100)}%` }} />
+                <div className="h-full" style={{ background: "#0d4923", width: `${Math.round((customerBreakdown.returningCount / customerBreakdown.total) * 100)}%` }} />
               </div>
             )}
             <p className="text-sm text-stone-600">
@@ -24992,9 +25043,9 @@ function VendorDashboard({ navigate }) {
             <p className="text-sm text-stone-400 py-4 text-center">No sponsored campaigns yet — sponsor a listing to see clicks and spend here.</p>
           ) : (
             <>
-              <div className="flex items-center gap-3 mb-1">
-                <span className="flex items-center gap-1 cs-t10 text-stone-400"><span className="w-2 h-2 rounded-sm inline-block" style={{ background: DASH_TINTS.blue.bar }} /> Clicks</span>
-                <span className="flex items-center gap-1 cs-t10 text-stone-400"><span className="w-2 h-2 rounded-full inline-block" style={{ background: DASH_TINTS.amber.bar }} /> Spend</span>
+              <div className="flex items-center gap-4 mb-2">
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-stone-500"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: "#25b926" }} /> Clicks</span>
+                <span className="flex items-center gap-1.5 text-xs font-semibold text-stone-500"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: "#171717" }} /> Spend</span>
               </div>
               {sponsoredComboSeries.every((b) => b.clicks === 0 && b.spend === 0) ? (
                 <p className="text-sm text-stone-400 py-4 text-center">No listing views recorded during a sponsored window yet.</p>
@@ -25002,17 +25053,26 @@ function VendorDashboard({ navigate }) {
                 <div style={{ width: "100%", height: 190 }}>
                   <ResponsiveContainer>
                     <ComposedChart data={sponsoredComboSeries}>
-                      <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(sponsoredComboSeries.length / 8))} />
-                      <YAxis yAxisId="left" tick={{ fontSize: 10 }} stroke="#a3a3a3" width={30} allowDecimals={false} />
-                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} stroke="#a3a3a3" width={40} tickFormatter={(v) => `$${v}`} />
+                      <defs>
+                        <linearGradient id="sponsoredClicksFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#61e25d" />
+                          <stop offset="100%" stopColor="#1c9025" />
+                        </linearGradient>
+                      </defs>
+                      <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#737373" interval={Math.max(0, Math.floor(sponsoredComboSeries.length / 8))} />
+                      <YAxis yAxisId="left" tick={{ fontSize: 11 }} stroke="#737373" width={30} allowDecimals={false} />
+                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} stroke="#737373" width={40} tickFormatter={(v) => `$${v}`} />
                       <Tooltip formatter={(v, name) => (name === "Spend" ? formatMoney(v) : v)} />
-                      <Bar yAxisId="left" dataKey="clicks" name="Clicks" fill={DASH_TINTS.blue.bar} radius={[3, 3, 0, 0]} />
+                      {/* Vivid green bars + a solid black line, rather than the
+                          two near-identical dark greens this used to pair —
+                          the two series need to read as distinct at a glance. */}
+                      <Bar yAxisId="left" dataKey="clicks" name="Clicks" fill="url(#sponsoredClicksFill)" radius={[4, 4, 0, 0]} />
                       {/* "linear" instead of "monotone": a smoothed curve visually
                           spreads an isolated one-day spend spike across its
                           neighboring days, making it look like spend and the
                           click jump don't line up even when they do. Straight
                           segments keep the spike exactly on the day it happened. */}
-                      <Line yAxisId="right" type="linear" dataKey="spend" name="Spend" stroke={DASH_TINTS.amber.bar} strokeWidth={2} dot={false} />
+                      <Line yAxisId="right" type="linear" dataKey="spend" name="Spend" stroke="#171717" strokeWidth={2.5} dot={{ r: 3, fill: "#171717" }} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
@@ -25031,9 +25091,16 @@ function VendorDashboard({ navigate }) {
           </div>
 
           {digest.biggestMover && digest.biggestMover.pct !== 0 && (
-            <div className={`flex items-center gap-2 rounded-xl px-3 py-2 mb-3 ${digest.biggestMover.pct > 0 ? "bg-emerald-50 border border-emerald-200" : "bg-rose-50 border border-rose-200"}`}>
-              {digest.biggestMover.pct > 0 ? <TrendingUp size={15} className="text-emerald-700 shrink-0" /> : <TrendingDown size={15} className="text-rose-600 shrink-0" />}
-              <p className={`text-xs font-semibold ${digest.biggestMover.pct > 0 ? "text-emerald-800" : "text-rose-800"}`}>
+            <div
+              className="flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 mb-3 border-2"
+              style={digest.biggestMover.pct > 0 ? { background: "#e1fae1", borderColor: "#96ec93" } : { background: "#171717", borderColor: "#000000" }}
+            >
+              {digest.biggestMover.pct > 0 ? (
+                <TrendingUp size={17} className="shrink-0" style={{ color: "#146824" }} />
+              ) : (
+                <TrendingDown size={17} className="text-white shrink-0" />
+              )}
+              <p className="text-sm font-semibold" style={{ color: digest.biggestMover.pct > 0 ? "#146824" : "#ffffff" }}>
                 Biggest mover: {digest.biggestMover.label} {digest.biggestMover.pct > 0 ? "up" : "down"} {Math.abs(digest.biggestMover.pct)}% vs. last week ({digest.biggestMover.prior} → {digest.biggestMover.now})
               </p>
             </div>
@@ -25041,18 +25108,21 @@ function VendorDashboard({ navigate }) {
 
           {digest.topSearches.length > 0 && (
             <div>
-              <p className="cs-t11 text-stone-400 mb-1.5">Trending searches this week</p>
-              <div className="space-y-1.5">
+              <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2">Trending searches this week</p>
+              <div className="space-y-2">
                 {digest.topSearches.map((t, i) => (
-                  <div key={t.term} className="flex items-center gap-2">
-                    <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 ${i === 0 ? "bg-violet-600" : i === 1 ? "bg-violet-400" : "bg-violet-300"}`}>
+                  <div key={t.term} className="flex items-center gap-2.5">
+                    <span
+                      className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0"
+                      style={{ background: i === 0 ? "#146824" : i === 1 ? "#25b926" : "#96ec93", color: i === 2 ? "#0d4923" : "#ffffff" }}
+                    >
                       {i + 1}
                     </span>
-                    <span className="text-xs font-semibold text-stone-700 flex-1 truncate">{t.term}</span>
-                    <div className="w-24 h-1.5 rounded-full bg-stone-100 overflow-hidden hidden sm:block">
-                      <div className="h-full bg-violet-500 rounded-full" style={{ width: `${Math.max(8, Math.round((t.n / digest.topSearches[0].n) * 100))}%` }} />
+                    <span className="text-sm font-semibold text-stone-700 flex-1 truncate">{t.term}</span>
+                    <div className="w-24 h-2 rounded-full bg-stone-100 overflow-hidden hidden sm:block">
+                      <div className="h-full rounded-full" style={{ background: "#25b926", width: `${Math.max(8, Math.round((t.n / digest.topSearches[0].n) * 100))}%` }} />
                     </div>
-                    <span className="text-[11px] font-mono font-bold text-violet-700 w-4 text-right">{t.n}</span>
+                    <span className="text-xs font-mono font-bold w-5 text-right" style={{ color: "#1c9025" }}>{t.n}</span>
                   </div>
                 ))}
               </div>
@@ -25064,10 +25134,16 @@ function VendorDashboard({ navigate }) {
           <div style={{ width: "100%", height: 190 }}>
             <ResponsiveContainer>
               <AreaChart data={viewsSeries2}>
-                <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(viewsSeries2.length / 8))} />
-                <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={32} />
+                <defs>
+                  <linearGradient id="viewsAreaFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#61e25d" stopOpacity={0.7} />
+                    <stop offset="100%" stopColor="#61e25d" stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#737373" interval={Math.max(0, Math.floor(viewsSeries2.length / 8))} />
+                <YAxis tick={{ fontSize: 11 }} stroke="#737373" width={32} />
                 <Tooltip />
-                <Area type="monotone" dataKey="count" stroke="#146824" fill="#c0f3be" strokeWidth={2} />
+                <Area type="monotone" dataKey="count" stroke="#146824" fill="url(#viewsAreaFill)" strokeWidth={2.5} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -25076,16 +25152,21 @@ function VendorDashboard({ navigate }) {
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
           <DashPanel title="Keyword search intelligence" icon={Search} info="The top search terms shoppers are typing platform-wide right now — use it to see what's in demand and name your listings to match.">
-            <p className="cs-t11 text-stone-500 mb-2">Platform-wide, this range</p>
+            <p className="text-sm text-stone-500 mb-2.5">Platform-wide, this range</p>
             {trendingSearches.length === 0 ? (
               <p className="text-sm text-stone-400 py-4 text-center">No searches logged yet in this range.</p>
             ) : (
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 {trendingSearches.map((t, i) => (
-                  <div key={t.term} className="flex items-center gap-2">
-                    <span className="cs-t11 text-stone-400 w-4">{i + 1}</span>
+                  <div key={t.term} className="flex items-center gap-2.5">
+                    <span
+                      className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0"
+                      style={{ background: i === 0 ? "#146824" : i === 1 ? "#25b926" : "#96ec93", color: i === 2 ? "#0d4923" : "#ffffff" }}
+                    >
+                      {i + 1}
+                    </span>
                     <span className="text-sm font-semibold text-stone-800 flex-1 truncate">{t.term}</span>
-                    <span className="text-xs font-mono font-bold text-emerald-700">{t.n}</span>
+                    <span className="text-sm font-mono font-bold" style={{ color: "#1c9025" }}>{t.n}</span>
                   </div>
                 ))}
               </div>
@@ -25096,29 +25177,29 @@ function VendorDashboard({ navigate }) {
             <div style={{ width: "100%", height: 150 }}>
               <ResponsiveContainer>
                 <LineChart data={favoriteSeries2}>
-                  <XAxis dataKey="label" tick={{ fontSize: 9 }} stroke="#a3a3a3" interval={Math.max(0, Math.floor(favoriteSeries2.length / 6))} />
-                  <YAxis tick={{ fontSize: 10 }} stroke="#a3a3a3" width={28} />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke="#737373" interval={Math.max(0, Math.floor(favoriteSeries2.length / 6))} />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#737373" width={28} />
                   <Tooltip />
-                  <Line type="monotone" dataKey="count" stroke={DASH_TINTS.rose.bar} strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="count" stroke={DASH_TINTS.rose.bar} strokeWidth={2.5} dot={{ r: 3, fill: DASH_TINTS.rose.bar }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
             <PanelPeriodTabs value={favoritesPeriod} onChange={setFavoritesPeriod} monthOptions={monthOptions} />
-            <p className="cs-t11 text-stone-400 mt-2">Top listings: {leaderboard.top.slice(0, 3).map((p) => p.name).join(", ") || "—"}</p>
+            <p className="text-sm text-stone-500 mt-2">Top listings: {leaderboard.top.slice(0, 3).map((p) => p.name).join(", ") || "—"}</p>
           </DashPanel>
         </div>
 
         <DashPanel title="Engagement tracker" icon={Target} className="mb-4" info="How viewers move down the funnel from viewing, to favoriting, to messaging you — each bar shows what percent of viewers made it that far.">
-          <div className="space-y-2">
+          <div className="space-y-3">
             {funnel.map((f, i) => {
               const barColor = [DASH_TINTS.emerald.bar, DASH_TINTS.rose.bar, DASH_TINTS.blue.bar][i] || DASH_TINTS.emerald.bar;
               return (
                 <div key={f.label}>
-                  <div className="flex items-center justify-between text-xs mb-0.5">
-                    <span className="font-semibold text-stone-700">{f.label}</span>
-                    <span className="font-mono text-stone-500">{f.value} · {f.pct}%</span>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="font-bold text-stone-700">{f.label}</span>
+                    <span className="font-mono font-semibold text-stone-500">{f.value} · {f.pct}%</span>
                   </div>
-                  <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
+                  <div className="h-3 rounded-full bg-stone-100 overflow-hidden">
                     <div className="h-full rounded-full" style={{ width: `${f.pct}%`, backgroundColor: barColor }} />
                   </div>
                 </div>
@@ -25128,16 +25209,29 @@ function VendorDashboard({ navigate }) {
         </DashPanel>
 
         <DashPanel title="Listing leaderboard" icon={Zap} className="mb-4" info="Your own listings, ranked by a score of favorites and shares — the top 5 here are your best performers to feature or restock.">
-          <p className="cs-t11 text-stone-400 mb-1">Top performers</p>
+          <p className="text-xs font-bold text-stone-400 uppercase tracking-wide mb-2.5">Top performers</p>
           {leaderboard.top.length === 0 ? (
             <p className="text-sm text-stone-400 py-2">No listings yet.</p>
           ) : (
-            leaderboard.top.map((p) => (
-              <div key={p.id} className="flex items-center justify-between text-sm py-0.5">
-                <span className="truncate flex-1">{p.name}</span>
-                <span className="cs-t11 font-mono text-emerald-700">♥{p.favoriteCount || 0} · ↗{p.shareCount || 0}</span>
-              </div>
-            ))
+            <div className="space-y-1">
+              {leaderboard.top.map((p, i) => (
+                <div key={p.id} className="flex items-center gap-3 py-1.5 px-1 rounded-lg hover:bg-stone-50 transition">
+                  <span
+                    className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-extrabold shrink-0"
+                    style={{ background: i === 0 ? "#146824" : i === 1 ? "#25b926" : i === 2 ? "#96ec93" : "#f5f5f5", color: i <= 1 ? "#ffffff" : i === 2 ? "#0d4923" : "#737373" }}
+                  >
+                    {i + 1}
+                  </span>
+                  <span className="truncate flex-1 text-sm font-semibold text-stone-800">{p.name}</span>
+                  <span className="flex items-center gap-1 text-sm font-bold shrink-0" style={{ color: "#171717" }}>
+                    <Heart size={15} fill="#171717" strokeWidth={0} /> {p.favoriteCount || 0}
+                  </span>
+                  <span className="flex items-center gap-1 text-sm font-bold shrink-0" style={{ color: "#1c9025" }}>
+                    <Share2 size={15} /> {p.shareCount || 0}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </DashPanel>
 
